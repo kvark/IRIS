@@ -52,7 +52,7 @@ impl ValueHead {
     }
 }
 
-/// Build the policy + value training graph.
+/// Build the discrete policy + value training graph.
 ///
 /// Inputs:
 /// - `"z"`: `[1, latent_dim]` — latent from encoder (detached, fed as input)
@@ -63,10 +63,6 @@ impl ValueHead {
 /// - `[0]`: combined loss (policy cross-entropy + value MSE)
 /// - `[1]`: logits `[1, action_dim]` — for action sampling
 /// - `[2]`: value `[1, 1]` — for advantage computation
-///
-/// The policy loss is `cross_entropy(logits, action_onehot)`. Advantage
-/// weighting is applied by scaling the learning rate on the CPU side:
-/// `lr_effective = lr_policy * advantage`.
 pub fn build_policy_graph(latent_dim: usize, action_dim: usize, hidden_dim: usize) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[1, latent_dim]);
@@ -81,14 +77,54 @@ pub fn build_policy_graph(latent_dim: usize, action_dim: usize, hidden_dim: usiz
 
     // Policy loss: cross-entropy with one-hot action selects -log π(a|s)
     let policy_loss = g.cross_entropy_loss(logits, action);
-
-    // Value loss: MSE(V(z), target_value)
     let value_loss = g.mse_loss(value, value_target);
-
-    // Combined loss
     let total_loss = g.add(policy_loss, value_loss);
 
     g.set_outputs(vec![total_loss, logits, value]);
+    g
+}
+
+/// Build the continuous policy + value training graph for a diagonal
+/// Gaussian with fixed unit variance.
+///
+/// Inputs:
+/// - `"z"`: `[1, latent_dim]` — latent from encoder
+/// - `"action"`: `[1, action_dim]` — the taken action vector
+/// - `"value_target"`: `[1, 1]` — TD target for value head
+///
+/// Outputs:
+/// - `[0]`: combined loss (mean MSE + value MSE)
+/// - `[1]`: action mean `[1, action_dim]` — sampled by adding Gaussian noise
+/// - `[2]`: value `[1, 1]`
+///
+/// For a fixed-variance Gaussian, the negative log-likelihood of the taken
+/// action is `0.5·(a − μ)² / σ² + const`. With σ² = 1 this reduces to the
+/// MSE between predicted mean and taken action, up to a constant — the
+/// same advantage-weighted LR trick applies.
+pub fn build_continuous_policy_graph(
+    latent_dim: usize,
+    action_dim: usize,
+    hidden_dim: usize,
+) -> Graph {
+    let mut g = Graph::new();
+    let z = g.input("z", &[1, latent_dim]);
+    let action = g.input("action", &[1, action_dim]);
+    let value_target = g.input("value_target", &[1, 1]);
+
+    // The "Policy" struct outputs [1, action_dim] logits; for continuous
+    // actions we reinterpret this as the Gaussian mean μ.
+    let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+    let mean = policy.forward(&mut g, z);
+
+    let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
+    let value = value_head.forward(&mut g, z);
+
+    // Policy loss: MSE(μ, taken_action) ≡ Gaussian NLL with σ² = 1
+    let policy_loss = g.mse_loss(mean, action);
+    let value_loss = g.mse_loss(value, value_target);
+    let total_loss = g.add(policy_loss, value_loss);
+
+    g.set_outputs(vec![total_loss, mean, value]);
     g
 }
 
@@ -122,4 +158,18 @@ pub fn entropy(logits: &[f32]) -> f32 {
         .filter(|&&p| p > 1e-10)
         .map(|&p| p * p.ln())
         .sum::<f32>()
+}
+
+/// Sample from a diagonal Gaussian with mean `mu` and fixed std `scale`.
+/// Uses the Box–Muller transform.
+pub fn sample_gaussian_action<R: rand::Rng>(mu: &[f32], scale: f32, rng: &mut R) -> Vec<f32> {
+    use std::f32::consts::TAU;
+    mu.iter()
+        .map(|&m| {
+            let u1: f32 = rng.random_range(1e-7..1.0);
+            let u2: f32 = rng.random_range(0.0..1.0);
+            let noise = (-2.0 * u1.ln()).sqrt() * (TAU * u2).cos();
+            m + scale * noise
+        })
+        .collect()
 }

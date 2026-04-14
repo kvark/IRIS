@@ -63,6 +63,30 @@ pub struct StepResult {
     pub homeostatic: Vec<HomeostaticVariable>,
 }
 
+/// Action space kind for agent configuration.
+///
+/// - `Discrete { n }`: categorical policy, `n` mutually-exclusive actions,
+///   cross-entropy loss against one-hot target.
+/// - `Continuous { dim, scale }`: diagonal-Gaussian policy with fixed unit
+///   variance, `dim`-dimensional action vectors sampled as `μ + ε·scale`
+///   where `ε ~ N(0, 1)`. Loss is MSE between predicted μ and taken action,
+///   which is equivalent to the negative log-likelihood up to a constant.
+#[derive(Clone, Copy, Debug)]
+pub enum ActionKind {
+    Discrete { n: usize },
+    Continuous { dim: usize, scale: f32 },
+}
+
+impl ActionKind {
+    /// Dimensionality of the action vector fed to the world model and policy.
+    pub fn dim(&self) -> usize {
+        match *self {
+            ActionKind::Discrete { n } => n,
+            ActionKind::Continuous { dim, .. } => dim,
+        }
+    }
+}
+
 /// The environment trait that any world must implement.
 pub trait Environment: HomeostaticProvider {
     /// Dimensionality of the observation vector.

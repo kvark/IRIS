@@ -47,6 +47,6 @@ jobs:
       - name: Reward signal tests
         run: cargo test --test reward_signal
 
-      - name: GPU tests (opt parity + canaries)
-        run: cargo test --test opt_parity --test canaries -- --ignored
+      - name: GPU tests (opt parity + canaries + stability)
+        run: cargo test --test opt_parity --test canaries --test stability -- --ignored
         continue-on-error: true

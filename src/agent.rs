@@ -7,12 +7,20 @@
 //! 1. World model (encoder + world model): base LR
 //! 2. Credit assigner: 0.3× base
 //! 3. Policy + value: 0.5× base, gated on warmup
+//!
+//! Phase 4 continual learning mechanisms:
+//! - Replay mixing: each step additionally trains on a random past sample
+//!   (with probability `replay_ratio`) to prevent catastrophic forgetting
+//! - Representation drift monitor: encoder output on a fixed probe set is
+//!   compared against a reference snapshot; large drift reduces encoder LR
+//! - Entropy floor: policy updates are suppressed when entropy drops below
+//!   a floor, preserving exploration
 
 use crate::OptLevel;
 use crate::buffer::{ExperienceBuffer, Transition};
 use crate::credit;
 use crate::encoder::Encoder;
-use crate::env::{Action, Environment, Observation};
+use crate::env::{Action, ActionKind, Environment, Observation};
 use crate::policy;
 use crate::reward::{RewardCircuit, RewardWeights};
 use crate::world_model::WorldModel;
@@ -25,6 +33,8 @@ use rand::Rng;
 pub struct AgentConfig {
     pub obs_dim: usize,
     pub action_dim: usize,
+    /// Kind of action space (discrete categorical or continuous Gaussian).
+    pub action_kind: ActionKind,
     pub latent_dim: usize,
     pub hidden_dim: usize,
     pub history_len: usize,
@@ -35,9 +45,16 @@ pub struct AgentConfig {
     pub lr_policy: f32,
     pub reward_weights: RewardWeights,
     pub warmup_steps: usize,
+    /// Probability of running an additional replay training step per observe().
     pub replay_ratio: f32,
     pub grid_resolution: f32,
     pub entropy_beta: f32,
+    /// Floor for policy entropy — updates suppressed when entropy falls below this.
+    pub entropy_floor: f32,
+    /// Step interval between representation drift measurements.
+    pub drift_interval: usize,
+    /// Drift threshold beyond which encoder LR is reduced.
+    pub drift_threshold: f32,
     pub opt_level: OptLevel,
 }
 
@@ -46,6 +63,7 @@ impl Default for AgentConfig {
         Self {
             obs_dim: 25,
             action_dim: 4,
+            action_kind: ActionKind::Discrete { n: 4 },
             latent_dim: 16,
             hidden_dim: 32,
             history_len: 16,
@@ -59,6 +77,9 @@ impl Default for AgentConfig {
             replay_ratio: 0.2,
             grid_resolution: 0.5,
             entropy_beta: 0.01,
+            entropy_floor: 0.1, // minimum entropy before policy updates are gated
+            drift_interval: 500,
+            drift_threshold: 1.0,
             opt_level: OptLevel::Full,
         }
     }
@@ -71,12 +92,14 @@ pub struct Diagnostics {
     pub loss_world_model: f32,
     pub loss_credit: f32,
     pub loss_policy: f32,
+    pub loss_replay: f32,
     pub reward_mean: f32,
     pub reward_surprise: f32,
     pub reward_novelty: f32,
     pub reward_homeo: f32,
     pub h_eff: f32,
     pub policy_entropy: f32,
+    pub repr_drift: f32,
     pub buffer_len: usize,
 }
 
@@ -90,14 +113,22 @@ pub struct Agent {
     policy_session: Session,
     latent_size: usize,
     step_count: usize,
+    /// Fixed set of probe observations for drift monitoring (set after warmup).
+    probe_obs: Option<Vec<Vec<f32>>>,
+    /// Reference latents from the encoder at the moment the probe was fixed.
+    probe_reference: Option<Vec<Vec<f32>>>,
     last_wm_loss: f32,
     last_credit_loss: f32,
     last_policy_loss: f32,
+    last_replay_loss: f32,
     last_surprise: f32,
     last_novelty: f32,
     last_homeo: f32,
     last_reward: f32,
     last_entropy: f32,
+    last_drift: f32,
+    /// Current encoder LR scale (reduced when drift is large).
+    encoder_lr_scale: f32,
     /// Most recent logits from the policy network (for action sampling).
     last_logits: Vec<f32>,
     /// Most recent value estimate.
@@ -164,10 +195,20 @@ impl Agent {
             s
         };
 
-        // --- Policy + value graph ---
+        // --- Policy + value graph (discrete or continuous) ---
         let policy_session = {
-            let g =
-                policy::build_policy_graph(config.latent_dim, config.action_dim, config.hidden_dim);
+            let g = match config.action_kind {
+                ActionKind::Discrete { .. } => policy::build_policy_graph(
+                    config.latent_dim,
+                    config.action_dim,
+                    config.hidden_dim,
+                ),
+                ActionKind::Continuous { .. } => policy::build_continuous_policy_graph(
+                    config.latent_dim,
+                    config.action_dim,
+                    config.hidden_dim,
+                ),
+            };
             let mut s = build_session(&g, config.opt_level);
             init_parameters(&mut s);
             s
@@ -183,14 +224,19 @@ impl Agent {
             policy_session,
             latent_size,
             step_count: 0,
+            probe_obs: None,
+            probe_reference: None,
             last_wm_loss: 0.0,
             last_credit_loss: 0.0,
             last_policy_loss: 0.0,
+            last_replay_loss: 0.0,
             last_surprise: 0.0,
             last_novelty: 0.0,
             last_homeo: 0.0,
             last_reward: 0.0,
             last_entropy: 0.0,
+            last_drift: 0.0,
+            encoder_lr_scale: 1.0,
             last_logits: vec![0.0; config.action_dim],
             last_value: 0.0,
             config,
@@ -198,18 +244,13 @@ impl Agent {
     }
 
     /// Select an action using the policy network.
-    ///
-    /// Runs the policy forward pass on the latest latent, samples from
-    /// the resulting distribution. Falls back to random if no latent yet.
     pub fn act<R: Rng>(&mut self, _obs: &Observation, rng: &mut R) -> Action {
-        // Get z_t from the last encoder output, or use zeros
         let z_t = if let Some(prev) = self.buffer.last() {
             prev.latent.clone()
         } else {
             vec![0.0f32; self.latent_size]
         };
 
-        // Run policy forward (lr=0 → no parameter update, just inference)
         self.policy_session.set_input("z", &z_t);
         self.policy_session
             .set_input("action", &vec![0.0f32; self.config.action_dim]);
@@ -218,18 +259,26 @@ impl Agent {
         self.policy_session.step();
         self.policy_session.wait();
 
-        // Read logits and value
-        let mut logits = vec![0.0f32; self.config.action_dim];
-        self.policy_session.read_output_by_index(1, &mut logits);
+        // Output 1 is logits (discrete) or mean (continuous), both shape [1, action_dim]
+        let mut head_out = vec![0.0f32; self.config.action_dim];
+        self.policy_session.read_output_by_index(1, &mut head_out);
         let mut value = [0.0f32; 1];
         self.policy_session.read_output_by_index(2, &mut value);
 
-        self.last_logits = logits.clone();
+        self.last_logits = head_out.clone();
         self.last_value = value[0];
-        self.last_entropy = policy::entropy(&logits);
 
-        let action_idx = policy::sample_action(&logits, rng);
-        Action::Discrete(action_idx)
+        match self.config.action_kind {
+            ActionKind::Discrete { .. } => {
+                self.last_entropy = policy::entropy(&head_out);
+                Action::Discrete(policy::sample_action(&head_out, rng))
+            }
+            ActionKind::Continuous { scale, .. } => {
+                // For continuous, use fixed exploration noise as "entropy" proxy
+                self.last_entropy = scale;
+                Action::Continuous(policy::sample_gaussian_action(&head_out, scale, rng))
+            }
+        }
     }
 
     /// Observe a transition, train all modules.
@@ -240,27 +289,29 @@ impl Agent {
         env: &dyn Environment,
         rng: &mut R,
     ) {
-        // --- World model ---
-        self.wm_session.set_input("obs", &obs.data);
-        let action_vec = action.to_one_hot(self.config.action_dim);
-        self.wm_session.set_input("action", &action_vec);
-
+        // --- World model on current step ---
+        // For discrete actions, one-hot encode. For continuous, use the
+        // action vector directly.
+        let action_vec = match self.config.action_kind {
+            ActionKind::Discrete { .. } => action.to_one_hot(self.config.action_dim),
+            ActionKind::Continuous { .. } => match *action {
+                Action::Continuous(ref v) => v.clone(),
+                Action::Discrete(_) => panic!("continuous action space got discrete action"),
+            },
+        };
         let z_target = if let Some(prev) = self.buffer.last() {
             prev.latent.clone()
         } else {
             vec![0.0f32; self.latent_size]
         };
-        self.wm_session.set_input("z_target", &z_target);
-        self.wm_session.set_learning_rate(self.config.learning_rate);
-        self.wm_session.step();
-        self.wm_session.wait();
 
-        self.last_wm_loss = self.wm_session.read_loss();
-
-        let mut z_t = vec![0.0f32; self.latent_size];
-        self.wm_session.read_output_by_index(1, &mut z_t);
-        let mut z_hat = vec![0.0f32; self.latent_size];
-        self.wm_session.read_output_by_index(2, &mut z_hat);
+        let (wm_loss, z_t, z_hat) = self.wm_forward_backward(
+            &obs.data,
+            &action_vec,
+            &z_target,
+            self.config.learning_rate * self.encoder_lr_scale,
+        );
+        self.last_wm_loss = wm_loss;
 
         // --- Reward ---
         let pred_error: f32 = z_t
@@ -290,9 +341,24 @@ impl Agent {
             self.credit_step(rng);
         }
 
-        // --- Policy + value training (gated on warmup) ---
-        if self.step_count >= self.config.warmup_steps {
+        // --- Policy + value training (gated on warmup + entropy floor) ---
+        if self.step_count >= self.config.warmup_steps
+            && self.last_entropy >= self.config.entropy_floor
+        {
             self.policy_step(&z_t, &action_vec, reward);
+        }
+
+        // --- Replay mixing: occasionally train on a historical sample ---
+        if rng.random_range(0.0..1.0) < self.config.replay_ratio {
+            self.replay_step(rng);
+        }
+
+        // --- Representation drift monitor ---
+        if self.step_count == self.config.warmup_steps && self.probe_obs.is_none() {
+            self.capture_probe_reference();
+        }
+        if self.step_count > 0 && self.step_count.is_multiple_of(self.config.drift_interval) {
+            self.measure_drift();
         }
 
         self.last_surprise = surprise;
@@ -300,6 +366,125 @@ impl Agent {
         self.last_homeo = homeo;
         self.last_reward = reward;
         self.step_count += 1;
+    }
+
+    /// Run one world-model forward+backward pass.
+    /// Returns (loss, z_t, z_hat).
+    fn wm_forward_backward(
+        &mut self,
+        obs: &[f32],
+        action: &[f32],
+        z_target: &[f32],
+        lr: f32,
+    ) -> (f32, Vec<f32>, Vec<f32>) {
+        self.wm_session.set_input("obs", obs);
+        self.wm_session.set_input("action", action);
+        self.wm_session.set_input("z_target", z_target);
+        self.wm_session.set_learning_rate(lr);
+        self.wm_session.step();
+        self.wm_session.wait();
+
+        let loss = self.wm_session.read_loss();
+        let mut z_t = vec![0.0f32; self.latent_size];
+        self.wm_session.read_output_by_index(1, &mut z_t);
+        let mut z_hat = vec![0.0f32; self.latent_size];
+        self.wm_session.read_output_by_index(2, &mut z_hat);
+        (loss, z_t, z_hat)
+    }
+
+    /// Replay mixing: sample a past transition and run an extra world-model
+    /// training step on it. This re-anchors the encoder + world model to
+    /// historical experience, reducing catastrophic forgetting.
+    fn replay_step<R: Rng>(&mut self, rng: &mut R) {
+        if self.buffer.len() < 2 {
+            return;
+        }
+        // Sample an older transition and its successor (for z_target)
+        let n = self.buffer.len();
+        let i = rng.random_range(0..n - 1);
+        let ti = self.buffer.get(i);
+        let tj = self.buffer.get(i + 1);
+        let obs = ti.observation.clone();
+        let action = ti.action.clone();
+        let z_target = tj.latent.clone();
+
+        let (loss, _, _) = self.wm_forward_backward(
+            &obs,
+            &action,
+            &z_target,
+            self.config.learning_rate * self.encoder_lr_scale * 0.5, // smaller step for replay
+        );
+        self.last_replay_loss = loss;
+    }
+
+    /// Capture a fixed probe set of observations and their reference latents.
+    fn capture_probe_reference(&mut self) {
+        let n_probe = 16.min(self.buffer.len());
+        if n_probe == 0 {
+            return;
+        }
+        let step = self.buffer.len() / n_probe.max(1);
+        let mut observations = Vec::with_capacity(n_probe);
+        let mut references = Vec::with_capacity(n_probe);
+        for i in 0..n_probe {
+            let idx = i * step;
+            if idx < self.buffer.len() {
+                let t = self.buffer.get(idx);
+                observations.push(t.observation.clone());
+                references.push(t.latent.clone());
+            }
+        }
+        self.probe_obs = Some(observations);
+        self.probe_reference = Some(references);
+    }
+
+    /// Measure how far the current encoder drifts from the reference.
+    /// Reduces `encoder_lr_scale` if drift exceeds threshold.
+    fn measure_drift(&mut self) {
+        let (probes, references) = match (self.probe_obs.as_ref(), self.probe_reference.as_ref()) {
+            (Some(p), Some(r)) => (p.clone(), r.clone()),
+            _ => return,
+        };
+
+        let mut total = 0.0f32;
+        let mut count = 0;
+
+        let zero_action = vec![0.0f32; self.config.action_dim];
+        let zero_target = vec![0.0f32; self.latent_size];
+
+        for (obs, reference) in probes.iter().zip(references.iter()) {
+            // Forward-only with lr=0 to get current encoder output
+            self.wm_session.set_input("obs", obs);
+            self.wm_session.set_input("action", &zero_action);
+            self.wm_session.set_input("z_target", &zero_target);
+            self.wm_session.set_learning_rate(0.0);
+            self.wm_session.step();
+            self.wm_session.wait();
+
+            let mut current = vec![0.0f32; self.latent_size];
+            self.wm_session.read_output_by_index(1, &mut current);
+
+            let dist: f32 = current
+                .iter()
+                .zip(reference.iter())
+                .map(|(a, b)| (a - b).powi(2))
+                .sum::<f32>()
+                .sqrt();
+            if dist.is_finite() {
+                total += dist;
+                count += 1;
+            }
+        }
+
+        let drift = if count > 0 { total / count as f32 } else { 0.0 };
+        self.last_drift = drift;
+
+        // Reduce encoder LR if drift exceeds threshold, recover slowly otherwise
+        if drift > self.config.drift_threshold {
+            self.encoder_lr_scale = (self.encoder_lr_scale * 0.5).max(0.01);
+        } else {
+            self.encoder_lr_scale = (self.encoder_lr_scale * 1.1).min(1.0);
+        }
     }
 
     /// Credit assignment step.
@@ -353,36 +538,24 @@ impl Agent {
     }
 
     /// Policy + value training step.
-    ///
-    /// Advantage = credit - value_estimate. The advantage scales the
-    /// effective learning rate: `lr_effective = lr_policy * advantage`.
-    /// This implements credit-weighted policy gradient without needing
-    /// in-graph scalar multiplication.
     fn policy_step(&mut self, z_t: &[f32], action_vec: &[f32], reward: f32) {
         self.policy_session.set_input("z", z_t);
         self.policy_session.set_input("action", action_vec);
 
-        // Value target: use the current reward + credit as a simple TD(0) target.
-        // More sophisticated TD(n) would look further into the buffer.
         let value_target = reward;
         self.policy_session
             .set_input("value_target", &[value_target]);
 
-        // Advantage = reward - value_estimate.
         let advantage = reward - self.last_value;
 
-        // Only reinforce when advantage > 0 (good actions).
-        // Negative-advantage updates (anti-reinforce via negative LR) are
-        // numerically unstable — they maximize cross-entropy, driving
-        // logits to ±∞ → NaN. Skipping negative updates is standard
-        // practice for simple policy gradient.
+        // Only reinforce when advantage > 0 (good actions). Negative-advantage
+        // updates via negative LR are numerically unstable.
         if advantage > 0.0 {
-            let scale = advantage.min(1.0); // clamp to prevent explosion
+            let scale = advantage.min(1.0);
             self.policy_session
                 .set_learning_rate(self.config.lr_policy * scale);
         } else {
-            // Still train the value head (lr=0 skips SGD entirely, so
-            // use a tiny lr to update value params only via the MSE loss)
+            // Small lr to keep the value head learning via MSE
             self.policy_session
                 .set_learning_rate(self.config.lr_policy * 0.1);
         }
@@ -410,12 +583,14 @@ impl Agent {
             loss_world_model: self.last_wm_loss,
             loss_credit: self.last_credit_loss,
             loss_policy: self.last_policy_loss,
+            loss_replay: self.last_replay_loss,
             reward_mean: self.last_reward,
             reward_surprise: self.last_surprise,
             reward_novelty: self.last_novelty,
             reward_homeo: self.last_homeo,
             h_eff,
             policy_entropy: self.last_entropy,
+            repr_drift: self.last_drift,
             buffer_len: self.buffer.len(),
         }
     }
