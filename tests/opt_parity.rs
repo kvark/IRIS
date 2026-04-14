@@ -94,7 +94,7 @@ fn opt_parity_encoder() {
     );
 }
 
-/// Parity check for the world model (linear layers + relu).
+/// Parity check for the world model (z_proj + a_proj split, relu, linear).
 #[test]
 #[ignore] // requires GPU
 fn opt_parity_world_model() {
@@ -102,21 +102,24 @@ fn opt_parity_world_model() {
     let latent_dim = 4;
     let action_dim = 3;
     let hidden_dim = 6;
-    let input_dim = latent_dim + action_dim;
 
     let mut g = Graph::new();
-    let za = g.input("za", &[batch, input_dim]);
+    let z = g.input("z", &[batch, latent_dim]);
+    let action = g.input("action", &[batch, action_dim]);
     let target = g.input("target", &[batch, latent_dim]);
 
     let wm = iris::world_model::WorldModel::new(&mut g, latent_dim, action_dim, hidden_dim);
-    let z_hat = wm.forward(&mut g, za);
+    let z_hat = wm.forward(&mut g, z, action);
     let loss = g.mse_loss(z_hat, target);
     g.set_outputs(vec![loss]);
 
-    let fc1_w: Vec<f32> = (0..input_dim * hidden_dim)
+    let z_proj_w: Vec<f32> = (0..latent_dim * hidden_dim)
         .map(|i| (i as f32 * 0.04) - 0.15)
         .collect();
-    let fc1_b = vec![0.0f32; hidden_dim];
+    let z_proj_b = vec![0.0f32; hidden_dim];
+    let a_proj_w: Vec<f32> = (0..action_dim * hidden_dim)
+        .map(|i| (i as f32 * 0.05) - 0.1)
+        .collect();
     let fc2_w: Vec<f32> = (0..hidden_dim * hidden_dim)
         .map(|i| (i as f32 * 0.03) - 0.1)
         .collect();
@@ -125,19 +128,25 @@ fn opt_parity_world_model() {
         .map(|i| (i as f32 * 0.06) - 0.2)
         .collect();
 
-    let za_data: Vec<f32> = (0..batch * input_dim).map(|i| i as f32 * 0.1).collect();
+    let z_data: Vec<f32> = (0..batch * latent_dim).map(|i| i as f32 * 0.1).collect();
+    let action_data: Vec<f32> = (0..batch * action_dim).map(|i| i as f32 * 0.2).collect();
     let target_data = vec![0.0f32; batch * latent_dim];
 
     check_parity(
         &g,
         &[
-            ("world_model.fc1.weight", &fc1_w),
-            ("world_model.fc1.bias", &fc1_b),
+            ("world_model.z_proj.weight", &z_proj_w),
+            ("world_model.z_proj.bias", &z_proj_b),
+            ("world_model.a_proj.weight", &a_proj_w),
             ("world_model.fc2.weight", &fc2_w),
             ("world_model.fc2.bias", &fc2_b),
             ("world_model.fc_out.weight", &fc_out_w),
         ],
-        &[("za", &za_data), ("target", &target_data)],
+        &[
+            ("z", &z_data),
+            ("action", &action_data),
+            ("target", &target_data),
+        ],
         1,
     );
 }

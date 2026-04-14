@@ -110,8 +110,8 @@ impl Environment for GridWorld {
 fn main() {
     env_logger::init();
 
-    println!("IRIS Grid World — Phase 0 skeleton");
-    println!("===================================");
+    println!("IRIS Grid World — Phase 1");
+    println!("=========================");
 
     let mut env = GridWorld::new();
     let config = AgentConfig {

@@ -17,6 +17,9 @@ hashbrown = "0.15"
 log = "0.4"
 env_logger = "0.11"
 
+[features]
+cnn = []
+
 [[example]]
 name = "grid_world"
 path = "examples/grid_world.rs"

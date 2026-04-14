@@ -14,35 +14,42 @@ use meganeura::graph::{Graph, NodeId};
 use meganeura::nn;
 
 /// Forward dynamics world model.
+///
+/// The first layer is split into two projections (`z_proj` + `a_proj`)
+/// whose outputs are summed. This is equivalent to `W @ [z; a]` but
+/// avoids needing a concat op and — critically — keeps the encoder's
+/// z_t on the loss path so it receives gradients.
 pub struct WorldModel {
-    pub fc1: nn::Linear,
+    pub z_proj: nn::Linear,
+    pub a_proj: nn::Linear,
     pub fc2: nn::Linear,
     pub fc_out: nn::Linear,
 }
 
 impl WorldModel {
     /// Build the world model parameters.
-    ///
-    /// Input dimension is `latent_dim + action_dim` (concatenated).
     pub fn new(
         g: &mut Graph,
         latent_dim: usize,
         action_dim: usize,
         hidden_dim: usize,
     ) -> Self {
-        let input_dim = latent_dim + action_dim;
         Self {
-            fc1: nn::Linear::new(g, "world_model.fc1", input_dim, hidden_dim),
+            z_proj: nn::Linear::new(g, "world_model.z_proj", latent_dim, hidden_dim),
+            a_proj: nn::Linear::no_bias(g, "world_model.a_proj", action_dim, hidden_dim),
             fc2: nn::Linear::new(g, "world_model.fc2", hidden_dim, hidden_dim),
             fc_out: nn::Linear::no_bias(g, "world_model.fc_out", hidden_dim, latent_dim),
         }
     }
 
-    /// Forward pass: `[batch, latent_dim + action_dim] -> [batch, latent_dim]`.
+    /// Forward pass: `(z_t, action) -> z_hat_{t+1}`.
     ///
-    /// `za` is the concatenation of `z_t` and `a_t` (one-hot encoded action).
-    pub fn forward(&self, g: &mut Graph, za: NodeId) -> NodeId {
-        let h = self.fc1.forward(g, za);
+    /// `z_t`: `[batch, latent_dim]` — encoder output (on the gradient path).
+    /// `action`: `[batch, action_dim]` — one-hot or continuous action vector.
+    pub fn forward(&self, g: &mut Graph, z_t: NodeId, action: NodeId) -> NodeId {
+        let h_z = self.z_proj.forward(g, z_t);
+        let h_a = self.a_proj.forward(g, action);
+        let h = g.add(h_z, h_a);
         let h = g.relu(h);
         let h = self.fc2.forward(g, h);
         let h = g.relu(h);

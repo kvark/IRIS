@@ -38,12 +38,22 @@ jobs:
       - name: Check
         run: cargo check
 
+      - name: Check (cnn feature)
+        run: cargo check --features cnn
+
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --features cnn -- -D warnings
 
       - name: Unit tests
         run: cargo test --lib
 
+      - name: Reward signal tests
+        run: cargo test --test reward_signal
+
       - name: Opt parity tests
         run: cargo test --test opt_parity
+        continue-on-error: true
+
+      - name: Canary tests
+        run: cargo test --test canaries
         continue-on-error: true
