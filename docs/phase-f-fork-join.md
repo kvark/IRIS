@@ -9,25 +9,40 @@ IMPALA / A3C-style decentralized training; the payoff is multi-GPU / multi-
 host scaling and fault isolation per worker. For `W = 1` the runtime is
 Phase E exactly — Phase F is a strict superset.
 
-## When to reach for Phase F (not before)
+## Why Phase F (even on a single GPU)
 
-Phase E (batched lanes in one session) already gives near-linear speedup
-inside a single GPU context. Phase F is only worth its complexity when at
-least one of these is true:
+Phase E amortizes GPU kernel launches across N lanes, but those N lanes
+step in lockstep: the swarm's wall-clock step is `CPU_env_step + GPU_batch
++ CPU_reward_credit`, strictly serial. The GPU sits idle during CPU
+phases, and the CPU envs sit idle during the GPU phase.
 
-- **Multiple GPUs / hosts.** One session pins one GPU; to light up a
-  second device you need a second session, i.e. a second worker.
-- **Blocking envs.** A real-robot env, a human-in-the-loop env, or a
-  remote simulator where one env stall would starve the whole batch.
-  Phase E lanes step in lockstep; Phase F lets each worker stall on its
-  own without blocking the others.
-- **Fault isolation.** A single worker crashing (OOM, env panic, driver
-  reset) takes out its lanes only; the rest of the swarm keeps training.
-- **Exploration diversity.** Per-worker RNG + adapter mix yields a wider
-  state distribution than any single batched agent can cover, and
-  parameter averaging distills the diversity into a shared model.
+Phase F's primary wins apply on a single-GPU box:
 
-If none of these apply, stay on Phase E.
+- **CPU/GPU pipelining.** W workers stepping asynchronously let the GPU
+  stay fed while other workers are busy on their CPU env / reward work.
+  One GPU can only execute one kernel at a time, so workers don't run
+  compute in parallel — but the *queue* of dispatches stays full, and the
+  effective step rate is bounded by `max(total_cpu_time / W, GPU_time)`
+  instead of `CPU_time + GPU_time`. This is pipelining, not parallelism,
+  and it needs only one device.
+- **Exploration diversity.** Batched lanes under one policy correlate —
+  same policy, similar actions, similar states. W workers with distinct
+  RNGs and env rotations cover more of the state distribution per wall-
+  clock second. Parameter averaging distills that extra diversity into
+  the shared model. This is a convergence benefit, not throughput.
+
+Secondary motivators that do require extra hardware or isolation:
+
+- **Multiple GPUs / hosts.** Only here does Phase F give actual compute
+  parallelism — one session per device, averaged into canonical.
+- **Fault isolation.** A crashing worker (OOM, env panic, driver reset)
+  takes out its lanes only; the swarm continues.
+- **Blocking envs.** Real-robot, human-in-the-loop, or remote envs whose
+  stall time dwarfs the GPU step. Phase E lockstep would starve the
+  whole batch on one slow env; Phase F lets each worker stall on its own.
+
+If none of these apply — tight CPU envs where `CPU_time ≪ GPU_time`,
+single device, no fault requirements — stay on Phase E.
 
 ## Core change
 
