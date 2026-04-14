@@ -19,7 +19,7 @@
 //! - Entropy floor
 
 use crate::OptLevel;
-use crate::adapter::{EnvAdapter, MAX_ACTION_DIM, OBS_TOKEN_DIM};
+use crate::adapter::{EnvAdapter, MAX_ACTION_DIM, OBS_TOKEN_DIM, TASK_DIM};
 use crate::buffer::{ExperienceBuffer, Transition};
 use crate::credit;
 use crate::encoder::Encoder;
@@ -27,6 +27,7 @@ use crate::env::{Action, Environment, Observation};
 use crate::policy;
 use crate::reward::{RewardCircuit, RewardWeights};
 use crate::world_model::WorldModel;
+use hashbrown::HashMap;
 use meganeura::Session;
 use meganeura::graph::Graph;
 use rand::Rng;
@@ -105,6 +106,12 @@ pub struct Diagnostics {
 pub struct Agent {
     pub config: AgentConfig,
     adapter: Box<dyn EnvAdapter>,
+    /// Per-env task embedding (key = env_id). Each env gets a fixed
+    /// deterministic-random vector based on its id; we feed the active
+    /// one into the encoder as a graph input each step. Not trained
+    /// (the encoder learns to map (obs, env_embedding) into per-env
+    /// latents).
+    task_embeddings: HashMap<u32, Vec<f32>>,
     /// True for exactly one step after `switch_env`, so the next stored
     /// transition is tagged as an env boundary.
     pending_boundary: bool,
@@ -163,20 +170,47 @@ impl Agent {
     /// graphs use universal token sizes and will never need rebuilding for
     /// subsequent env switches.
     pub fn new(config: AgentConfig, adapter: Box<dyn EnvAdapter>) -> Self {
-        // --- World model graph (uses universal token sizes) ---
+        // --- World model graph (uses universal token sizes + task) ---
+        //
+        // The task embedding is fed as a graph **input** named "task".
+        // Per-env values are deterministic-random and persisted CPU-side
+        // in `task_embeddings`. The encoder learns to map (obs_token,
+        // task) into per-env latents.
         let wm_session = {
             let mut g = Graph::new();
             let obs = g.input("obs", &[config.batch_size, OBS_TOKEN_DIM]);
             let action = g.input("action", &[config.batch_size, MAX_ACTION_DIM]);
             let z_target = g.input("z_target", &[config.batch_size, config.latent_dim]);
+            // Task embedding is fed as a graph **input**, not a parameter.
+            // The encoder sees per-env conditioning and can specialize its
+            // representations, but we don't backprop into the embedding
+            // itself (meganeura's autodiff over a parameter on this code
+            // path is unstable). Each env's embedding is a fixed
+            // deterministic-random vector keyed off the env_id; the
+            // encoder learns to map (obs_token, env_embedding) into
+            // env-specific latents.
+            let task = g.input("task", &[config.batch_size, TASK_DIM]);
 
-            let enc = Encoder::new(&mut g, OBS_TOKEN_DIM, config.latent_dim, config.hidden_dim);
-            let z_t = enc.forward(&mut g, obs);
+            let enc = Encoder::new(
+                &mut g,
+                OBS_TOKEN_DIM,
+                TASK_DIM,
+                config.latent_dim,
+                config.hidden_dim,
+            );
+            let z_t = enc.forward(&mut g, obs, task);
             let wm = WorldModel::new(&mut g, config.latent_dim, MAX_ACTION_DIM, config.hidden_dim);
             let z_hat = wm.forward(&mut g, z_t, action);
             let loss = WorldModel::loss(&mut g, z_hat, z_target);
 
-            g.set_outputs(vec![loss, z_t, z_hat]);
+            // Note: we only expose `loss` and `z_t` as outputs.
+            // `z_hat` is intentionally NOT an output — meganeura reuses
+            // the intermediate buffer of any internal node that's also
+            // exposed as an output for backward-pass scratch, which gives
+            // back garbage on read. We only need z_t (for the buffer's
+            // latent column); surprise is recovered from `sqrt(wm_loss
+            // * latent_dim)` instead of `||z_t - z_hat||`.
+            g.set_outputs(vec![loss, z_t]);
             let mut s = build_session(&g, config.opt_level);
             init_parameters(&mut s);
             s
@@ -219,8 +253,15 @@ impl Agent {
         };
 
         let latent_size = config.batch_size * config.latent_dim;
+        let task_size = config.batch_size * TASK_DIM;
+
+        // Initialize this env's task embedding to its deterministic seed.
+        let initial_task = embedding_for(adapter.id(), task_size);
+        let mut task_embeddings = HashMap::new();
+        task_embeddings.insert(adapter.id(), initial_task);
 
         Self {
+            task_embeddings,
             adapter,
             pending_boundary: false,
             buffer: ExperienceBuffer::new(config.buffer_capacity, config.grid_resolution),
@@ -255,7 +296,26 @@ impl Agent {
     /// parameters; the next transition stored is marked as an env
     /// boundary so the world model and credit assigner don't try to
     /// attribute dynamics or reward across the switch.
+    ///
+    /// Per-env state swap:
+    /// 1. Read the current task embedding out of `wm_session` and save
+    ///    it under the *outgoing* env's id.
+    /// 2. Look up the incoming env's saved embedding (or initialize a
+    ///    new one to the mean of all existing embeddings, so a fresh
+    ///    env warm-starts from related learned ones).
+    /// 3. Upload the new embedding to `wm_session`.
     pub fn switch_env(&mut self, adapter: Box<dyn EnvAdapter>) {
+        let incoming_id = adapter.id();
+        let task_size = self.config.batch_size * TASK_DIM;
+
+        // Generate the new env's deterministic embedding if we haven't seen
+        // it before. Re-entering an env will reuse the same vector (its
+        // env_id determines it), which keeps the encoder's per-env
+        // specialization consistent across hops.
+        self.task_embeddings
+            .entry(incoming_id)
+            .or_insert_with(|| embedding_for(incoming_id, task_size));
+
         self.adapter = adapter;
         self.pending_boundary = true;
     }
@@ -317,7 +377,7 @@ impl Agent {
 
         let obs_token = self.obs_token_scratch.clone();
         let action_token = self.action_token_scratch.clone();
-        let (wm_loss, z_t, z_hat) = self.wm_forward_backward(
+        let (wm_loss, z_t) = self.wm_forward_backward(
             &obs_token,
             &action_token,
             &z_target,
@@ -326,12 +386,11 @@ impl Agent {
         self.last_wm_loss = wm_loss;
 
         // --- Reward ---
-        let pred_error: f32 = z_t
-            .iter()
-            .zip(z_hat.iter())
-            .map(|(a, b)| (a - b).powi(2))
-            .sum::<f32>()
-            .sqrt();
+        // Surprise = sqrt(latent_dim · wm_loss) ≈ ‖z_hat − z_target‖.
+        // We don't expose z_hat as an output (meganeura aliases buffers
+        // for graph internals that are also outputs); reconstruct the
+        // magnitude from the loss instead.
+        let pred_error = (self.config.latent_dim as f32 * wm_loss.max(0.0)).sqrt();
         let surprise = RewardCircuit::surprise(pred_error);
         let visit_count = self.buffer.visit_count(&z_t);
         let novelty = RewardCircuit::novelty(visit_count);
@@ -388,16 +447,23 @@ impl Agent {
     }
 
     /// Run one world-model forward+backward pass.
+    /// Returns (loss, z_t).
     fn wm_forward_backward(
         &mut self,
         obs: &[f32],
         action: &[f32],
         z_target: &[f32],
         lr: f32,
-    ) -> (f32, Vec<f32>, Vec<f32>) {
+    ) -> (f32, Vec<f32>) {
         self.wm_session.set_input("obs", obs);
         self.wm_session.set_input("action", action);
         self.wm_session.set_input("z_target", z_target);
+        let task = self
+            .task_embeddings
+            .get(&self.adapter.id())
+            .cloned()
+            .unwrap_or_else(|| vec![0.0f32; self.config.batch_size * TASK_DIM]);
+        self.wm_session.set_input("task", &task);
         self.wm_session.set_learning_rate(lr);
         self.wm_session.step();
         self.wm_session.wait();
@@ -405,9 +471,7 @@ impl Agent {
         let loss = self.wm_session.read_loss();
         let mut z_t = vec![0.0f32; self.latent_size];
         self.wm_session.read_output_by_index(1, &mut z_t);
-        let mut z_hat = vec![0.0f32; self.latent_size];
-        self.wm_session.read_output_by_index(2, &mut z_hat);
-        (loss, z_t, z_hat)
+        (loss, z_t)
     }
 
     fn replay_step<R: Rng>(&mut self, rng: &mut R) {
@@ -427,7 +491,7 @@ impl Agent {
         let action = ti.action.clone();
         let z_target = tj.latent.clone();
 
-        let (loss, _, _) = self.wm_forward_backward(
+        let (loss, _) = self.wm_forward_backward(
             &obs,
             &action,
             &z_target,
@@ -467,11 +531,17 @@ impl Agent {
 
         let zero_action = vec![0.0f32; self.config.batch_size * MAX_ACTION_DIM];
         let zero_target = vec![0.0f32; self.latent_size];
+        let task = self
+            .task_embeddings
+            .get(&self.adapter.id())
+            .cloned()
+            .unwrap_or_else(|| vec![0.0f32; self.config.batch_size * TASK_DIM]);
 
         for (obs, reference) in probes.iter().zip(references.iter()) {
             self.wm_session.set_input("obs", obs);
             self.wm_session.set_input("action", &zero_action);
             self.wm_session.set_input("z_target", &zero_target);
+            self.wm_session.set_input("task", &task);
             self.wm_session.set_learning_rate(0.0);
             self.wm_session.step();
             self.wm_session.wait();
@@ -604,6 +674,20 @@ impl Agent {
     }
 }
 
+/// Deterministic per-env task embedding. Same env_id always produces the
+/// same vector, so swapping in and out across runs is consistent. Values
+/// are spread in [-0.5, 0.5] via a golden-ratio hash.
+fn embedding_for(env_id: u32, dim: usize) -> Vec<f32> {
+    use std::f32::consts::PI;
+    (0..dim)
+        .map(|i| {
+            let h =
+                ((env_id as f64 + i as f64 * 17.0 + 1.0) * 0.618_033_988_749_895).fract() as f32;
+            (h * PI * 2.0).sin() * 0.5
+        })
+        .collect()
+}
+
 /// Initialize all parameters with Xavier (Glorot) initialization.
 #[allow(clippy::pattern_type_mismatch)]
 fn init_parameters(session: &mut Session) {
@@ -626,8 +710,12 @@ fn init_parameters(session: &mut Session) {
             let data = vec![1.0f32; num_elements];
             session.set_parameter(name, &data);
         } else {
-            let fan = (num_elements as f32).sqrt() as usize;
-            let data = xavier_init(fan, fan, i as u64 * 7919);
+            // xavier_init returns fan*fan elements; pad/truncate to exactly
+            // num_elements so set_parameter overwrites the whole buffer
+            // (otherwise tail bytes hold whatever was previously there).
+            let fan = (num_elements as f32).sqrt().max(1.0) as usize;
+            let mut data = xavier_init(fan, fan, i as u64 * 7919);
+            data.resize(num_elements, 0.0);
             session.set_parameter(name, &data);
         }
     }

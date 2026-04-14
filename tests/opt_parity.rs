@@ -51,45 +51,56 @@ fn check_parity(
     }
 }
 
-/// Parity check for the encoder (linear + relu + norm + linear).
+/// Parity check for the encoder (obs_proj + task_proj + relu + norm + linear).
 #[test]
 #[ignore] // requires GPU
 fn opt_parity_encoder() {
     let batch = 4;
     let obs_dim = 8;
+    let task_dim = 4;
     let latent_dim = 4;
     let hidden_dim = 6;
 
     let mut g = Graph::new();
     let x = g.input("x", &[batch, obs_dim]);
+    let task = g.input("task", &[batch, task_dim]);
     let target = g.input("target", &[batch, latent_dim]);
 
-    let encoder = iris::encoder::Encoder::new(&mut g, obs_dim, latent_dim, hidden_dim);
-    let z = encoder.forward(&mut g, x);
+    let encoder = iris::encoder::Encoder::new(&mut g, obs_dim, task_dim, latent_dim, hidden_dim);
+    let z = encoder.forward(&mut g, x, task);
     let loss = g.mse_loss(z, target);
     g.set_outputs(vec![loss]);
 
-    let fc1_w: Vec<f32> = (0..obs_dim * hidden_dim)
+    let obs_proj_w: Vec<f32> = (0..obs_dim * hidden_dim)
         .map(|i| (i as f32 * 0.05) - 0.2)
         .collect();
-    let fc1_b = vec![0.01f32; hidden_dim];
+    let obs_proj_b = vec![0.01f32; hidden_dim];
+    let task_proj_w: Vec<f32> = (0..task_dim * hidden_dim)
+        .map(|i| (i as f32 * 0.07) - 0.1)
+        .collect();
     let norm_w = vec![1.0f32; hidden_dim];
     let fc2_w: Vec<f32> = (0..hidden_dim * latent_dim)
         .map(|i| (i as f32 * 0.08) - 0.1)
         .collect();
 
     let x_data: Vec<f32> = (0..batch * obs_dim).map(|i| i as f32 * 0.1).collect();
+    let task_data: Vec<f32> = (0..batch * task_dim).map(|i| i as f32 * 0.05).collect();
     let target_data = vec![0.0f32; batch * latent_dim];
 
     check_parity(
         &g,
         &[
-            ("encoder.fc1.weight", &fc1_w),
-            ("encoder.fc1.bias", &fc1_b),
+            ("encoder.obs_proj.weight", &obs_proj_w),
+            ("encoder.obs_proj.bias", &obs_proj_b),
+            ("encoder.task_proj.weight", &task_proj_w),
             ("encoder.norm.weight", &norm_w),
             ("encoder.fc2.weight", &fc2_w),
         ],
-        &[("x", &x_data), ("target", &target_data)],
+        &[
+            ("x", &x_data),
+            ("task", &task_data),
+            ("target", &target_data),
+        ],
         1, // scalar loss
     );
 }

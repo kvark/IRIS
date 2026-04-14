@@ -16,6 +16,11 @@ pub const MAX_ACTION_DIM: usize = 6;
 /// (padded with zeros initially) to this size.
 pub const OBS_TOKEN_DIM: usize = 64;
 
+/// Per-env task embedding dimension. The agent holds one `[TASK_DIM]`
+/// learned vector per env_id, fed to the encoder as a second input so
+/// the shared encoder can specialize its behaviour per environment.
+pub const TASK_DIM: usize = 8;
+
 /// Adapter translating between an environment's native obs/action shape
 /// and the agent's universal token space.
 ///

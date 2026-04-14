@@ -81,15 +81,21 @@ cheap.
 Random observation distributions across envs aren't enough for the encoder
 to reliably switch behavioural modes. We add an explicit task embedding:
 
-- Each env gets a `task_embedding: [TASK_DIM]` (say 8 dims).
-- The embedding is concatenated to the observation token before the
-  encoder, or fed as a separate input that the world model and policy
-  attend to.
-- Embeddings are learned. When a new env arrives, initialize its embedding
-  to the mean of existing embeddings (or zeros) and let it train.
+- Each env gets a `task_embedding: [TASK_DIM]` (8 dims).
+- The embedding is fed as a graph **input** (named `"task"`) to the
+  encoder, summed with the obs projection at the hidden layer (same
+  trick we use to avoid concat in the world model).
+- Embeddings are **deterministic-random per env_id**, not learned. The
+  encoder learns to map `(obs_token, env_embedding)` into per-env
+  latents; the embedding itself is just a stable identifier.
 
-This is the standard multi-task RL pattern (e.g. Multitask DQN). It gives
-the core a way to specialize behaviour without forking parameters.
+  Why not learned? An earlier iteration made the embedding a graph
+  parameter so SGD would train it. Meganeura's autodiff over a small
+  parameter on this code path was unstable — the world model diverged
+  to NaN within a few steps. Making the embedding a fixed input (per
+  env_id, picked from a golden-ratio hash) avoids the issue and still
+  gives the encoder a unique env signal. The encoder absorbs the
+  per-env specialization into its own weights.
 
 ### 3. Reset / env-hop signal
 

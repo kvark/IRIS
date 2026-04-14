@@ -12,25 +12,41 @@ use meganeura::graph::{Graph, NodeId};
 use meganeura::nn;
 
 /// MLP-based encoder for structured (feature vector) observations.
+///
+/// Takes both the observation token and a per-env task embedding, summing
+/// their projections at the hidden layer. This is mathematically
+/// equivalent to concatenating `[obs, task]` and applying one wide linear
+/// layer, but avoids needing a general concat op.
 pub struct Encoder {
-    pub fc1: nn::Linear,
+    pub obs_proj: nn::Linear,
+    pub task_proj: nn::Linear,
     pub norm: nn::RmsNorm,
     pub fc2: nn::Linear,
 }
 
 impl Encoder {
     /// Build the encoder parameters in the graph.
-    pub fn new(g: &mut Graph, obs_dim: usize, latent_dim: usize, hidden_dim: usize) -> Self {
+    pub fn new(
+        g: &mut Graph,
+        obs_dim: usize,
+        task_dim: usize,
+        latent_dim: usize,
+        hidden_dim: usize,
+    ) -> Self {
         Self {
-            fc1: nn::Linear::new(g, "encoder.fc1", obs_dim, hidden_dim),
+            obs_proj: nn::Linear::new(g, "encoder.obs_proj", obs_dim, hidden_dim),
+            task_proj: nn::Linear::no_bias(g, "encoder.task_proj", task_dim, hidden_dim),
             norm: nn::RmsNorm::new(g, "encoder.norm.weight", hidden_dim, 1e-5),
             fc2: nn::Linear::no_bias(g, "encoder.fc2", hidden_dim, latent_dim),
         }
     }
 
-    /// Forward pass: `[batch, obs_dim] -> [batch, latent_dim]`.
-    pub fn forward(&self, g: &mut Graph, obs: NodeId) -> NodeId {
-        let h = self.fc1.forward(g, obs);
+    /// Forward pass: obs `[batch, obs_dim]` + task `[batch, task_dim]`
+    /// → `[batch, latent_dim]`.
+    pub fn forward(&self, g: &mut Graph, obs: NodeId, task: NodeId) -> NodeId {
+        let h_obs = self.obs_proj.forward(g, obs);
+        let h_task = self.task_proj.forward(g, task);
+        let h = g.add(h_obs, h_task);
         let h = g.relu(h);
         let h = self.norm.forward(g, h);
         self.fc2.forward(g, h)
