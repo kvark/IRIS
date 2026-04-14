@@ -24,6 +24,7 @@ pub mod buffer;
 pub mod credit;
 pub mod encoder;
 pub mod env;
+pub mod envs;
 pub mod policy;
 pub mod reward;
 pub mod world_model;

@@ -65,13 +65,13 @@ fn canary_next_step_prediction() {
         .map(|x| x.iter().map(|v| v + 0.1).collect())
         .collect();
 
-    session.set_learning_rate(1e-3);
-
     let mut final_loss = f32::MAX;
     for step in 0..steps {
         let idx = step % inputs.len();
         session.set_input("x", &inputs[idx]);
         session.set_input("target", &targets[idx]);
+        // Must set LR before each step — meganeura clears it after use
+        session.set_learning_rate(1e-3);
         session.step();
         session.wait();
         final_loss = session.read_loss();

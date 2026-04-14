@@ -20,3 +20,7 @@ env_logger = "0.11"
 [[example]]
 name = "grid_world"
 path = "examples/grid_world.rs"
+
+[[example]]
+name = "cart_pole"
+path = "examples/cart_pole.rs"

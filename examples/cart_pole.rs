@@ -1,25 +1,25 @@
-//! Run the IRIS agent in the 5x5 grid world.
+//! Run the IRIS agent on CartPole.
 //!
-//! Run: `cargo run --example grid_world`
+//! Run: `cargo run --example cart_pole`
 
-use iris::envs::grid_world::{GridWorld, NUM_ACTIONS, OBS_DIM};
+use iris::envs::cart_pole::CartPole;
 use iris::{Agent, AgentConfig, Environment};
 use rand::SeedableRng;
 
 fn main() {
     env_logger::init();
 
-    println!("IRIS Grid World");
-    println!("================");
+    println!("IRIS CartPole");
+    println!("==============");
 
-    let mut env = GridWorld::new();
+    let mut env = CartPole::new();
     let config = AgentConfig {
-        obs_dim: OBS_DIM,
-        action_dim: NUM_ACTIONS,
+        obs_dim: 4,
+        action_dim: 2,
         latent_dim: 8,
-        hidden_dim: 16,
-        history_len: 8,
-        buffer_capacity: 1000,
+        hidden_dim: 32,
+        history_len: 16,
+        buffer_capacity: 5000,
         batch_size: 1,
         learning_rate: 1e-3,
         ..AgentConfig::default()
@@ -30,7 +30,7 @@ fn main() {
     println!("agent ready");
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(42);
-    let num_steps = 500;
+    let num_steps = 2000;
 
     for step in 0..num_steps {
         let obs = env.observe();
@@ -38,7 +38,7 @@ fn main() {
         env.step(&action);
         agent.observe(&obs, &action, &env, &mut rng);
 
-        if (step + 1) % 100 == 0 {
+        if (step + 1) % 500 == 0 {
             let d = agent.diagnostics();
             println!(
                 "step {:>4} | wm={:.4} cr={:.4} | r={:.3} (s={:.3} n={:.3} h={:.3}) | H_eff={:.1} buf={}",
