@@ -156,7 +156,7 @@ fn canary_iris_world_model() {
     let warmup = 50;
     for _ in 0..warmup {
         let obs = env.observe();
-        let action = agent.act(&mut rng);
+        let action = agent.act(&obs, &mut rng);
         env.step(&action);
         agent.observe(&obs, &action, &env, &mut rng);
     }
@@ -165,7 +165,7 @@ fn canary_iris_world_model() {
     // Train more
     for _ in warmup..500 {
         let obs = env.observe();
-        let action = agent.act(&mut rng);
+        let action = agent.act(&obs, &mut rng);
         env.step(&action);
         agent.observe(&obs, &action, &env, &mut rng);
     }
