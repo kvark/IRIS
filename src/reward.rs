@@ -1,30 +1,37 @@
 //! Frozen Reward Circuit.
 //!
-//! Computes `r_t` as a weighted sum of three primitive signals:
+//! Computes `r_t` as a weighted sum of four primitive signals:
 //! - **Surprise**: world model prediction error
 //! - **Novelty**: inverse-sqrt visit count
 //! - **Homeostatic balance**: deviation from target ranges
+//! - **Order**: negative Shannon entropy of the observation (reduces chaos)
 //!
 //! This circuit is intentionally frozen — it receives no gradient updates.
 //! All computation happens on CPU.
 
 use crate::env::HomeostaticVariable;
 
-/// Weights for the three reward components.
+/// Weights for the four reward components.
 #[derive(Clone, Debug)]
 pub struct RewardWeights {
     pub surprise: f32,
     pub novelty: f32,
     pub homeostatic: f32,
+    /// Weight for the order primitive. Default 0 — only envs that actually
+    /// benefit from entropy reduction (e.g. ARC-AGI-ish patterning tasks)
+    /// should enable this.
+    pub order: f32,
 }
 
 impl Default for RewardWeights {
     fn default() -> Self {
-        // Default: homeostatic dominates, surprise secondary, novelty tertiary
+        // Default: homeostatic dominates, surprise secondary, novelty tertiary,
+        // order off.
         Self {
             surprise: 1.0,
             novelty: 0.5,
             homeostatic: 2.0,
+            order: 0.0,
         }
     }
 }
@@ -65,11 +72,37 @@ impl RewardCircuit {
         -penalty
     }
 
+    /// Order: negative Shannon entropy of the observation treated as a
+    /// distribution over its own components.
+    ///
+    /// The observation is normalized so that `|o_i| / Σ|o_j|` forms a
+    /// probability distribution. Low-entropy distributions (one or a few
+    /// dominant components) score near zero — "ordered". High-entropy
+    /// distributions (mass spread evenly) score negative — "chaotic".
+    ///
+    /// The reward is `−H`, so maximizing it drives the agent toward
+    /// states where observations are more concentrated. Useful for
+    /// pattern-fixing tasks (ARC-AGI) where success = regularity.
+    pub fn order(obs: &[f32]) -> f32 {
+        const EPS: f32 = 1e-8;
+        if obs.is_empty() {
+            return 0.0;
+        }
+        let abs_sum: f32 = obs.iter().map(|x| x.abs()).sum::<f32>() + EPS;
+        let mut entropy = 0.0f32;
+        for &o in obs {
+            let p = (o.abs() / abs_sum) + EPS;
+            entropy -= p * p.ln();
+        }
+        -entropy
+    }
+
     /// Combined reward signal.
-    pub fn compute(&self, surprise: f32, novelty: f32, homeostatic: f32) -> f32 {
+    pub fn compute(&self, surprise: f32, novelty: f32, homeostatic: f32, order: f32) -> f32 {
         self.weights.surprise * surprise
             + self.weights.novelty * novelty
             + self.weights.homeostatic * homeostatic
+            + self.weights.order * order
     }
 }
 
@@ -111,14 +144,67 @@ mod tests {
     }
 
     #[test]
+    fn order_one_hot_is_maximal() {
+        // One-hot observation = fully concentrated = high order (near 0)
+        let obs = vec![0.0, 0.0, 1.0, 0.0, 0.0];
+        let r = RewardCircuit::order(&obs);
+        assert!(r > -0.001, "one-hot should have order ≈ 0, got {r}");
+    }
+
+    #[test]
+    fn order_uniform_is_minimal() {
+        // Uniform observation = maximum entropy = low order (negative)
+        let obs = vec![1.0; 8];
+        let r = RewardCircuit::order(&obs);
+        // Max entropy for 8 components is ln(8) ≈ 2.079
+        assert!(r < -2.0, "uniform obs should have low order, got {r}");
+    }
+
+    #[test]
+    fn order_monotonic_in_concentration() {
+        // Concentrating mass onto fewer components should increase order
+        let spread = vec![1.0, 1.0, 1.0, 1.0];
+        let mid = vec![3.0, 1.0, 1.0, 1.0];
+        let peaked = vec![10.0, 0.5, 0.5, 0.5];
+        let r_spread = RewardCircuit::order(&spread);
+        let r_mid = RewardCircuit::order(&mid);
+        let r_peaked = RewardCircuit::order(&peaked);
+        assert!(r_spread < r_mid, "{r_spread} should be < {r_mid}");
+        assert!(r_mid < r_peaked, "{r_mid} should be < {r_peaked}");
+    }
+
+    #[test]
+    fn order_empty_is_zero() {
+        let obs: Vec<f32> = vec![];
+        assert_eq!(RewardCircuit::order(&obs), 0.0);
+    }
+
+    #[test]
     fn combined_reward() {
         let rc = RewardCircuit::new(RewardWeights {
             surprise: 1.0,
             novelty: 0.5,
             homeostatic: 2.0,
+            order: 0.0,
         });
-        let r = rc.compute(0.2, 0.8, -0.1);
-        // 1.0*0.2 + 0.5*0.8 + 2.0*(-0.1) = 0.2 + 0.4 - 0.2 = 0.4
+        let r = rc.compute(0.2, 0.8, -0.1, 0.0);
+        // 1.0*0.2 + 0.5*0.8 + 2.0*(-0.1) + 0.0*0.0 = 0.4
         assert!((r - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn combined_reward_with_order() {
+        let rc = RewardCircuit::new(RewardWeights {
+            surprise: 0.0,
+            novelty: 0.0,
+            homeostatic: 0.0,
+            order: 1.0,
+        });
+        let r_peaked = rc.compute(0.0, 0.0, 0.0, RewardCircuit::order(&[10.0, 0.1, 0.1, 0.1]));
+        let r_uniform = rc.compute(0.0, 0.0, 0.0, RewardCircuit::order(&[1.0; 4]));
+        assert!(
+            r_peaked > r_uniform,
+            "peaked ({r_peaked}) should reward more than uniform ({r_uniform})"
+        );
     }
 }

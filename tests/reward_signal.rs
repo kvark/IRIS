@@ -13,24 +13,24 @@ fn reward_varies_across_states() {
     let rc = RewardCircuit::new(RewardWeights::default());
 
     // Different surprise levels
-    let r1 = rc.compute(0.1, 1.0, 0.0);
-    let r2 = rc.compute(0.9, 1.0, 0.0);
+    let r1 = rc.compute(0.1, 1.0, 0.0, 0.0);
+    let r2 = rc.compute(0.9, 1.0, 0.0, 0.0);
     assert!(
         (r1 - r2).abs() > 0.1,
         "reward should vary with surprise: r1={r1}, r2={r2}"
     );
 
     // Different novelty levels
-    let r3 = rc.compute(0.5, 1.0, 0.0);
-    let r4 = rc.compute(0.5, 0.1, 0.0);
+    let r3 = rc.compute(0.5, 1.0, 0.0, 0.0);
+    let r4 = rc.compute(0.5, 0.1, 0.0, 0.0);
     assert!(
         (r3 - r4).abs() > 0.1,
         "reward should vary with novelty: r3={r3}, r4={r4}"
     );
 
     // Different homeostatic levels
-    let r5 = rc.compute(0.5, 0.5, 0.0);
-    let r6 = rc.compute(0.5, 0.5, -1.0);
+    let r5 = rc.compute(0.5, 0.5, 0.0, 0.0);
+    let r6 = rc.compute(0.5, 0.5, -1.0, 0.0);
     assert!(
         (r5 - r6).abs() > 0.1,
         "reward should vary with homeostatic: r5={r5}, r6={r6}"
@@ -98,7 +98,27 @@ fn homeostatic_penalty_gradient() {
 #[test]
 fn combined_reward_nonzero() {
     let rc = RewardCircuit::new(RewardWeights::default());
-    let r = rc.compute(0.5, 0.8, -0.1);
+    let r = rc.compute(0.5, 0.8, -0.1, 0.0);
     assert!(r.abs() > 0.01, "combined reward should be non-zero: {r}");
     assert!(r.is_finite(), "reward must be finite");
+}
+
+/// Order reward should prefer concentrated observations over uniform ones
+/// when the order weight is enabled.
+#[test]
+fn order_prefers_concentrated_observations() {
+    let rc = RewardCircuit::new(RewardWeights {
+        surprise: 0.0,
+        novelty: 0.0,
+        homeostatic: 0.0,
+        order: 1.0,
+    });
+    let concentrated = RewardCircuit::order(&[5.0, 0.1, 0.1, 0.1]);
+    let chaotic = RewardCircuit::order(&[1.0; 4]);
+    let r_concentrated = rc.compute(0.0, 0.0, 0.0, concentrated);
+    let r_chaotic = rc.compute(0.0, 0.0, 0.0, chaotic);
+    assert!(
+        r_concentrated > r_chaotic,
+        "order reward should prefer concentrated obs: {r_concentrated} vs {r_chaotic}"
+    );
 }

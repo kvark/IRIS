@@ -97,6 +97,7 @@ pub struct Diagnostics {
     pub reward_surprise: f32,
     pub reward_novelty: f32,
     pub reward_homeo: f32,
+    pub reward_order: f32,
     pub h_eff: f32,
     pub policy_entropy: f32,
     pub repr_drift: f32,
@@ -124,6 +125,7 @@ pub struct Agent {
     last_surprise: f32,
     last_novelty: f32,
     last_homeo: f32,
+    last_order: f32,
     last_reward: f32,
     last_entropy: f32,
     last_drift: f32,
@@ -233,6 +235,7 @@ impl Agent {
             last_surprise: 0.0,
             last_novelty: 0.0,
             last_homeo: 0.0,
+            last_order: 0.0,
             last_reward: 0.0,
             last_entropy: 0.0,
             last_drift: 0.0,
@@ -324,7 +327,8 @@ impl Agent {
         let visit_count = self.buffer.visit_count(&z_t);
         let novelty = RewardCircuit::novelty(visit_count);
         let homeo = RewardCircuit::homeostatic(env.homeostatic_variables());
-        let reward = self.reward_circuit.compute(surprise, novelty, homeo);
+        let order = RewardCircuit::order(&obs.data);
+        let reward = self.reward_circuit.compute(surprise, novelty, homeo, order);
 
         // --- Store transition ---
         self.buffer.push(Transition {
@@ -364,6 +368,7 @@ impl Agent {
         self.last_surprise = surprise;
         self.last_novelty = novelty;
         self.last_homeo = homeo;
+        self.last_order = order;
         self.last_reward = reward;
         self.step_count += 1;
     }
@@ -588,6 +593,7 @@ impl Agent {
             reward_surprise: self.last_surprise,
             reward_novelty: self.last_novelty,
             reward_homeo: self.last_homeo,
+            reward_order: self.last_order,
             h_eff,
             policy_entropy: self.last_entropy,
             repr_drift: self.last_drift,

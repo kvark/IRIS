@@ -162,6 +162,60 @@ if `sync_interval` ≥ 100 steps.
 Recommended: get 4a working first, defer 4b until we have a real
 multi-env-instance scenario.
 
+## Fourth reward primitive: order
+
+The frozen reward circuit has three primitives today: surprise, novelty,
+homeostatic. We add a fourth: **order**, which rewards the agent for
+reducing entropy in its observations.
+
+Motivation: ARC-AGI-style tasks require the agent to *fix* things —
+complete a pattern, unify a palette, resolve an inconsistency. The agent
+should prefer states where the observation is more concentrated /
+regular. Surprise encourages exploration; order encourages
+consolidation.
+
+Definition (v1, intentionally simple):
+
+```
+p_i    = |obs_i| / (Σ_j |obs_j| + ε)
+H(obs) = -Σ_i p_i · log(p_i + ε)
+r_order = -H(obs)
+```
+
+The observation is reinterpreted as a probability distribution over its
+own components (after normalization). Shannon entropy of that
+distribution is low when one or a few components dominate — "ordered" —
+and high when the mass is spread — "chaotic". The reward is the
+negative of entropy, so ordered states get more reward.
+
+Combined reward becomes:
+
+```
+r_t = w_s·r_surprise + w_n·r_novelty + w_h·r_homeo + w_o·r_order
+```
+
+Default `w_o = 0` — we don't want to change existing behaviour on envs
+where order isn't meaningful (CartPole doesn't have a notion of
+order-vs-chaos in the observation). ARC-AGI-ish envs set `w_o > 0` and
+let the agent chase state-space concentration.
+
+Known limits of v1:
+
+- **Degenerate on one-hot observations.** GridWorld's observation is
+  always one-hot (plus energy scalar) so order is ~constant. Fine —
+  set `w_o = 0` for those envs.
+- **Latent-space alternative.** A more principled variant measures
+  entropy on the encoder output (the latent) instead of the raw
+  observation. This gives a learnable "order" but can drive the
+  encoder to collapse. Defer.
+- **Window-based alternative.** Compare entropy of recent obs window
+  to older obs window; reward reductions. Captures "agent is
+  progressively reducing env chaos" more cleanly but needs a window
+  buffer. Defer to v2.
+
+Implementation is a pure CPU function like the other primitives;
+no graph changes.
+
 ## ARC-AGI3 readiness
 
 ARC-AGI3 has the structure: many small environments, very limited
@@ -214,25 +268,28 @@ Phased rollout that doesn't break existing examples:
 
 6. **Phase F — Fork-join workers** (deferred). Only if 5 isn't enough.
 
-## Open questions
+## Open questions (resolved)
 
-- **What's the right `OBS_TOKEN_DIM` and `MAX_ACTION_DIM`?** Big enough to
-  accommodate ARC-AGI3 (probably 64 / 16 respectively), small enough to
-  keep the core fast. Needs measurement.
-- **Should the per-env action mask be a graph input or CPU-side?** Graph
-  input lets the loss zero out non-live dims cleanly; CPU-side is simpler
-  but loses the cleanness. Probably graph input once we get there.
-- **Per-env credit assigners?** The credit assigner's contrastive
-  training depends on similar states with different rewards; if we mix
-  envs, the contrastive pairs span envs and might be meaningless. Either
-  stratify pair sampling by env, or keep one credit assigner per env.
+- **`OBS_TOKEN_DIM` and `MAX_ACTION_DIM`** — picking from current envs:
+  max `obs_dim` = 34 (Taxi), max `action_dim` = 6 (Taxi).
+  Set `MAX_ACTION_DIM = 6`, `OBS_TOKEN_DIM = 64`. Both can grow later.
+- **Action mask: CPU side.** The graph stays clean; the per-env adapter
+  zeros or softmaxes over the live dims before returning an action.
+  Revisit if the wasted gradient on dead dims becomes a problem.
+- **One shared credit assigner** across all envs. Sample contrastive
+  pairs only within the same env (env_id-stratified) so the signal
+  stays meaningful. Simpler than per-env credit and keeps transfer of
+  temporal-attribution circuitry across envs.
+
+## Still to decide later
+
 - **Frozen reward circuit and env hopping.** The reward circuit is frozen
-  by design, but `homeostatic` is per-env. We need `RewardCircuit` to
-  route the right env's homeostatic provider per step — trivial if we
-  pass `env: &dyn Environment` to `observe()`, which we already do.
+  by design, but `homeostatic` is per-env. The route is trivial since we
+  already pass `env: &dyn Environment` to `observe()`.
 - **Catastrophic forgetting across envs.** Replay mixing already exists
-  for within-env. Cross-env replay (sampling from old envs while in a
-  new one) is a separate concern; the multi-env buffer enables it.
+  for within-env. Cross-env replay (sampling old envs while in a new
+  one) is a separate concern; the multi-env buffer enables it, but the
+  right sampling ratio wants measurement.
 
 ## What to build first
 
