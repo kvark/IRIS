@@ -138,18 +138,20 @@ fn main() {
         let action = agent.act(&mut rng);
         let _result = env.step(&action);
 
-        agent.observe(&obs, &action, &env);
+        agent.observe(&obs, &action, &env, &mut rng);
 
         if (step + 1) % 50 == 0 {
             let diag = agent.diagnostics();
             println!(
-                "step {:>4} | wm_loss={:.4} | reward={:.3} (s={:.3} n={:.3} h={:.3}) | buf={}",
+                "step {:>4} | wm={:.4} cr={:.4} | r={:.3} (s={:.3} n={:.3} h={:.3}) | H_eff={:.1} buf={}",
                 diag.step,
                 diag.loss_world_model,
+                diag.loss_credit,
                 diag.reward_mean,
                 diag.reward_surprise,
                 diag.reward_novelty,
                 diag.reward_homeo,
+                diag.h_eff,
                 diag.buffer_len,
             );
         }

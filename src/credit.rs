@@ -8,9 +8,11 @@
 //! credit_i = r_t * alpha_i    (alpha normalized via softmax)
 //! ```
 //!
+//! Training: contrastive loss over pairs of similar states with divergent
+//! rewards. The credit assigner should attribute the reward difference to
+//! the diverging action sequences.
+//!
 //! Effective temporal scope diagnostic: `H_eff = sum_i (i * alpha_i)`
-//! - Growing H_eff -> agent learns actions have longer consequences (healthy)
-//! - Shrinking H_eff -> agent becoming myopic (investigate)
 
 use meganeura::graph::{Graph, NodeId};
 use meganeura::nn;
@@ -28,9 +30,12 @@ pub struct CreditAssigner {
 }
 
 impl CreditAssigner {
+    /// Per-timestep input dimension: `latent_dim + action_dim + 1`.
+    pub fn input_dim(latent_dim: usize, action_dim: usize) -> usize {
+        latent_dim + action_dim + 1
+    }
+
     /// Build the credit assigner parameters.
-    ///
-    /// `input_dim` = `latent_dim + action_dim + 1` (the +1 is for the reward scalar).
     pub fn new(
         g: &mut Graph,
         latent_dim: usize,
@@ -38,7 +43,7 @@ impl CreditAssigner {
         history_len: usize,
         hidden_dim: usize,
     ) -> Self {
-        let input_dim = latent_dim + action_dim + 1;
+        let input_dim = Self::input_dim(latent_dim, action_dim);
         let num_heads = 2u32;
         let head_dim = (hidden_dim / num_heads as usize) as u32;
         let attn_dim = (num_heads * head_dim) as usize;
@@ -57,8 +62,8 @@ impl CreditAssigner {
 
     /// Forward pass: `[history_len, input_dim] -> [history_len, 1]`.
     ///
-    /// Returns per-timestep attention weights (pre-softmax logits).
-    /// The caller applies softmax to get normalized credit weights.
+    /// Returns per-timestep credit logits. Apply softmax to get
+    /// normalized credit weights alpha_i.
     pub fn forward(&self, g: &mut Graph, history: NodeId) -> NodeId {
         let h = self.input_proj.forward(g, history);
         let h = g.relu(h);
@@ -72,6 +77,44 @@ impl CreditAssigner {
 
         self.output_proj.forward(g, attn_out)
     }
+
+    /// MSE loss against a contrastive credit target.
+    ///
+    /// `credit_pred`: `[history_len, 1]` — logits from forward().
+    /// `credit_target`: `[history_len, 1]` — target distribution from
+    /// contrastive pair sampling (action divergence, softmax-normalized).
+    pub fn loss(g: &mut Graph, credit_pred: NodeId, credit_target: NodeId) -> NodeId {
+        g.mse_loss(credit_pred, credit_target)
+    }
+}
+
+/// Build a complete credit assigner training graph.
+///
+/// Returns the graph ready for `build_session()`. Inputs:
+/// - `"history"`: `[history_len, input_dim]`
+/// - `"credit_target"`: `[history_len, 1]`
+///
+/// Outputs:
+/// - `[0]`: loss (scalar)
+/// - `[1]`: credit logits `[history_len, 1]`
+pub fn build_credit_graph(
+    latent_dim: usize,
+    action_dim: usize,
+    history_len: usize,
+    hidden_dim: usize,
+) -> Graph {
+    let input_dim = CreditAssigner::input_dim(latent_dim, action_dim);
+
+    let mut g = Graph::new();
+    let history = g.input("history", &[history_len, input_dim]);
+    let credit_target = g.input("credit_target", &[history_len, 1]);
+
+    let ca = CreditAssigner::new(&mut g, latent_dim, action_dim, history_len, hidden_dim);
+    let credit_pred = ca.forward(&mut g, history);
+    let loss = CreditAssigner::loss(&mut g, credit_pred, credit_target);
+
+    g.set_outputs(vec![loss, credit_pred]);
+    g
 }
 
 /// Compute the effective temporal scope from credit weights.
@@ -91,25 +134,42 @@ pub fn effective_scope(credit_weights: &[f32]) -> f32 {
         .sum()
 }
 
+/// Softmax-normalize raw logits into a probability distribution.
+pub fn softmax(logits: &[f32]) -> Vec<f32> {
+    let max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let exp: Vec<f32> = logits.iter().map(|&x| (x - max).exp()).collect();
+    let sum: f32 = exp.iter().sum();
+    exp.iter().map(|&e| e / sum).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn effective_scope_uniform() {
-        // Uniform weights -> H_eff = mean index
         let weights = vec![0.0; 10];
         let h_eff = effective_scope(&weights);
-        // Mean of 0..9 = 4.5
         assert!((h_eff - 4.5).abs() < 1e-4);
     }
 
     #[test]
     fn effective_scope_recent() {
-        // All weight on the last timestep -> H_eff = 9
         let mut weights = vec![-100.0; 10];
         weights[9] = 0.0;
         let h_eff = effective_scope(&weights);
         assert!((h_eff - 9.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn softmax_sums_to_one() {
+        let logits = vec![1.0, 2.0, 3.0, 4.0];
+        let probs = softmax(&logits);
+        let sum: f32 = probs.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-6);
+        // Should be monotonically increasing
+        for i in 1..probs.len() {
+            assert!(probs[i] > probs[i - 1]);
+        }
     }
 }

@@ -158,7 +158,7 @@ fn canary_iris_world_model() {
         let obs = env.observe();
         let action = agent.act(&mut rng);
         env.step(&action);
-        agent.observe(&obs, &action, &env);
+        agent.observe(&obs, &action, &env, &mut rng);
     }
     let early_loss = agent.diagnostics().loss_world_model;
 
@@ -167,7 +167,7 @@ fn canary_iris_world_model() {
         let obs = env.observe();
         let action = agent.act(&mut rng);
         env.step(&action);
-        agent.observe(&obs, &action, &env);
+        agent.observe(&obs, &action, &env, &mut rng);
     }
     let late_loss = agent.diagnostics().loss_world_model;
 
