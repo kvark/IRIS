@@ -72,13 +72,18 @@ jobs:
           python-version: "3.11"
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: python
 
-      - name: Install maturin and test deps
-        run: pip install maturin pytest gymnasium
-
-      - name: Build extension
-        working-directory: python
-        run: maturin develop --release
+      - name: Build and install extension
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install maturin pytest gymnasium
+          maturin develop --release -m python/Cargo.toml
 
       - name: Pytest
-        run: pytest python/tests -q
+        run: |
+          . .venv/bin/activate
+          pytest python/tests -q

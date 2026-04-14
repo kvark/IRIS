@@ -20,6 +20,9 @@ classifiers = [
 Repository = "https://github.com/kvark/kindle"
 
 [tool.maturin]
-module-name = "kindle"
+# Native extension is installed at `kindle._native`; the pure-Python
+# shim at `kindle/__init__.py` re-exports the public surface so users
+# just write `import kindle`.
+module-name = "kindle._native"
 python-source = "."
 features = ["pyo3/extension-module"]

@@ -7,7 +7,9 @@
 //! Build: `maturin develop -m python/Cargo.toml`
 
 use kindle::adapter::{GenericAdapter, OBS_TOKEN_DIM};
-use kindle::env::{Action, Environment, HomeostaticProvider, HomeostaticVariable, Observation, StepResult};
+use kindle::env::{
+    Action, Environment, HomeostaticProvider, HomeostaticVariable, Observation, StepResult,
+};
 use kindle::{Agent, AgentConfig};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
@@ -15,7 +17,11 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 /// A kindle agent wired to a Python-side environment.
-#[pyclass(name = "Agent", module = "kindle")]
+///
+/// Marked `unsendable` because the inner GPU session holds raw pointers that
+/// are not `Send`. Python callers must keep the `Agent` on the thread that
+/// created it.
+#[pyclass(name = "Agent", module = "kindle", unsendable)]
 pub struct PyAgent {
     agent: Agent,
     rng: StdRng,
@@ -68,7 +74,8 @@ impl PyAgent {
             let next_vec = parse_obs(&next_obs)?;
             let next_observation = Observation::new(next_vec.clone());
 
-            self.agent.observe(&next_observation, &action, &proxy, &mut self.rng);
+            self.agent
+                .observe(&next_observation, &action, &proxy, &mut self.rng);
             obs_vec = next_vec;
         }
         Ok(())
@@ -97,7 +104,10 @@ struct ProxyEnv<'a> {
 
 impl<'a> ProxyEnv<'a> {
     fn new(obs: &'a Observation) -> Self {
-        Self { obs, empty: Vec::new() }
+        Self {
+            obs,
+            empty: Vec::new(),
+        }
     }
 }
 
@@ -135,17 +145,17 @@ fn parse_obs(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
         }
         return Ok(v);
     }
-    let mut v = Vec::new();
     let iter = obj.iter()?;
+    let mut v = Vec::new();
     for item in iter {
-        let item = item?;
+        let item: Bound<'_, PyAny> = item?;
         v.push(item.extract::<f32>()?);
     }
     Ok(v)
 }
 
 #[pymodule]
-fn kindle(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAgent>()?;
     m.add("OBS_TOKEN_DIM", OBS_TOKEN_DIM)?;
     Ok(())
