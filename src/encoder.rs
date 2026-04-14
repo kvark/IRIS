@@ -5,8 +5,8 @@
 //! (primary), policy gradient (secondary), and value head TD error (secondary).
 //!
 //! Two variants:
-//! - **MLP** (default): for structured (feature vector) observations.
-//! - **CNN** (feature `cnn`): for pixel observations (NCHW flat layout).
+//! - **MLP**: for structured (feature vector) observations.
+//! - **CNN**: for pixel observations (NCHW flat layout).
 
 use meganeura::graph::{Graph, NodeId};
 use meganeura::nn;
@@ -44,7 +44,6 @@ impl Encoder {
 ///
 /// Input: flat NCHW tensor `[batch * channels * H * W]`.
 /// Output: `[batch, latent_dim]`.
-#[cfg(feature = "cnn")]
 pub struct CnnEncoder {
     pub conv1: nn::Conv2d,
     pub conv2: nn::Conv2d,
@@ -53,7 +52,6 @@ pub struct CnnEncoder {
     pub pool_channels: u32,
 }
 
-#[cfg(feature = "cnn")]
 impl CnnEncoder {
     /// Build a CNN encoder for images of size `channels x height x width`.
     pub fn new(

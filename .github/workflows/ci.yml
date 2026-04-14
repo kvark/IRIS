@@ -38,11 +38,8 @@ jobs:
       - name: Check
         run: cargo check
 
-      - name: Check (cnn feature)
-        run: cargo check --features cnn
-
       - name: Clippy
-        run: cargo clippy --features cnn -- -D warnings
+        run: cargo clippy -- -D warnings
 
       - name: Unit tests
         run: cargo test --lib
