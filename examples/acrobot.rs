@@ -22,6 +22,8 @@ fn main() {
         buffer_capacity: 5000,
         batch_size: 1,
         learning_rate: 1e-4,
+        lr_credit: 3e-5, // 0.3× base
+        lr_policy: 5e-5, // 0.5× base
         warmup_steps: 200,
         ..AgentConfig::default()
     };
@@ -43,8 +45,14 @@ fn main() {
             let d = agent.diagnostics();
             println!(
                 "step {:>5} | wm={:.4} cr={:.4} pi={:.4} | r={:.3} ent={:.2} H={:.1} | buf={}",
-                d.step, d.loss_world_model, d.loss_credit, d.loss_policy,
-                d.reward_mean, d.policy_entropy, d.h_eff, d.buffer_len,
+                d.step,
+                d.loss_world_model,
+                d.loss_credit,
+                d.loss_policy,
+                d.reward_mean,
+                d.policy_entropy,
+                d.h_eff,
+                d.buffer_len,
             );
         }
     }

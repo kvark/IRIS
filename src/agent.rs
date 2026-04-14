@@ -307,7 +307,18 @@ impl Agent {
         let h = self.config.history_len;
 
         if let Some(history_flat) = self.buffer.flatten_history(h) {
-            self.credit_session.set_input("history", &history_flat);
+            // Clamp all values to prevent NaN propagation
+            let history_clean: Vec<f32> = history_flat
+                .iter()
+                .map(|v| {
+                    if v.is_finite() {
+                        v.clamp(-5.0, 5.0)
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
+            self.credit_session.set_input("history", &history_clean);
 
             let target = if let Some((hi, lo)) =
                 self.buffer
@@ -317,7 +328,12 @@ impl Agent {
             } else {
                 vec![1.0 / h as f32; h]
             };
-            self.credit_session.set_input("credit_target", &target);
+            let target_clean: Vec<f32> = target
+                .iter()
+                .map(|v| if v.is_finite() { *v } else { 1.0 / h as f32 })
+                .collect();
+            self.credit_session
+                .set_input("credit_target", &target_clean);
 
             self.credit_session.set_learning_rate(self.config.lr_credit);
             self.credit_session.step();

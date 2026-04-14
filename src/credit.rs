@@ -44,8 +44,8 @@ impl CreditAssigner {
         hidden_dim: usize,
     ) -> Self {
         let input_dim = Self::input_dim(latent_dim, action_dim);
-        let num_heads = 2u32;
-        let head_dim = (hidden_dim / num_heads as usize) as u32;
+        let num_heads = 1u32;
+        let head_dim = hidden_dim as u32;
         let attn_dim = (num_heads * head_dim) as usize;
 
         Self {

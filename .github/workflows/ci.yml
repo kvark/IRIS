@@ -25,7 +25,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Install lavapipe and Vulkan
         if: runner.os == 'Linux'
@@ -35,8 +35,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Check
-        run: cargo check
+      - name: Format
+        run: cargo fmt -- --check
 
       - name: Clippy
         run: cargo clippy -- -D warnings
@@ -47,10 +47,6 @@ jobs:
       - name: Reward signal tests
         run: cargo test --test reward_signal
 
-      - name: Opt parity tests
-        run: cargo test --test opt_parity
-        continue-on-error: true
-
-      - name: Canary tests
-        run: cargo test --test canaries
+      - name: GPU tests (opt parity + canaries)
+        run: cargo test --test opt_parity --test canaries -- --ignored
         continue-on-error: true

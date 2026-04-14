@@ -59,17 +59,22 @@ impl Acrobot {
     fn update_homeo(&mut self) {
         self.homeo = vec![HomeostaticVariable {
             value: -self.tip_height(), // negate so higher tip → lower value → closer to target
-            target: -1.0,             // tip above threshold
+            target: -1.0,              // tip above threshold
             tolerance: 0.1,
         }];
     }
 
     /// Compute derivatives: [dθ₁, dθ₂, ddθ₁, ddθ₂]
-    fn derivatives(&self, theta1: f32, theta2: f32, dtheta1: f32, dtheta2: f32, torque: f32) -> [f32; 4] {
-        let d1 = M1 * LC1 * LC1
-            + M2 * (L1 * L1 + LC2 * LC2 + 2.0 * L1 * LC2 * theta2.cos())
-            + I1
-            + I2;
+    fn derivatives(
+        &self,
+        theta1: f32,
+        theta2: f32,
+        dtheta1: f32,
+        dtheta2: f32,
+        torque: f32,
+    ) -> [f32; 4] {
+        let d1 =
+            M1 * LC1 * LC1 + M2 * (L1 * L1 + LC2 * LC2 + 2.0 * L1 * LC2 * theta2.cos()) + I1 + I2;
         let d2 = M2 * (LC2 * LC2 + L1 * LC2 * theta2.cos()) + I2;
 
         let phi2 = M2 * LC2 * G * (theta1 + theta2 - PI / 2.0).cos();
@@ -78,10 +83,9 @@ impl Acrobot {
             + (M1 * LC1 + M2 * L1) * G * (theta1 - PI / 2.0).cos()
             + phi2;
 
-        let ddtheta2 = (torque + (d2 / d1) * phi1
-            - M2 * L1 * LC2 * dtheta1 * dtheta1 * theta2.sin()
-            - phi2)
-            / (M2 * LC2 * LC2 + I2 - d2 * d2 / d1);
+        let ddtheta2 =
+            (torque + (d2 / d1) * phi1 - M2 * L1 * LC2 * dtheta1 * dtheta1 * theta2.sin() - phi2)
+                / (M2 * LC2 * LC2 + I2 - d2 * d2 / d1);
         let ddtheta1 = -(d2 * ddtheta2 + phi1) / d1;
 
         [dtheta1, dtheta2, ddtheta1, ddtheta2]
@@ -93,13 +97,25 @@ impl Acrobot {
 
         let k1 = self.derivatives(s[0], s[1], s[2], s[3], torque);
 
-        let s2: Vec<f32> = s.iter().zip(k1.iter()).map(|(si, ki)| si + DT / 2.0 * ki).collect();
+        let s2: Vec<f32> = s
+            .iter()
+            .zip(k1.iter())
+            .map(|(si, ki)| si + DT / 2.0 * ki)
+            .collect();
         let k2 = self.derivatives(s2[0], s2[1], s2[2], s2[3], torque);
 
-        let s3: Vec<f32> = s.iter().zip(k2.iter()).map(|(si, ki)| si + DT / 2.0 * ki).collect();
+        let s3: Vec<f32> = s
+            .iter()
+            .zip(k2.iter())
+            .map(|(si, ki)| si + DT / 2.0 * ki)
+            .collect();
         let k3 = self.derivatives(s3[0], s3[1], s3[2], s3[3], torque);
 
-        let s4: Vec<f32> = s.iter().zip(k3.iter()).map(|(si, ki)| si + DT * ki).collect();
+        let s4: Vec<f32> = s
+            .iter()
+            .zip(k3.iter())
+            .map(|(si, ki)| si + DT * ki)
+            .collect();
         let k4 = self.derivatives(s4[0], s4[1], s4[2], s4[3], torque);
 
         for i in 0..4 {
@@ -220,6 +236,8 @@ mod tests {
     fn wrap_angle_test() {
         assert!((wrap_angle(0.0)).abs() < 1e-6);
         assert!((wrap_angle(PI) - PI).abs() < 1e-5 || (wrap_angle(PI) + PI).abs() < 1e-5);
-        assert!((wrap_angle(3.0 * PI) - PI).abs() < 1e-5 || (wrap_angle(3.0 * PI) + PI).abs() < 1e-5);
+        assert!(
+            (wrap_angle(3.0 * PI) - PI).abs() < 1e-5 || (wrap_angle(3.0 * PI) + PI).abs() < 1e-5
+        );
     }
 }

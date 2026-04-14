@@ -170,18 +170,27 @@ impl ExperienceBuffer {
 
     /// Flatten a history window into a single vector for the credit assigner.
     ///
-    /// Each timestep becomes `[latent..., action..., reward]`, concatenated
-    /// across `n` steps. Returns `None` if not enough data.
+    /// Each timestep becomes `[latent..., action..., reward_normalized]`,
+    /// concatenated across `n` steps. Rewards are normalized to zero mean
+    /// and clamped to [-1, 1] to prevent gradient explosion.
     pub fn flatten_history(&self, n: usize) -> Option<Vec<f32>> {
         if self.len() < n {
             return None;
         }
         let window = self.recent_window(n);
+
+        // Normalize rewards in the window
+        let rewards: Vec<f32> = window.iter().map(|t| t.reward).collect();
+        let mean = rewards.iter().sum::<f32>() / rewards.len() as f32;
+        let std = (rewards.iter().map(|r| (r - mean).powi(2)).sum::<f32>() / rewards.len() as f32)
+            .sqrt()
+            .max(1e-6);
+
         let mut flat = Vec::new();
-        for t in &window {
+        for (i, t) in window.iter().enumerate() {
             flat.extend_from_slice(&t.latent);
             flat.extend_from_slice(&t.action);
-            flat.push(t.reward);
+            flat.push(((rewards[i] - mean) / std).clamp(-1.0, 1.0));
         }
         Some(flat)
     }

@@ -43,8 +43,14 @@ fn main() {
             let d = agent.diagnostics();
             println!(
                 "step {:>5} | wm={:.4} cr={:.4} pi={:.4} | r={:.3} ent={:.2} H={:.1} | buf={}",
-                d.step, d.loss_world_model, d.loss_credit, d.loss_policy,
-                d.reward_mean, d.policy_entropy, d.h_eff, d.buffer_len,
+                d.step,
+                d.loss_world_model,
+                d.loss_credit,
+                d.loss_policy,
+                d.reward_mean,
+                d.policy_entropy,
+                d.h_eff,
+                d.buffer_len,
             );
         }
     }
