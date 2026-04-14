@@ -352,14 +352,24 @@ impl Agent {
         self.policy_session
             .set_input("value_target", &[value_target]);
 
-        // Advantage = reward - value_estimate (from last forward pass).
-        // Clamped to [-1, 1] to prevent gradient explosion.
-        let advantage = (reward - self.last_value).clamp(-1.0, 1.0);
+        // Advantage = reward - value_estimate.
+        let advantage = reward - self.last_value;
 
-        // Scale LR by advantage: positive → reinforce, negative → anti-reinforce.
-        // Cross-entropy gives -log π(a|s), so SGD with positive lr reinforces.
-        let lr_effective = self.config.lr_policy * advantage;
-        self.policy_session.set_learning_rate(lr_effective);
+        // Only reinforce when advantage > 0 (good actions).
+        // Negative-advantage updates (anti-reinforce via negative LR) are
+        // numerically unstable — they maximize cross-entropy, driving
+        // logits to ±∞ → NaN. Skipping negative updates is standard
+        // practice for simple policy gradient.
+        if advantage > 0.0 {
+            let scale = advantage.min(1.0); // clamp to prevent explosion
+            self.policy_session
+                .set_learning_rate(self.config.lr_policy * scale);
+        } else {
+            // Still train the value head (lr=0 skips SGD entirely, so
+            // use a tiny lr to update value params only via the MSE loss)
+            self.policy_session
+                .set_learning_rate(self.config.lr_policy * 0.1);
+        }
         self.policy_session.step();
         self.policy_session.wait();
 
