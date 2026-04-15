@@ -119,6 +119,17 @@ pub struct Diagnostics {
 /// Per-lane state. One per concurrent batch slot. Every slot owns its own
 /// adapter, buffer, reward circuit and boundary flag; GPU graphs are shared
 /// across lanes and feed the stacked per-lane inputs in a single dispatch.
+/// One sampled transition from a lane's buffer, staged for a batched
+/// replay forward+backward. We materialize this as a struct (rather than
+/// a 4-tuple) so the replay-step code reads cleanly.
+#[derive(Clone)]
+struct ReplaySample {
+    obs: Vec<f32>,
+    action: Vec<f32>,
+    z_target: Vec<f32>,
+    env_id: u32,
+}
+
 struct Lane {
     adapter: Box<dyn EnvAdapter>,
     buffer: ExperienceBuffer,
@@ -163,6 +174,14 @@ pub struct Agent {
     last_replay_loss: f32,
     last_drift: f32,
     encoder_lr_scale: f32,
+    /// Batch LR compensation: user's `learning_rate` is per-sample, but
+    /// every WM/credit/policy loss is averaged over N rows, so per-sample
+    /// gradient magnitude shrinks linearly with N. We multiply every
+    /// learning rate by √N at the use sites so the effective per-sample
+    /// update matches the N = 1 reference. √N (not N) is the standard
+    /// large-batch rule of thumb — linear scaling tends to destabilize
+    /// at larger N.
+    batch_lr_scale: f32,
     /// Scratch buffers, sized [N × per-lane-dim], reused each step.
     obs_token_scratch: Vec<f32>,
     action_token_scratch: Vec<f32>,
@@ -243,13 +262,23 @@ impl Agent {
             let z_hat = wm.forward(&mut g, z_t, action);
             let loss = WorldModel::loss(&mut g, z_hat, z_target);
 
-            // We expose `loss` and `z_t` as outputs; `z_hat` stays
-            // internal because surprise is recovered on the CPU as
-            // `sqrt(latent_dim · wm_loss)`, so we don't need to read
-            // it back. `z_t` is the encoder output that feeds every
-            // downstream CPU primitive (novelty grid, policy `z` input,
-            // credit history, drift probe).
-            g.set_outputs(vec![loss, z_t]);
+            // Per-lane squared-error output. Exposing `(z_hat − z_target)²`
+            // as `[N, latent_dim]` lets us compute per-lane prediction error
+            // (and therefore per-lane surprise reward) on the CPU without
+            // mutating the scalar `loss` used for backprop. This is the
+            // Phase E.v2 "per-lane surprise" hook that the design doc
+            // flagged as the thing to build when the shared mean-loss
+            // surrogate starts hurting at large N.
+            //
+            // We use `z_target − z_hat` (i.e. `add(z_target, neg(z_hat))`)
+            // instead of the reverse to keep `z_hat`'s primary consumer the
+            // mse_loss node — meganeura's forward-optimize can still fuse
+            // the loss path cleanly without fighting for the `z_hat`
+            // buffer.
+            let neg_zhat = g.neg(z_hat);
+            let diff = g.add(z_target, neg_zhat);
+            let sq = g.mul(diff, diff);
+            g.set_outputs(vec![loss, z_t, sq]);
             let mut s = build_session(&g, config.opt_level);
             init_parameters(&mut s);
             s
@@ -342,6 +371,7 @@ impl Agent {
             last_replay_loss: 0.0,
             last_drift: 0.0,
             encoder_lr_scale: 1.0,
+            batch_lr_scale: (config.batch_size as f32).sqrt(),
             obs_token_scratch: vec![0.0; n * OBS_TOKEN_DIM],
             action_token_scratch: vec![0.0; n * MAX_ACTION_DIM],
             z_target_scratch: vec![0.0; n * config.latent_dim],
@@ -488,26 +518,36 @@ impl Agent {
         }
 
         // --- One batched WM forward+backward ---
-        let wm_loss =
-            self.wm_forward_backward_stacked(self.config.learning_rate * self.encoder_lr_scale);
+        let wm_loss = self.wm_forward_backward_stacked(
+            self.config.learning_rate * self.encoder_lr_scale * self.batch_lr_scale,
+        );
         self.last_wm_loss = wm_loss;
 
-        // Read stacked z_t output [N, latent_dim].
+        // Read stacked z_t output [N, latent_dim] and per-lane
+        // squared-error output [N, latent_dim] from the WM graph.
         let mut z_stack = vec![0.0f32; n * ld];
         self.wm_session.read_output_by_index(1, &mut z_stack);
+        let mut sq_stack = vec![0.0f32; n * ld];
+        self.wm_session.read_output_by_index(2, &mut sq_stack);
 
         // --- Per-lane reward + transition push ---
-        // Surprise uses the shared mean-loss surrogate (Phase E.v1): the WM
-        // graph emits a scalar mean loss over the batch, so per-lane
-        // surprise collapses to a shared per-step scalar (see the design
-        // doc for the optional per_lane_loss refinement).
-        let pred_error = (ld as f32 * wm_loss.max(0.0)).sqrt();
-        let surprise = RewardCircuit::surprise(pred_error);
-
+        // Per-lane surprise: `pred_error_i = ||z_hat_i − z_target_i||` is
+        // the L2 norm of the i-th row of `(z_hat − z_target)`, i.e. the
+        // sqrt of the sum of that row's squared-errors. Replaces the old
+        // Phase E.v1 mean-loss surrogate, which blurred rare-event signal
+        // across all N lanes at large batch sizes.
         for (i, lane) in self.lanes.iter_mut().enumerate() {
             let z_row = &z_stack[i * ld..(i + 1) * ld];
             let obs_row = &self.obs_token_scratch[i * OBS_TOKEN_DIM..(i + 1) * OBS_TOKEN_DIM];
             let act_row = &self.action_token_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+            let sq_row = &sq_stack[i * ld..(i + 1) * ld];
+
+            let row_sum: f32 = sq_row
+                .iter()
+                .map(|&v| if v.is_finite() { v } else { 0.0 })
+                .sum();
+            let pred_error = row_sum.max(0.0).sqrt();
+            let surprise = RewardCircuit::surprise(pred_error);
 
             let visit_count = lane.buffer.visit_count(z_row);
             let novelty = RewardCircuit::novelty(visit_count);
@@ -552,10 +592,10 @@ impl Agent {
             self.policy_step_batched(&z_stack);
         }
 
-        // --- Replay mixing: one sampled replay per call, random lane ---
+        // --- Replay mixing: one batched replay per call, one transition
+        // sampled per lane (no zero-row dilution).
         if rng.random_range(0.0..1.0) < self.config.replay_ratio {
-            let lane_idx = rng.random_range(0..n);
-            self.replay_step(lane_idx, rng);
+            self.replay_step(rng);
         }
 
         // --- Representation drift monitor (shared probe set, WM session) ---
@@ -586,50 +626,83 @@ impl Agent {
     }
 
     /// Sample one replay transition per lane and run a single batched WM
-    /// forward+backward over the stacked rows. If a lane has too few
-    /// transitions or hits an env boundary, its row is zeroed (the shared
-    /// mean-loss averages it in as a no-op).
-    fn replay_step<R: Rng>(&mut self, _primary_lane: usize, rng: &mut R) {
+    /// forward+backward over the stacked rows. Each lane retries up to 8
+    /// random indices to find a non-boundary pair in its own buffer; if
+    /// that fails (buffer < 2, or deeply fragmented by env switches), we
+    /// fall back to the most recent valid donor lane's sample so every
+    /// batch row carries signal instead of zeros.
+    fn replay_step<R: Rng>(&mut self, rng: &mut R) {
         let ld = self.latent_dim;
+        let n = self.lanes.len();
 
-        // Build stacked replay inputs. Any lane without a valid sample
-        // contributes an all-zeros row that the graph sees as a trivial
-        // "predict zero from zero" target — still a legal gradient,
-        // cheaply absorbed into the batch mean.
-        self.obs_token_scratch.fill(0.0);
-        self.action_token_scratch.fill(0.0);
-        self.z_target_scratch.fill(0.0);
-        for (i, lane) in self.lanes.iter().enumerate() {
+        // Per-lane sampled transitions; `None` for lanes that couldn't
+        // find a valid non-boundary pair after 8 retries.
+        let mut samples: Vec<Option<ReplaySample>> = Vec::with_capacity(n);
+        for lane in &self.lanes {
             let buf_len = lane.buffer.len();
             if buf_len < 2 {
+                samples.push(None);
                 continue;
             }
-            let idx = rng.random_range(0..buf_len - 1);
-            let ti = lane.buffer.get(idx);
-            let tj = lane.buffer.get(idx + 1);
-            // Skip replay across env boundaries (latent → latent is
-            // meaningless when env just switched).
-            if tj.env_boundary || ti.env_id != tj.env_id {
-                continue;
+            let mut found: Option<ReplaySample> = None;
+            for _ in 0..8 {
+                let idx = rng.random_range(0..buf_len - 1);
+                let ti = lane.buffer.get(idx);
+                let tj = lane.buffer.get(idx + 1);
+                // Skip replay across env boundaries (latent → latent is
+                // meaningless when env just switched).
+                if tj.env_boundary || ti.env_id != tj.env_id {
+                    continue;
+                }
+                found = Some(ReplaySample {
+                    obs: ti.observation.clone(),
+                    action: ti.action.clone(),
+                    z_target: tj.latent.clone(),
+                    env_id: ti.env_id,
+                });
+                break;
             }
+            samples.push(found);
+        }
+
+        // Fall back every failed lane to the most recent valid donor so
+        // the batch has no zero rows (which dilute the shared gradient).
+        // If *no* lane produced a sample, bail — nothing to replay.
+        let donor = samples.iter().rev().find_map(|s| s.clone());
+        let Some(donor) = donor else {
+            return;
+        };
+        for s in samples.iter_mut() {
+            if s.is_none() {
+                *s = Some(donor.clone());
+            }
+        }
+
+        for (i, sample) in samples.iter().enumerate() {
+            let sample = sample.as_ref().expect("filled above");
+            let obs = &sample.obs;
+            let act = &sample.action;
+            let z_target = &sample.z_target;
+            let env_id = &sample.env_id;
             let obs_row = &mut self.obs_token_scratch[i * OBS_TOKEN_DIM..(i + 1) * OBS_TOKEN_DIM];
-            obs_row.copy_from_slice(&ti.observation);
+            obs_row.copy_from_slice(obs);
             let act_row =
                 &mut self.action_token_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
-            act_row.copy_from_slice(&ti.action);
+            act_row.copy_from_slice(act);
             let z_row = &mut self.z_target_scratch[i * ld..(i + 1) * ld];
-            z_row.copy_from_slice(&tj.latent);
+            z_row.copy_from_slice(z_target);
 
             let task_row = &mut self.task_scratch[i * TASK_DIM..(i + 1) * TASK_DIM];
-            if let Some(emb) = self.task_embeddings.get(&ti.env_id) {
+            if let Some(emb) = self.task_embeddings.get(env_id) {
                 task_row.copy_from_slice(emb);
             } else {
                 task_row.fill(0.0);
             }
         }
 
-        let loss = self
-            .wm_forward_backward_stacked(self.config.learning_rate * self.encoder_lr_scale * 0.5);
+        let loss = self.wm_forward_backward_stacked(
+            self.config.learning_rate * self.encoder_lr_scale * self.batch_lr_scale * 0.5,
+        );
         self.last_replay_loss = loss;
     }
 
@@ -744,7 +817,12 @@ impl Agent {
     fn credit_step<R: Rng>(&mut self, lane_idx: usize, rng: &mut R) {
         let h = self.config.history_len;
         let latent_dim = self.config.latent_dim;
-        let lr_credit = self.config.lr_credit;
+        // Credit runs per-lane (serialized), not batched — so it doesn't
+        // get the loss-averaging dilution. But the shared credit weights
+        // absorb N updates per synchronous step instead of 1, and we want
+        // each of those updates scaled consistently with the WM/policy
+        // updates on the same step. √N keeps the magnitudes aligned.
+        let lr_credit = self.config.lr_credit * self.batch_lr_scale;
 
         // Build the history + contrastive target on the immutable borrow of
         // the lane, then drop it before touching `self.credit_session`.
@@ -840,7 +918,7 @@ impl Agent {
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
         self.policy_session
-            .set_learning_rate(self.config.lr_policy * lr_scale);
+            .set_learning_rate(self.config.lr_policy * lr_scale * self.batch_lr_scale);
         self.policy_session.step();
         self.policy_session.wait();
 

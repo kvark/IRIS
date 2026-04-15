@@ -59,20 +59,35 @@ def lunar_lander_homeo(obs, action):
     crash_risk = descent * proximity
 
     fuel = _FUEL_COST.get(int(action), 0.0)
-    not_landed = 1.0 - max(leg1, leg2)  # 1 airborne, 0 when a leg touches
+
+    # Sharp "safely landed, anywhere" indicator — 0 iff BOTH legs are down
+    # AND the lander is essentially stopped; 1 in every other state. This
+    # replaces the softer "not_landed" signal with one that draws a much
+    # bigger gap between "I've actually landed" and "I'm hovering low,"
+    # so the averaged gradient at large N still carries enough weight to
+    # pull the policy toward committing to a landing rather than
+    # equilibrating in mid-air.
+    both_legs = 1.0 if (leg1 > 0 and leg2 > 0) else 0.0
+    stopped = 1.0 if speed < 0.1 else 0.0
+    not_safely_landed = 1.0 - both_legs * stopped
 
     return [
-        # Severe: any crash risk triggers a large penalty immediately.
-        {"value": crash_risk * 10.0, "target": 0.0, "tolerance": 0.0},
+        # Severe-enough (×3) to dominate the raw descent signal, but no
+        # longer so dominant (was ×10) that the other primitives are
+        # drowned out once the agent stops crashing outright.
+        {"value": crash_risk * 3.0, "target": 0.0, "tolerance": 0.0},
         # Don't tilt when close to the ground.
         {"value": abs(angle) * proximity, "target": 0.0, "tolerance": 0.05},
         # Don't arrive fast when close to the ground.
         {"value": speed * proximity, "target": 0.0, "tolerance": 0.1},
         # Each engine firing costs fuel.
         {"value": fuel, "target": 0.0, "tolerance": 0.0},
-        # Airborne → penalty; feet-on-ground → zero. Encourages landing
-        # but is location-agnostic (any terrain counts).
-        {"value": not_landed, "target": 0.0, "tolerance": 0.5},
+        # Strong landing reward: only zero when both legs are down AND
+        # speed is near zero, penalty of 5 everywhere else. That's the
+        # "large reward for actually landing" signal — a ~5-unit negative
+        # homeostatic that vanishes the moment a safe landing materializes,
+        # so the policy sees a big positive contrast when it commits.
+        {"value": not_safely_landed * 5.0, "target": 0.0, "tolerance": 0.0},
     ]
 
 
