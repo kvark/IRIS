@@ -72,10 +72,16 @@ def lunar_lander_homeo(obs, action):
     not_safely_landed = 1.0 - both_legs * stopped
 
     return [
-        # Severe-enough (×3) to dominate the raw descent signal, but no
-        # longer so dominant (was ×10) that the other primitives are
-        # drowned out once the agent stops crashing outright.
-        {"value": crash_risk * 3.0, "target": 0.0, "tolerance": 0.0},
+        # Severe crash-risk penalty — ×10 so it dominates the averaged-
+        # across-N-lanes gradient whenever any lane is near a crash.
+        # I'd briefly dropped this to ×3 on the theory that a weaker
+        # crash signal would let the other primitives (tilt, fuel,
+        # legs) have more voice; the subsequent N=64 run performed
+        # identically on soft-landings and slightly worse on
+        # avg_return, suggesting the extra "crash avoidance" gradient
+        # is still pulling more weight than the fuel/tilt signals
+        # getting released. Back to ×10.
+        {"value": crash_risk * 10.0, "target": 0.0, "tolerance": 0.0},
         # Don't tilt when close to the ground.
         {"value": abs(angle) * proximity, "target": 0.0, "tolerance": 0.05},
         # Don't arrive fast when close to the ground.
@@ -129,6 +135,13 @@ def main() -> int:
         "action-persistence; K=1 is classic reactive L0, K>1 stretches the "
         "effective credit horizon by K× with no graph change)",
     )
+    parser.add_argument(
+        "--lr-policy",
+        type=float,
+        default=None,
+        help="policy+value head LR override. Default is lr × 0.5. Set higher "
+        "if the policy's softmax stays stuck at uniform despite WM training.",
+    )
     args = parser.parse_args()
 
     # One env per lane, each with a distinct seed so the lanes diverge.
@@ -163,6 +176,7 @@ def main() -> int:
         latent_dim=args.latent_dim,
         hidden_dim=args.hidden_dim,
         action_repeat=args.action_repeat,
+        lr_policy=args.lr_policy,
     )
     print("agent ready (compiled graphs once, N lanes)")
 

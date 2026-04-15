@@ -405,6 +405,8 @@ impl PyBatchAgent {
         latent_dim = None,
         hidden_dim = None,
         action_repeat = None,
+        lr_policy = None,
+        lr_credit = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -418,6 +420,8 @@ impl PyBatchAgent {
         latent_dim: Option<usize>,
         hidden_dim: Option<usize>,
         action_repeat: Option<usize>,
+        lr_policy: Option<f32>,
+        lr_credit: Option<f32>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -470,6 +474,16 @@ impl PyBatchAgent {
                 return Err(PyValueError::new_err("action_repeat must be >= 1"));
             }
             config.action_repeat = k;
+        }
+        // Per-head LR overrides apply *after* the `learning_rate`-derived
+        // scaling above, so callers can target a specific head without
+        // retuning the other two. Useful for LunarLander-style problems
+        // where the policy needs a bigger LR than the world model.
+        if let Some(lrp) = lr_policy {
+            config.lr_policy = lrp;
+        }
+        if let Some(lrc) = lr_credit {
+            config.lr_credit = lrc;
         }
         let agent = Agent::new(config, adapters);
         Ok(Self {
