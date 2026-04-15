@@ -154,27 +154,43 @@ fn canary_kindle_world_model() {
         ..AgentConfig::default()
     };
 
-    let mut agent = Agent::new(config, adapter);
+    let mut agent = Agent::new(config, vec![adapter]);
     let mut rng = rand::rng();
 
     // Collect early loss
     let warmup = 50;
     for _ in 0..warmup {
         let obs = env.observe();
-        let action = agent.act(&obs, &mut rng);
+        let action = agent
+            .act(std::slice::from_ref(&obs), &mut rng)
+            .remove(0);
         env.step(&action);
-        agent.observe(&obs, &action, &env, &mut rng);
+        let env_ref: &dyn Environment = &env;
+        agent.observe(
+            std::slice::from_ref(&obs),
+            std::slice::from_ref(&action),
+            std::slice::from_ref(&env_ref),
+            &mut rng,
+        );
     }
-    let early_loss = agent.diagnostics().loss_world_model;
+    let early_loss = agent.diagnostics()[0].loss_world_model;
 
     // Train more
     for _ in warmup..500 {
         let obs = env.observe();
-        let action = agent.act(&obs, &mut rng);
+        let action = agent
+            .act(std::slice::from_ref(&obs), &mut rng)
+            .remove(0);
         env.step(&action);
-        agent.observe(&obs, &action, &env, &mut rng);
+        let env_ref: &dyn Environment = &env;
+        agent.observe(
+            std::slice::from_ref(&obs),
+            std::slice::from_ref(&action),
+            std::slice::from_ref(&env_ref),
+            &mut rng,
+        );
     }
-    let late_loss = agent.diagnostics().loss_world_model;
+    let late_loss = agent.diagnostics()[0].loss_world_model;
 
     assert!(
         late_loss < early_loss || late_loss < 0.1,

@@ -93,7 +93,7 @@ fn main() {
     };
 
     println!("building agent (compiling graphs — universal sizes)...");
-    let mut agent = Agent::new(config, adapter);
+    let mut agent = Agent::new(config, vec![adapter]);
     println!("agent ready");
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(42);
@@ -122,7 +122,7 @@ fn main() {
                 Which::Cart => Box::new(GenericAdapter::discrete(1, 4, 2)),
                 Which::Mountain => Box::new(GenericAdapter::discrete(2, 2, 3)),
             };
-            agent.switch_env(adapter);
+            agent.switch_lane(0, adapter);
             let name = match which {
                 Which::Grid => "GridWorld",
                 Which::Cart => "CartPole",
@@ -130,17 +130,26 @@ fn main() {
             };
             println!(
                 "\n--- step {step}: hopping to {name} (env_id={}) ---",
-                agent.env_id()
+                agent.env_id(0)
             );
         }
 
         let obs = envs.observe(which);
-        let action = agent.act(&obs, &mut rng);
+        let action = agent
+            .act(std::slice::from_ref(&obs), &mut rng)
+            .remove(0);
         envs.step(which, &action);
-        agent.observe(&obs, &action, envs.env(which), &mut rng);
+        let env_ref: &dyn Environment = envs.env(which);
+        agent.observe(
+            std::slice::from_ref(&obs),
+            std::slice::from_ref(&action),
+            std::slice::from_ref(&env_ref),
+            &mut rng,
+        );
 
         if (step + 1) % 250 == 0 {
-            let d = agent.diagnostics();
+            let diags = agent.diagnostics();
+            let d = &diags[0];
             println!(
                 "step {:>4} env={} | wm={:.4} cr={:.4} pi={:.4} | r={:.3} drift={:.3} buf={}",
                 d.step,
@@ -155,7 +164,7 @@ fn main() {
         }
     }
 
-    let d = agent.diagnostics();
+    let d = &agent.diagnostics()[0];
     println!("\nfinal diagnostics:");
-    println!("{}", serde_json::to_string_pretty(&d).unwrap());
+    println!("{}", serde_json::to_string_pretty(d).unwrap());
 }

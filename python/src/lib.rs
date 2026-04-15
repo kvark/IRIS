@@ -53,7 +53,7 @@ impl PyAgent {
             )));
         }
         let adapter = Box::new(GenericAdapter::discrete(env_id, obs_dim, num_actions));
-        let agent = Agent::new(AgentConfig::default(), adapter);
+        let agent = Agent::new(AgentConfig::default(), vec![adapter]);
         Ok(Self {
             agent,
             rng: StdRng::seed_from_u64(seed),
@@ -68,7 +68,10 @@ impl PyAgent {
     fn act(&mut self, obs: &Bound<'_, PyAny>) -> PyResult<usize> {
         let obs_vec = parse_obs(obs)?;
         let observation = Observation::new(obs_vec);
-        let action = self.agent.act(&observation, &mut self.rng);
+        let action = self
+            .agent
+            .act(std::slice::from_ref(&observation), &mut self.rng)
+            .remove(0);
         match action {
             Action::Discrete(i) => Ok(i),
             Action::Continuous(_) => Err(PyRuntimeError::new_err(
@@ -107,8 +110,14 @@ impl PyAgent {
             obs: &observation,
             homeo,
         };
-        self.agent
-            .observe(&observation, &Action::Discrete(action), &proxy, &mut self.rng);
+        let action = Action::Discrete(action);
+        let proxy_ref: &dyn Environment = &proxy;
+        self.agent.observe(
+            std::slice::from_ref(&observation),
+            std::slice::from_ref(&action),
+            std::slice::from_ref(&proxy_ref),
+            &mut self.rng,
+        );
         Ok(())
     }
 
@@ -116,7 +125,7 @@ impl PyAgent {
     /// Call this after a gymnasium `terminated | truncated` reset so the
     /// world model and credit assigner don't attribute across the reset.
     fn mark_boundary(&mut self) {
-        self.agent.mark_boundary();
+        self.agent.mark_boundary(0);
     }
 
     /// Convenience: drive a gymnasium-style env for `steps` iterations.
@@ -153,7 +162,10 @@ impl PyAgent {
             }
 
             let observation = Observation::new(obs_vec.clone());
-            let action = self.agent.act(&observation, &mut self.rng);
+            let action = self
+                .agent
+                .act(std::slice::from_ref(&observation), &mut self.rng)
+                .remove(0);
             let action_idx = match &action {
                 Action::Discrete(i) => *i,
                 Action::Continuous(_) => 0,
@@ -177,15 +189,20 @@ impl PyAgent {
                 obs: &next_observation,
                 homeo,
             };
-            self.agent
-                .observe(&next_observation, &action, &proxy, &mut self.rng);
+            let proxy_ref: &dyn Environment = &proxy;
+            self.agent.observe(
+                std::slice::from_ref(&next_observation),
+                std::slice::from_ref(&action),
+                std::slice::from_ref(&proxy_ref),
+                &mut self.rng,
+            );
 
             if terminated || truncated {
                 returns.push(episode_return);
                 episode_return = 0.0;
                 let reset_ret = env.call_method0("reset")?;
                 obs_vec = unpack_reset(&reset_ret)?;
-                self.agent.mark_boundary();
+                self.agent.mark_boundary(0);
             } else {
                 obs_vec = next_vec;
             }
@@ -198,11 +215,17 @@ impl PyAgent {
         self.agent.step_count()
     }
 
-    /// Diagnostics as a plain Python dict.
+    /// Diagnostics as a plain Python dict (lane 0).
+    ///
+    /// The underlying agent is multi-lane (Phase E); `PyAgent` currently
+    /// exposes a single-lane wrapper, so this returns lane 0's snapshot.
     fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let d = self.agent.diagnostics();
-        let json = serde_json::to_string(&d)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let diags = self.agent.diagnostics();
+        let d = diags
+            .first()
+            .ok_or_else(|| PyRuntimeError::new_err("agent has no lanes"))?;
+        let json =
+            serde_json::to_string(d).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         let json_mod = py.import_bound("json")?;
         json_mod.call_method1("loads", (json,))
     }

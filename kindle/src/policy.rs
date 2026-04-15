@@ -55,19 +55,24 @@ impl ValueHead {
 /// Build the discrete policy + value training graph.
 ///
 /// Inputs:
-/// - `"z"`: `[1, latent_dim]` — latent from encoder (detached, fed as input)
-/// - `"action"`: `[1, action_dim]` — one-hot taken action
-/// - `"value_target"`: `[1, 1]` — TD target for value head
+/// - `"z"`: `[batch_size, latent_dim]` — latent from encoder (detached, fed as input)
+/// - `"action"`: `[batch_size, action_dim]` — one-hot taken action
+/// - `"value_target"`: `[batch_size, 1]` — TD target for value head
 ///
 /// Outputs:
-/// - `[0]`: combined loss (policy cross-entropy + value MSE)
-/// - `[1]`: logits `[1, action_dim]` — for action sampling
-/// - `[2]`: value `[1, 1]` — for advantage computation
-pub fn build_policy_graph(latent_dim: usize, action_dim: usize, hidden_dim: usize) -> Graph {
+/// - `[0]`: combined loss (policy cross-entropy + value MSE, mean over batch)
+/// - `[1]`: logits `[batch_size, action_dim]` — for action sampling
+/// - `[2]`: value `[batch_size, 1]` — for advantage computation
+pub fn build_policy_graph(
+    latent_dim: usize,
+    action_dim: usize,
+    hidden_dim: usize,
+    batch_size: usize,
+) -> Graph {
     let mut g = Graph::new();
-    let z = g.input("z", &[1, latent_dim]);
-    let action = g.input("action", &[1, action_dim]);
-    let value_target = g.input("value_target", &[1, 1]);
+    let z = g.input("z", &[batch_size, latent_dim]);
+    let action = g.input("action", &[batch_size, action_dim]);
+    let value_target = g.input("value_target", &[batch_size, 1]);
 
     let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
     let logits = policy.forward(&mut g, z);
@@ -88,14 +93,14 @@ pub fn build_policy_graph(latent_dim: usize, action_dim: usize, hidden_dim: usiz
 /// Gaussian with fixed unit variance.
 ///
 /// Inputs:
-/// - `"z"`: `[1, latent_dim]` — latent from encoder
-/// - `"action"`: `[1, action_dim]` — the taken action vector
-/// - `"value_target"`: `[1, 1]` — TD target for value head
+/// - `"z"`: `[batch_size, latent_dim]` — latent from encoder
+/// - `"action"`: `[batch_size, action_dim]` — the taken action vector
+/// - `"value_target"`: `[batch_size, 1]` — TD target for value head
 ///
 /// Outputs:
-/// - `[0]`: combined loss (mean MSE + value MSE)
-/// - `[1]`: action mean `[1, action_dim]` — sampled by adding Gaussian noise
-/// - `[2]`: value `[1, 1]`
+/// - `[0]`: combined loss (mean MSE + value MSE, mean over batch)
+/// - `[1]`: action mean `[batch_size, action_dim]` — sampled by adding Gaussian noise
+/// - `[2]`: value `[batch_size, 1]`
 ///
 /// For a fixed-variance Gaussian, the negative log-likelihood of the taken
 /// action is `0.5·(a − μ)² / σ² + const`. With σ² = 1 this reduces to the
@@ -105,11 +110,12 @@ pub fn build_continuous_policy_graph(
     latent_dim: usize,
     action_dim: usize,
     hidden_dim: usize,
+    batch_size: usize,
 ) -> Graph {
     let mut g = Graph::new();
-    let z = g.input("z", &[1, latent_dim]);
-    let action = g.input("action", &[1, action_dim]);
-    let value_target = g.input("value_target", &[1, 1]);
+    let z = g.input("z", &[batch_size, latent_dim]);
+    let action = g.input("action", &[batch_size, action_dim]);
+    let value_target = g.input("value_target", &[batch_size, 1]);
 
     // The "Policy" struct outputs [1, action_dim] logits; for continuous
     // actions we reinterpret this as the Gaussian mean μ.

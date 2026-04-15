@@ -33,7 +33,7 @@ fn stability_grid_world() {
         drift_interval: 500,
         ..AgentConfig::default()
     };
-    let mut agent = Agent::new(config, adapter);
+    let mut agent = Agent::new(config, vec![adapter]);
     let mut rng = rand::rngs::StdRng::seed_from_u64(42);
 
     // Step count chosen to fit within ~2 minutes on lavapipe (CPU Vulkan).
@@ -47,11 +47,20 @@ fn stability_grid_world() {
 
     for step in 0..total_steps {
         let obs = env.observe();
-        let action = agent.act(&obs, &mut rng);
+        let action = agent
+            .act(std::slice::from_ref(&obs), &mut rng)
+            .remove(0);
         env.step(&action);
-        agent.observe(&obs, &action, &env, &mut rng);
+        let env_ref: &dyn Environment = &env;
+        agent.observe(
+            std::slice::from_ref(&obs),
+            std::slice::from_ref(&action),
+            std::slice::from_ref(&env_ref),
+            &mut rng,
+        );
 
-        let d = agent.diagnostics();
+        let diags = agent.diagnostics();
+        let d = &diags[0];
         assert!(
             d.loss_world_model.is_finite(),
             "NaN/Inf in wm_loss at step {step}"
@@ -100,17 +109,25 @@ fn stability_random_walk_convergence() {
         learning_rate: 1e-3,
         ..AgentConfig::default()
     };
-    let mut agent = Agent::new(config, adapter);
+    let mut agent = Agent::new(config, vec![adapter]);
     let mut rng = rand::rngs::StdRng::seed_from_u64(7);
 
     for _ in 0..500 {
         let obs = env.observe();
-        let action = agent.act(&obs, &mut rng);
+        let action = agent
+            .act(std::slice::from_ref(&obs), &mut rng)
+            .remove(0);
         env.step(&action);
-        agent.observe(&obs, &action, &env, &mut rng);
+        let env_ref: &dyn Environment = &env;
+        agent.observe(
+            std::slice::from_ref(&obs),
+            std::slice::from_ref(&action),
+            std::slice::from_ref(&env_ref),
+            &mut rng,
+        );
     }
 
-    let final_loss = agent.diagnostics().loss_world_model;
+    let final_loss = agent.diagnostics()[0].loss_world_model;
     assert!(
         final_loss.is_finite() && final_loss < 0.5,
         "random walk world model didn't converge: {final_loss}"

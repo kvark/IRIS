@@ -25,7 +25,7 @@ fn main() {
     };
 
     println!("building agent (compiling graphs)...");
-    let mut agent = Agent::new(config, adapter);
+    let mut agent = Agent::new(config, vec![adapter]);
     println!("agent ready");
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(42);
@@ -33,12 +33,21 @@ fn main() {
 
     for step in 0..num_steps {
         let obs = env.observe();
-        let action = agent.act(&obs, &mut rng);
+        let action = agent
+            .act(std::slice::from_ref(&obs), &mut rng)
+            .remove(0);
         env.step(&action);
-        agent.observe(&obs, &action, &env, &mut rng);
+        let env_ref: &dyn Environment = &env;
+        agent.observe(
+            std::slice::from_ref(&obs),
+            std::slice::from_ref(&action),
+            std::slice::from_ref(&env_ref),
+            &mut rng,
+        );
 
         if (step + 1) % 100 == 0 {
-            let d = agent.diagnostics();
+            let diags = agent.diagnostics();
+            let d = &diags[0];
             println!(
                 "step {:>4} | wm={:.4} cr={:.4} pi={:.4} | r={:.3} ent={:.2} H={:.1} | buf={}",
                 d.step,
@@ -53,7 +62,7 @@ fn main() {
         }
     }
 
-    let d = agent.diagnostics();
+    let d = &agent.diagnostics()[0];
     println!("\nfinal diagnostics:");
-    println!("{}", serde_json::to_string_pretty(&d).unwrap());
+    println!("{}", serde_json::to_string_pretty(d).unwrap());
 }

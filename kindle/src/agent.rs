@@ -5,8 +5,22 @@
 //!
 //! The agent's GPU graphs are built once with universal token sizes
 //! (`OBS_TOKEN_DIM`, `MAX_ACTION_DIM`); a per-env `EnvAdapter` translates
-//! between the env's native shapes and these token sizes. `switch_env`
-//! swaps the active adapter without touching any compiled graph.
+//! between the env's native shapes and these token sizes. `switch_lane`
+//! swaps one lane's adapter without touching any compiled graph.
+//!
+//! ## Batched lanes (Phase E)
+//!
+//! The agent is multi-lane: `N = config.batch_size` concurrent lanes share
+//! the three compiled GPU sessions. Each lane owns its own adapter,
+//! experience buffer, reward circuit and boundary flag; every `observe()`
+//! call advances all N lanes in lockstep, stacking per-lane obs/action/
+//! z_target/task rows into a single batched dispatch for the world model
+//! and policy. Credit assignment is CPU-light per-lane (the credit graph
+//! is sized for one lane's history and is called N times per step).
+//!
+//! For `N = 1` the runtime behaviour matches the pre-Phase-E single-lane
+//! agent — construction takes a one-element `vec![adapter]` and every
+//! step fed a one-element slice.
 //!
 //! Three GPU sessions with independent learning rates:
 //! 1. World model (encoder + world model): base LR
@@ -102,28 +116,44 @@ pub struct Diagnostics {
     pub buffer_len: usize,
 }
 
+/// Per-lane state. One per concurrent batch slot. Every slot owns its own
+/// adapter, buffer, reward circuit and boundary flag; GPU graphs are shared
+/// across lanes and feed the stacked per-lane inputs in a single dispatch.
+struct Lane {
+    adapter: Box<dyn EnvAdapter>,
+    buffer: ExperienceBuffer,
+    reward_circuit: RewardCircuit,
+    pending_boundary: bool,
+
+    // Cached last-step values for diagnostics & policy advantage.
+    last_value: f32,
+    last_entropy: f32,
+    last_surprise: f32,
+    last_novelty: f32,
+    last_homeo: f32,
+    last_order: f32,
+    last_reward: f32,
+}
+
 /// The kindle agent.
 pub struct Agent {
     pub config: AgentConfig,
-    adapter: Box<dyn EnvAdapter>,
-    /// Per-env task embedding (key = env_id). Each env gets a fixed
-    /// deterministic-random vector based on its id; we feed the active
-    /// one into the encoder as a graph input each step. Not trained
-    /// (the encoder learns to map (obs, env_embedding) into per-env
-    /// latents).
+    /// N lanes, N = config.batch_size. Fixed at construction.
+    lanes: Vec<Lane>,
+    /// Per-env task embedding (key = env_id, value length = TASK_DIM). Each
+    /// env gets a fixed deterministic-random vector based on its id; we
+    /// tile the active per-lane embeddings row-wise into the encoder input
+    /// each step. Not trained (the encoder learns to map (obs,
+    /// env_embedding) into per-env latents).
     task_embeddings: HashMap<u32, Vec<f32>>,
-    /// True for exactly one step after `switch_env`, so the next stored
-    /// transition is tagged as an env boundary.
-    pending_boundary: bool,
-    buffer: ExperienceBuffer,
-    reward_circuit: RewardCircuit,
     wm_session: Session,
     credit_session: Session,
     /// Policy graph always uses the continuous branch (MSE loss on Gaussian
     /// means). For discrete envs, the adapter softmax+samples over the
     /// first `n` head dims. This gives one universal policy graph.
     policy_session: Session,
-    latent_size: usize,
+    /// Per-lane latent dim (the WM graph is [N, latent_dim]).
+    latent_dim: usize,
     step_count: usize,
     probe_obs: Option<Vec<Vec<f32>>>,
     probe_reference: Option<Vec<Vec<f32>>>,
@@ -131,18 +161,14 @@ pub struct Agent {
     last_credit_loss: f32,
     last_policy_loss: f32,
     last_replay_loss: f32,
-    last_surprise: f32,
-    last_novelty: f32,
-    last_homeo: f32,
-    last_order: f32,
-    last_reward: f32,
-    last_entropy: f32,
     last_drift: f32,
     encoder_lr_scale: f32,
-    last_value: f32,
-    /// Scratch buffers to avoid per-step allocations.
+    /// Scratch buffers, sized [N × per-lane-dim], reused each step.
     obs_token_scratch: Vec<f32>,
     action_token_scratch: Vec<f32>,
+    z_target_scratch: Vec<f32>,
+    task_scratch: Vec<f32>,
+    value_target_scratch: Vec<f32>,
 }
 
 /// Xavier (Glorot uniform) initialization.
@@ -166,10 +192,24 @@ fn build_session(g: &Graph, opt_level: OptLevel) -> Session {
 }
 
 impl Agent {
-    /// Build the agent for a specific environment's adapter. The underlying
-    /// graphs use universal token sizes and will never need rebuilding for
-    /// subsequent env switches.
-    pub fn new(config: AgentConfig, adapter: Box<dyn EnvAdapter>) -> Self {
+    /// Build an N-lane agent. `adapters.len()` must equal `config.batch_size`;
+    /// mismatching shapes panic at construction. For a single-lane agent,
+    /// pass a single-element vec: `Agent::new(cfg, vec![adapter])`.
+    ///
+    /// The underlying graphs use universal token sizes and will never need
+    /// rebuilding for subsequent lane-adapter swaps (`switch_lane`).
+    pub fn new(config: AgentConfig, adapters: Vec<Box<dyn EnvAdapter>>) -> Self {
+        assert!(
+            !adapters.is_empty(),
+            "Agent::new requires at least one adapter (one lane)"
+        );
+        assert_eq!(
+            adapters.len(),
+            config.batch_size,
+            "adapters.len() ({}) must equal config.batch_size ({})",
+            adapters.len(),
+            config.batch_size
+        );
         // --- World model graph (uses universal token sizes + task) ---
         //
         // The task embedding is fed as a graph **input** named "task".
@@ -246,30 +286,54 @@ impl Agent {
                 config.latent_dim,
                 MAX_ACTION_DIM,
                 config.hidden_dim,
+                config.batch_size,
             );
             let mut s = build_session(&g, config.opt_level);
             init_parameters(&mut s);
             s
         };
 
-        let latent_size = config.batch_size * config.latent_dim;
-        let task_size = config.batch_size * TASK_DIM;
+        let n = config.batch_size;
 
-        // Initialize this env's task embedding to its deterministic seed.
-        let initial_task = embedding_for(adapter.id(), task_size);
-        let mut task_embeddings = HashMap::new();
-        task_embeddings.insert(adapter.id(), initial_task);
+        // Initialize per-env task embeddings (one TASK_DIM vector per env_id)
+        // for every env id present in the initial lane set.
+        let mut task_embeddings: HashMap<u32, Vec<f32>> = HashMap::new();
+        for adapter in &adapters {
+            task_embeddings
+                .entry(adapter.id())
+                .or_insert_with(|| embedding_for(adapter.id(), TASK_DIM));
+        }
+
+        // Build per-lane state. Each lane gets a lane-index-seeded reward
+        // circuit so per-lane order digests don't collide across lanes.
+        let lanes: Vec<Lane> = adapters
+            .into_iter()
+            .enumerate()
+            .map(|(i, adapter)| Lane {
+                adapter,
+                buffer: ExperienceBuffer::new(config.buffer_capacity, config.grid_resolution),
+                reward_circuit: RewardCircuit::with_seed(
+                    config.reward_weights.clone(),
+                    0xA11CE ^ i as u64,
+                ),
+                pending_boundary: false,
+                last_value: 0.0,
+                last_entropy: 0.0,
+                last_surprise: 0.0,
+                last_novelty: 0.0,
+                last_homeo: 0.0,
+                last_order: 0.0,
+                last_reward: 0.0,
+            })
+            .collect();
 
         Self {
+            lanes,
             task_embeddings,
-            adapter,
-            pending_boundary: false,
-            buffer: ExperienceBuffer::new(config.buffer_capacity, config.grid_resolution),
-            reward_circuit: RewardCircuit::new(config.reward_weights.clone()),
             wm_session,
             credit_session,
             policy_session,
-            latent_size,
+            latent_dim: config.latent_dim,
             step_count: 0,
             probe_obs: None,
             probe_reference: None,
@@ -277,172 +341,226 @@ impl Agent {
             last_credit_loss: 0.0,
             last_policy_loss: 0.0,
             last_replay_loss: 0.0,
-            last_surprise: 0.0,
-            last_novelty: 0.0,
-            last_homeo: 0.0,
-            last_order: 0.0,
-            last_reward: 0.0,
-            last_entropy: 0.0,
             last_drift: 0.0,
             encoder_lr_scale: 1.0,
-            last_value: 0.0,
-            obs_token_scratch: vec![0.0; config.batch_size * OBS_TOKEN_DIM],
-            action_token_scratch: vec![0.0; config.batch_size * MAX_ACTION_DIM],
+            obs_token_scratch: vec![0.0; n * OBS_TOKEN_DIM],
+            action_token_scratch: vec![0.0; n * MAX_ACTION_DIM],
+            z_target_scratch: vec![0.0; n * config.latent_dim],
+            task_scratch: vec![0.0; n * TASK_DIM],
+            value_target_scratch: vec![0.0; n],
             config,
         }
     }
 
-    /// Mark the next observed transition as the start of a new episode
-    /// within the same env. The world model will zero its `z_target`
-    /// for that step and the stored transition will be tagged
-    /// `env_boundary = true`, so the credit assigner and world model
-    /// skip attribution across the reset.
-    pub fn mark_boundary(&mut self) {
-        self.pending_boundary = true;
+    /// Number of lanes (`N = config.batch_size`).
+    pub fn num_lanes(&self) -> usize {
+        self.lanes.len()
     }
 
-    /// Swap the active environment adapter. Preserves all learned
-    /// parameters; the next transition stored is marked as an env
-    /// boundary so the world model and credit assigner don't try to
-    /// attribute dynamics or reward across the switch.
-    ///
-    /// Per-env state swap:
-    /// 1. Read the current task embedding out of `wm_session` and save
-    ///    it under the *outgoing* env's id.
-    /// 2. Look up the incoming env's saved embedding (or initialize a
-    ///    new one to the mean of all existing embeddings, so a fresh
-    ///    env warm-starts from related learned ones).
-    /// 3. Upload the new embedding to `wm_session`.
-    pub fn switch_env(&mut self, adapter: Box<dyn EnvAdapter>) {
-        let incoming_id = adapter.id();
-        let task_size = self.config.batch_size * TASK_DIM;
+    /// Mark the next observed transition on `lane_idx` as the start of a
+    /// new episode within the same env. The world model will zero its
+    /// `z_target` row for that lane on the next step, and the stored
+    /// transition will be tagged `env_boundary = true`, so the credit
+    /// assigner and world model skip attribution across the reset.
+    pub fn mark_boundary(&mut self, lane_idx: usize) {
+        self.lanes[lane_idx].pending_boundary = true;
+    }
 
-        // Generate the new env's deterministic embedding if we haven't seen
-        // it before. Re-entering an env will reuse the same vector (its
-        // env_id determines it), which keeps the encoder's per-env
-        // specialization consistent across hops.
+    /// Swap the active adapter on one lane. Preserves all learned
+    /// parameters; the next transition stored on that lane is marked as
+    /// an env boundary so the world model and credit assigner don't try
+    /// to attribute dynamics or reward across the switch. Other lanes
+    /// are unaffected.
+    ///
+    /// A new env's task embedding is lazily initialized on first sight;
+    /// returning to a previously-seen env reuses the same deterministic
+    /// vector, preserving the encoder's per-env specialization.
+    pub fn switch_lane(&mut self, lane_idx: usize, adapter: Box<dyn EnvAdapter>) {
+        let incoming_id = adapter.id();
         self.task_embeddings
             .entry(incoming_id)
-            .or_insert_with(|| embedding_for(incoming_id, task_size));
+            .or_insert_with(|| embedding_for(incoming_id, TASK_DIM));
 
-        self.adapter = adapter;
-        self.pending_boundary = true;
+        let lane = &mut self.lanes[lane_idx];
+        lane.adapter = adapter;
+        lane.pending_boundary = true;
     }
 
-    /// Currently active env id.
-    pub fn env_id(&self) -> u32 {
-        self.adapter.id()
+    /// Env id of the adapter currently bound to `lane_idx`.
+    pub fn env_id(&self, lane_idx: usize) -> u32 {
+        self.lanes[lane_idx].adapter.id()
     }
 
-    /// Select an action using the policy network.
-    pub fn act<R: Rng>(&mut self, _obs: &Observation, rng: &mut R) -> Action {
-        let z_t = if let Some(prev) = self.buffer.last() {
-            prev.latent.clone()
-        } else {
-            vec![0.0f32; self.latent_size]
-        };
+    /// Select one action per lane. `observations.len()` must equal N.
+    /// Returns a `Vec<Action>` of length N, in lane order.
+    ///
+    /// The obs argument is currently unused inside the policy graph (the
+    /// policy conditions on the previous latent), but is kept in the
+    /// signature to match the multi-lane contract and to make room for a
+    /// future obs-conditioned exploration policy.
+    pub fn act<R: Rng>(&mut self, observations: &[Observation], rng: &mut R) -> Vec<Action> {
+        let n = self.lanes.len();
+        assert_eq!(
+            observations.len(),
+            n,
+            "act: observations.len() ({}) must equal num_lanes ({})",
+            observations.len(),
+            n
+        );
 
-        self.policy_session.set_input("z", &z_t);
+        // Stack per-lane previous latents into the batched `z` input.
+        let ld = self.latent_dim;
+        let mut z_stack = vec![0.0f32; n * ld];
+        for (i, lane) in self.lanes.iter().enumerate() {
+            if let Some(prev) = lane.buffer.last() {
+                z_stack[i * ld..(i + 1) * ld].copy_from_slice(&prev.latent);
+            }
+        }
+
+        self.policy_session.set_input("z", &z_stack);
         self.action_token_scratch.fill(0.0);
         self.policy_session
             .set_input("action", &self.action_token_scratch);
-        self.policy_session.set_input("value_target", &[0.0f32]);
+        self.value_target_scratch.fill(0.0);
+        self.policy_session
+            .set_input("value_target", &self.value_target_scratch);
         self.policy_session.set_learning_rate(0.0);
         self.policy_session.step();
         self.policy_session.wait();
 
-        let mut head = vec![0.0f32; MAX_ACTION_DIM];
-        self.policy_session.read_output_by_index(1, &mut head);
-        let mut value = [0.0f32; 1];
-        self.policy_session.read_output_by_index(2, &mut value);
+        // Read stacked outputs: head is [N, MAX_ACTION_DIM], value is [N, 1].
+        let mut head_stack = vec![0.0f32; n * MAX_ACTION_DIM];
+        self.policy_session.read_output_by_index(1, &mut head_stack);
+        let mut value_stack = vec![0.0f32; n];
+        self.policy_session
+            .read_output_by_index(2, &mut value_stack);
 
-        self.last_value = value[0];
-        self.last_entropy = self.adapter.head_entropy(&head);
-
-        self.adapter.sample_action(&head, rng)
+        let mut actions = Vec::with_capacity(n);
+        for (i, lane) in self.lanes.iter_mut().enumerate() {
+            let head = &head_stack[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+            lane.last_value = value_stack[i];
+            lane.last_entropy = lane.adapter.head_entropy(head);
+            actions.push(lane.adapter.sample_action(head, rng));
+        }
+        actions
     }
 
-    /// Observe a transition, train all modules.
+    /// Observe one synchronous step across all lanes. All input slices must
+    /// have length `N = config.batch_size`.
     pub fn observe<R: Rng>(
         &mut self,
-        obs: &Observation,
-        action: &Action,
-        env: &dyn Environment,
+        observations: &[Observation],
+        actions: &[Action],
+        envs: &[&dyn Environment],
         rng: &mut R,
     ) {
-        // --- Translate through the adapter into universal tokens ---
-        self.adapter.obs_to_token(obs, &mut self.obs_token_scratch);
-        self.adapter
-            .action_to_token(action, &mut self.action_token_scratch);
+        let n = self.lanes.len();
+        assert_eq!(observations.len(), n, "observations.len() must equal N");
+        assert_eq!(actions.len(), n, "actions.len() must equal N");
+        assert_eq!(envs.len(), n, "envs.len() must equal N");
 
-        // z_target: the previous latent, or zeros if bootstrapping / at boundary
-        let z_target = if self.pending_boundary {
-            vec![0.0f32; self.latent_size]
-        } else if let Some(prev) = self.buffer.last() {
-            prev.latent.clone()
-        } else {
-            vec![0.0f32; self.latent_size]
-        };
+        let ld = self.latent_dim;
 
-        let obs_token = self.obs_token_scratch.clone();
-        let action_token = self.action_token_scratch.clone();
-        let (wm_loss, z_t) = self.wm_forward_backward(
-            &obs_token,
-            &action_token,
-            &z_target,
+        // --- Build stacked inputs: obs, action, z_target, task ---
+        for (i, lane) in self.lanes.iter().enumerate() {
+            let obs_row = &mut self.obs_token_scratch[i * OBS_TOKEN_DIM..(i + 1) * OBS_TOKEN_DIM];
+            lane.adapter.obs_to_token(&observations[i], obs_row);
+
+            let act_row =
+                &mut self.action_token_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+            lane.adapter.action_to_token(&actions[i], act_row);
+
+            // z_target row: previous latent, zeros at boundary or bootstrap.
+            let z_row = &mut self.z_target_scratch[i * ld..(i + 1) * ld];
+            if lane.pending_boundary {
+                z_row.fill(0.0);
+            } else if let Some(prev) = lane.buffer.last() {
+                z_row.copy_from_slice(&prev.latent);
+            } else {
+                z_row.fill(0.0);
+            }
+
+            // task row: lookup per-lane env's embedding.
+            let task_row = &mut self.task_scratch[i * TASK_DIM..(i + 1) * TASK_DIM];
+            match self.task_embeddings.get(&lane.adapter.id()) {
+                Some(emb) => task_row.copy_from_slice(emb),
+                None => task_row.fill(0.0),
+            }
+        }
+
+        // --- One batched WM forward+backward ---
+        let wm_loss = self.wm_forward_backward_stacked(
             self.config.learning_rate * self.encoder_lr_scale,
         );
         self.last_wm_loss = wm_loss;
 
-        // --- Reward ---
-        // Surprise = sqrt(latent_dim · wm_loss) ≈ ‖z_hat − z_target‖.
-        // We don't expose z_hat as an output (meganeura aliases buffers
-        // for graph internals that are also outputs); reconstruct the
-        // magnitude from the loss instead.
-        let pred_error = (self.config.latent_dim as f32 * wm_loss.max(0.0)).sqrt();
+        // Read stacked z_t output [N, latent_dim].
+        let mut z_stack = vec![0.0f32; n * ld];
+        self.wm_session.read_output_by_index(1, &mut z_stack);
+
+        // --- Per-lane reward + transition push ---
+        // Surprise uses the shared mean-loss surrogate (Phase E.v1): the WM
+        // graph emits a scalar mean loss over the batch, so per-lane
+        // surprise collapses to a shared per-step scalar (see the design
+        // doc for the optional per_lane_loss refinement).
+        let pred_error = (ld as f32 * wm_loss.max(0.0)).sqrt();
         let surprise = RewardCircuit::surprise(pred_error);
-        let visit_count = self.buffer.visit_count(&z_t);
-        let novelty = RewardCircuit::novelty(visit_count);
-        let homeo = RewardCircuit::homeostatic(env.homeostatic_variables());
-        // Order is agent-relative entropy reduction over the digested obs
-        // token, not the raw obs vector (see reward.rs). The circuit holds
-        // the rolling recent/reference windows internally.
-        let order = self.reward_circuit.observe_order(&obs_token);
-        let reward = self.reward_circuit.compute(surprise, novelty, homeo, order);
 
-        // --- Store transition (tagged with current adapter's env id) ---
-        let env_boundary = self.pending_boundary;
-        self.pending_boundary = false;
-        self.buffer.push(Transition {
-            observation: obs_token,
-            latent: z_t.clone(),
-            action: action_token,
-            reward,
-            credit: 0.0,
-            pred_error,
-            env_id: self.adapter.id(),
-            env_boundary,
-        });
+        for (i, lane) in self.lanes.iter_mut().enumerate() {
+            let z_row = &z_stack[i * ld..(i + 1) * ld];
+            let obs_row = &self.obs_token_scratch[i * OBS_TOKEN_DIM..(i + 1) * OBS_TOKEN_DIM];
+            let act_row = &self.action_token_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
 
-        // --- Credit assignment ---
-        if self.buffer.len() >= self.config.history_len {
-            self.credit_step(rng);
+            let visit_count = lane.buffer.visit_count(z_row);
+            let novelty = RewardCircuit::novelty(visit_count);
+            let homeo = RewardCircuit::homeostatic(envs[i].homeostatic_variables());
+            let order = lane.reward_circuit.observe_order(obs_row);
+            let reward = lane.reward_circuit.compute(surprise, novelty, homeo, order);
+
+            let env_boundary = lane.pending_boundary;
+            lane.pending_boundary = false;
+            lane.buffer.push(Transition {
+                observation: obs_row.to_vec(),
+                latent: z_row.to_vec(),
+                action: act_row.to_vec(),
+                reward,
+                credit: 0.0,
+                pred_error,
+                env_id: lane.adapter.id(),
+                env_boundary,
+            });
+
+            lane.last_surprise = surprise;
+            lane.last_novelty = novelty;
+            lane.last_homeo = homeo;
+            lane.last_order = order;
+            lane.last_reward = reward;
         }
 
-        // --- Policy + value training (gated on warmup + entropy floor) ---
-        if self.step_count >= self.config.warmup_steps
-            && self.last_entropy >= self.config.entropy_floor
-        {
-            let action_token = self.action_token_scratch.clone();
-            self.policy_step(&z_t, &action_token, reward);
+        // --- Credit assignment (per-lane, sequential CPU-light dispatches) ---
+        for i in 0..n {
+            if self.lanes[i].buffer.len() >= self.config.history_len {
+                self.credit_step(i, rng);
+            }
         }
 
-        // --- Replay mixing ---
+        // --- Policy + value training (one batched dispatch over all lanes) ---
+        //
+        // Gate is applied per-lane via the reward/advantage signal. Lanes
+        // whose entropy is below the floor, or which are still in warmup,
+        // contribute a zero gradient signal (LR scale 0) but share the
+        // single graph dispatch.
+        if self.step_count >= self.config.warmup_steps {
+            self.policy_step_batched(&z_stack);
+        }
+
+        // --- Replay mixing: one sampled replay per call, random lane ---
         if rng.random_range(0.0..1.0) < self.config.replay_ratio {
-            self.replay_step(rng);
+            let lane_idx = rng.random_range(0..n);
+            self.replay_step(lane_idx, rng);
         }
 
-        // --- Representation drift monitor ---
+        // --- Representation drift monitor (shared probe set, WM session) ---
         if self.step_count == self.config.warmup_steps && self.probe_obs.is_none() {
             self.capture_probe_reference();
         }
@@ -450,80 +568,90 @@ impl Agent {
             self.measure_drift();
         }
 
-        self.last_surprise = surprise;
-        self.last_novelty = novelty;
-        self.last_homeo = homeo;
-        self.last_order = order;
-        self.last_reward = reward;
         self.step_count += 1;
     }
 
-    /// Run one world-model forward+backward pass.
-    /// Returns (loss, z_t).
-    fn wm_forward_backward(
-        &mut self,
-        obs: &[f32],
-        action: &[f32],
-        z_target: &[f32],
-        lr: f32,
-    ) -> (f32, Vec<f32>) {
-        self.wm_session.set_input("obs", obs);
-        self.wm_session.set_input("action", action);
-        self.wm_session.set_input("z_target", z_target);
-        let task = self
-            .task_embeddings
-            .get(&self.adapter.id())
-            .cloned()
-            .unwrap_or_else(|| vec![0.0f32; self.config.batch_size * TASK_DIM]);
-        self.wm_session.set_input("task", &task);
+    /// Run one world-model forward+backward pass on the currently staged
+    /// `obs_token_scratch` / `action_token_scratch` / `z_target_scratch` /
+    /// `task_scratch` inputs. Returns the scalar batch-mean loss.
+    fn wm_forward_backward_stacked(&mut self, lr: f32) -> f32 {
+        self.wm_session.set_input("obs", &self.obs_token_scratch);
+        self.wm_session
+            .set_input("action", &self.action_token_scratch);
+        self.wm_session
+            .set_input("z_target", &self.z_target_scratch);
+        self.wm_session.set_input("task", &self.task_scratch);
         self.wm_session.set_learning_rate(lr);
         self.wm_session.step();
         self.wm_session.wait();
-
-        let loss = self.wm_session.read_loss();
-        let mut z_t = vec![0.0f32; self.latent_size];
-        self.wm_session.read_output_by_index(1, &mut z_t);
-        (loss, z_t)
+        self.wm_session.read_loss()
     }
 
-    fn replay_step<R: Rng>(&mut self, rng: &mut R) {
-        if self.buffer.len() < 2 {
-            return;
-        }
-        let n = self.buffer.len();
-        let i = rng.random_range(0..n - 1);
-        let ti = self.buffer.get(i);
-        let tj = self.buffer.get(i + 1);
-        // Skip replay across env boundaries (latent → latent is
-        // meaningless when env just switched)
-        if tj.env_boundary || ti.env_id != tj.env_id {
-            return;
-        }
-        let obs = ti.observation.clone();
-        let action = ti.action.clone();
-        let z_target = tj.latent.clone();
+    /// Sample one replay transition per lane and run a single batched WM
+    /// forward+backward over the stacked rows. If a lane has too few
+    /// transitions or hits an env boundary, its row is zeroed (the shared
+    /// mean-loss averages it in as a no-op).
+    fn replay_step<R: Rng>(&mut self, _primary_lane: usize, rng: &mut R) {
+        let ld = self.latent_dim;
 
-        let (loss, _) = self.wm_forward_backward(
-            &obs,
-            &action,
-            &z_target,
+        // Build stacked replay inputs. Any lane without a valid sample
+        // contributes an all-zeros row that the graph sees as a trivial
+        // "predict zero from zero" target — still a legal gradient,
+        // cheaply absorbed into the batch mean.
+        self.obs_token_scratch.fill(0.0);
+        self.action_token_scratch.fill(0.0);
+        self.z_target_scratch.fill(0.0);
+        for (i, lane) in self.lanes.iter().enumerate() {
+            let buf_len = lane.buffer.len();
+            if buf_len < 2 {
+                continue;
+            }
+            let idx = rng.random_range(0..buf_len - 1);
+            let ti = lane.buffer.get(idx);
+            let tj = lane.buffer.get(idx + 1);
+            // Skip replay across env boundaries (latent → latent is
+            // meaningless when env just switched).
+            if tj.env_boundary || ti.env_id != tj.env_id {
+                continue;
+            }
+            let obs_row =
+                &mut self.obs_token_scratch[i * OBS_TOKEN_DIM..(i + 1) * OBS_TOKEN_DIM];
+            obs_row.copy_from_slice(&ti.observation);
+            let act_row =
+                &mut self.action_token_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+            act_row.copy_from_slice(&ti.action);
+            let z_row = &mut self.z_target_scratch[i * ld..(i + 1) * ld];
+            z_row.copy_from_slice(&tj.latent);
+
+            let task_row = &mut self.task_scratch[i * TASK_DIM..(i + 1) * TASK_DIM];
+            if let Some(emb) = self.task_embeddings.get(&ti.env_id) {
+                task_row.copy_from_slice(emb);
+            } else {
+                task_row.fill(0.0);
+            }
+        }
+
+        let loss = self.wm_forward_backward_stacked(
             self.config.learning_rate * self.encoder_lr_scale * 0.5,
         );
         self.last_replay_loss = loss;
     }
 
+    /// Capture a shared probe reference set from lane 0's buffer (any lane
+    /// would do — drift is a global representation-stability signal).
     fn capture_probe_reference(&mut self) {
-        let n_probe = 16.min(self.buffer.len());
+        let lane0 = &self.lanes[0];
+        let n_probe = 16.min(lane0.buffer.len());
         if n_probe == 0 {
             return;
         }
-        let step = self.buffer.len() / n_probe.max(1);
+        let step = lane0.buffer.len() / n_probe.max(1);
         let mut observations = Vec::with_capacity(n_probe);
         let mut references = Vec::with_capacity(n_probe);
         for i in 0..n_probe {
             let idx = i * step;
-            if idx < self.buffer.len() {
-                let t = self.buffer.get(idx);
+            if idx < lane0.buffer.len() {
+                let t = lane0.buffer.get(idx);
                 observations.push(t.observation.clone());
                 references.push(t.latent.clone());
             }
@@ -532,44 +660,75 @@ impl Agent {
         self.probe_reference = Some(references);
     }
 
+    /// Measure representation drift by forwarding the probe set through the
+    /// batched WM graph. The probe set isn't necessarily a multiple of N;
+    /// we pad the remaining rows with zeros and ignore their outputs.
     fn measure_drift(&mut self) {
         let (probes, references) = match (self.probe_obs.as_ref(), self.probe_reference.as_ref()) {
             (Some(p), Some(r)) => (p.clone(), r.clone()),
             _ => return,
         };
 
+        let n = self.lanes.len();
+        let ld = self.latent_dim;
+
         let mut total = 0.0f32;
         let mut count = 0;
 
-        let zero_action = vec![0.0f32; self.config.batch_size * MAX_ACTION_DIM];
-        let zero_target = vec![0.0f32; self.latent_size];
-        let task = self
+        // Use lane 0's env's task embedding for all probe rows — drift is a
+        // global representation signal and its absolute scale depends on
+        // task conditioning anyway. Unused (padded) rows see the same
+        // embedding but their outputs are discarded.
+        let task_emb = self
             .task_embeddings
-            .get(&self.adapter.id())
+            .get(&self.lanes[0].adapter.id())
             .cloned()
-            .unwrap_or_else(|| vec![0.0f32; self.config.batch_size * TASK_DIM]);
+            .unwrap_or_else(|| vec![0.0f32; TASK_DIM]);
 
-        for (obs, reference) in probes.iter().zip(references.iter()) {
-            self.wm_session.set_input("obs", obs);
-            self.wm_session.set_input("action", &zero_action);
-            self.wm_session.set_input("z_target", &zero_target);
-            self.wm_session.set_input("task", &task);
+        for chunk_start in (0..probes.len()).step_by(n) {
+            // Stage batch inputs.
+            self.obs_token_scratch.fill(0.0);
+            self.action_token_scratch.fill(0.0);
+            self.z_target_scratch.fill(0.0);
+            for i in 0..n {
+                let task_row = &mut self.task_scratch[i * TASK_DIM..(i + 1) * TASK_DIM];
+                task_row.copy_from_slice(&task_emb);
+            }
+            let chunk_len = (probes.len() - chunk_start).min(n);
+            for i in 0..chunk_len {
+                let probe = &probes[chunk_start + i];
+                let obs_row =
+                    &mut self.obs_token_scratch[i * OBS_TOKEN_DIM..(i + 1) * OBS_TOKEN_DIM];
+                let copy_len = probe.len().min(OBS_TOKEN_DIM);
+                obs_row[..copy_len].copy_from_slice(&probe[..copy_len]);
+            }
+
+            self.wm_session.set_input("obs", &self.obs_token_scratch);
+            self.wm_session
+                .set_input("action", &self.action_token_scratch);
+            self.wm_session
+                .set_input("z_target", &self.z_target_scratch);
+            self.wm_session.set_input("task", &self.task_scratch);
             self.wm_session.set_learning_rate(0.0);
             self.wm_session.step();
             self.wm_session.wait();
 
-            let mut current = vec![0.0f32; self.latent_size];
-            self.wm_session.read_output_by_index(1, &mut current);
+            let mut z_stack = vec![0.0f32; n * ld];
+            self.wm_session.read_output_by_index(1, &mut z_stack);
 
-            let dist: f32 = current
-                .iter()
-                .zip(reference.iter())
-                .map(|(a, b)| (a - b).powi(2))
-                .sum::<f32>()
-                .sqrt();
-            if dist.is_finite() {
-                total += dist;
-                count += 1;
+            for i in 0..chunk_len {
+                let current = &z_stack[i * ld..(i + 1) * ld];
+                let reference = &references[chunk_start + i];
+                let dist: f32 = current
+                    .iter()
+                    .zip(reference.iter())
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f32>()
+                    .sqrt();
+                if dist.is_finite() {
+                    total += dist;
+                    count += 1;
+                }
             }
         }
 
@@ -583,10 +742,21 @@ impl Agent {
         }
     }
 
-    fn credit_step<R: Rng>(&mut self, rng: &mut R) {
+    /// Run one credit-assigner pass on a single lane's history. The credit
+    /// graph is sized `[history_len, input_dim]` (one-lane by design — see
+    /// the design doc); we call it N times per step, once per lane.
+    fn credit_step<R: Rng>(&mut self, lane_idx: usize, rng: &mut R) {
         let h = self.config.history_len;
+        let latent_dim = self.config.latent_dim;
+        let lr_credit = self.config.lr_credit;
 
-        if let Some(history_flat) = self.buffer.flatten_history(h) {
+        // Build the history + contrastive target on the immutable borrow of
+        // the lane, then drop it before touching `self.credit_session`.
+        let (history_clean, target_clean, r_t) = {
+            let lane = &self.lanes[lane_idx];
+            let Some(history_flat) = lane.buffer.flatten_history(h) else {
+                return;
+            };
             let history_clean: Vec<f32> = history_flat
                 .iter()
                 .map(|v| {
@@ -597,13 +767,10 @@ impl Agent {
                     }
                 })
                 .collect();
-            self.credit_session.set_input("history", &history_clean);
-
             let target = if let Some((hi, lo)) =
-                self.buffer
-                    .find_contrastive_pair(rng, h, self.config.latent_dim)
+                lane.buffer.find_contrastive_pair(rng, h, latent_dim)
             {
-                self.buffer.contrastive_target(hi, lo, h)
+                lane.buffer.contrastive_target(hi, lo, h)
             } else {
                 vec![1.0 / h as f32; h]
             };
@@ -611,42 +778,74 @@ impl Agent {
                 .iter()
                 .map(|v| if v.is_finite() { *v } else { 1.0 / h as f32 })
                 .collect();
-            self.credit_session
-                .set_input("credit_target", &target_clean);
+            (history_clean, target_clean, lane.last_reward)
+        };
 
-            self.credit_session.set_learning_rate(self.config.lr_credit);
-            self.credit_session.step();
-            self.credit_session.wait();
+        self.credit_session.set_input("history", &history_clean);
+        self.credit_session
+            .set_input("credit_target", &target_clean);
+        self.credit_session.set_learning_rate(lr_credit);
+        self.credit_session.step();
+        self.credit_session.wait();
 
-            self.last_credit_loss = self.credit_session.read_loss();
+        self.last_credit_loss = self.credit_session.read_loss();
 
-            let mut credit_logits = vec![0.0f32; h];
-            self.credit_session
-                .read_output_by_index(1, &mut credit_logits);
+        let mut credit_logits = vec![0.0f32; h];
+        self.credit_session
+            .read_output_by_index(1, &mut credit_logits);
 
-            let alpha = credit::softmax(&credit_logits);
-            let r_t = self.last_reward;
-            let credits: Vec<f32> = alpha.iter().map(|&a| r_t * a).collect();
-            self.buffer.write_credits(&credits);
-        }
+        let alpha = credit::softmax(&credit_logits);
+        let credits: Vec<f32> = alpha.iter().map(|&a| r_t * a).collect();
+        self.lanes[lane_idx].buffer.write_credits(&credits);
     }
 
-    fn policy_step(&mut self, z_t: &[f32], action_token: &[f32], reward: f32) {
-        self.policy_session.set_input("z", z_t);
-        self.policy_session.set_input("action", action_token);
+    /// Batched policy + value step over all lanes. The graph input `"z"` is
+    /// the stacked per-lane latents produced this step; `"action"` is the
+    /// stacked action tokens already in `action_token_scratch`;
+    /// `"value_target"` is the stacked per-lane rewards.
+    ///
+    /// One scalar learning rate is applied to the whole batch. We derive it
+    /// as the mean of per-lane advantage-weighted scales, gated per-lane by
+    /// the entropy floor (lanes below the floor contribute zero scale).
+    fn policy_step_batched(&mut self, z_stack: &[f32]) {
+        let n = self.lanes.len();
 
-        self.policy_session.set_input("value_target", &[reward]);
-
-        let advantage = reward - self.last_value;
-
-        if advantage > 0.0 {
-            let scale = advantage.min(1.0);
-            self.policy_session
-                .set_learning_rate(self.config.lr_policy * scale);
-        } else {
-            self.policy_session
-                .set_learning_rate(self.config.lr_policy * 0.1);
+        // Build stacked value targets (the rewards computed this step).
+        for (i, lane) in self.lanes.iter().enumerate() {
+            self.value_target_scratch[i] = lane.last_reward;
         }
+
+        // Compute the per-batch LR scale: mean of per-lane advantage-scaled
+        // scales. Lanes whose entropy is below the floor contribute 0 (no
+        // gradient signal from them in this batch). If every lane is gated
+        // out, skip the dispatch entirely.
+        let mut scale_sum = 0.0f32;
+        let mut any_active = false;
+        for lane in &self.lanes {
+            if lane.last_entropy < self.config.entropy_floor {
+                continue;
+            }
+            any_active = true;
+            let advantage = lane.last_reward - lane.last_value;
+            let scale = if advantage > 0.0 {
+                advantage.min(1.0)
+            } else {
+                0.1
+            };
+            scale_sum += scale;
+        }
+        if !any_active {
+            return;
+        }
+        let lr_scale = scale_sum / n as f32;
+
+        self.policy_session.set_input("z", z_stack);
+        self.policy_session
+            .set_input("action", &self.action_token_scratch);
+        self.policy_session
+            .set_input("value_target", &self.value_target_scratch);
+        self.policy_session
+            .set_learning_rate(self.config.lr_policy * lr_scale);
         self.policy_session.step();
         self.policy_session.wait();
 
@@ -657,32 +856,43 @@ impl Agent {
         self.step_count
     }
 
-    pub fn diagnostics(&self) -> Diagnostics {
-        let recent = self.buffer.recent_window(self.config.history_len);
-        let credit_weights: Vec<f32> = recent.iter().map(|t| t.credit).collect();
-        let h_eff = if credit_weights.is_empty() {
-            0.0
-        } else {
-            credit::effective_scope(&credit_weights)
-        };
+    /// Per-lane diagnostics, one entry per lane in lane order.
+    ///
+    /// Global (batch-shared) signals — `loss_world_model`, `loss_credit`,
+    /// `loss_policy`, `loss_replay`, `repr_drift` — are broadcast to every
+    /// lane's row. Lane-specific fields (`env_id`, `reward_*`,
+    /// `policy_entropy`, `buffer_len`, `h_eff`) vary per row.
+    pub fn diagnostics(&self) -> Vec<Diagnostics> {
+        self.lanes
+            .iter()
+            .map(|lane| {
+                let recent = lane.buffer.recent_window(self.config.history_len);
+                let credit_weights: Vec<f32> = recent.iter().map(|t| t.credit).collect();
+                let h_eff = if credit_weights.is_empty() {
+                    0.0
+                } else {
+                    credit::effective_scope(&credit_weights)
+                };
 
-        Diagnostics {
-            step: self.step_count,
-            env_id: self.adapter.id(),
-            loss_world_model: self.last_wm_loss,
-            loss_credit: self.last_credit_loss,
-            loss_policy: self.last_policy_loss,
-            loss_replay: self.last_replay_loss,
-            reward_mean: self.last_reward,
-            reward_surprise: self.last_surprise,
-            reward_novelty: self.last_novelty,
-            reward_homeo: self.last_homeo,
-            reward_order: self.last_order,
-            h_eff,
-            policy_entropy: self.last_entropy,
-            repr_drift: self.last_drift,
-            buffer_len: self.buffer.len(),
-        }
+                Diagnostics {
+                    step: self.step_count,
+                    env_id: lane.adapter.id(),
+                    loss_world_model: self.last_wm_loss,
+                    loss_credit: self.last_credit_loss,
+                    loss_policy: self.last_policy_loss,
+                    loss_replay: self.last_replay_loss,
+                    reward_mean: lane.last_reward,
+                    reward_surprise: lane.last_surprise,
+                    reward_novelty: lane.last_novelty,
+                    reward_homeo: lane.last_homeo,
+                    reward_order: lane.last_order,
+                    h_eff,
+                    policy_entropy: lane.last_entropy,
+                    repr_drift: self.last_drift,
+                    buffer_len: lane.buffer.len(),
+                }
+            })
+            .collect()
     }
 }
 
