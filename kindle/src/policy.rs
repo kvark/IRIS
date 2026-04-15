@@ -56,18 +56,35 @@ impl ValueHead {
 ///
 /// Inputs:
 /// - `"z"`: `[batch_size, latent_dim]` — latent from encoder (detached, fed as input)
-/// - `"action"`: `[batch_size, action_dim]` — one-hot taken action
+/// - `"action"`: `[batch_size, action_dim]` — one-hot taken action (or
+///   advantage-weighted one-hot for REINFORCE-style per-row weighting, see
+///   `agent.rs::policy_step_batched`).
 /// - `"value_target"`: `[batch_size, 1]` — TD target for value head
 ///
 /// Outputs:
-/// - `[0]`: combined loss (policy cross-entropy + value MSE, mean over batch)
+/// - `[0]`: combined loss (policy cross-entropy + value MSE, optionally
+///   minus `entropy_beta · H(π)`; mean over batch)
 /// - `[1]`: logits `[batch_size, action_dim]` — for action sampling
 /// - `[2]`: value `[batch_size, 1]` — for advantage computation
+///
+/// `entropy_beta` controls a shannon-entropy regularizer on the policy:
+///
+///   H(π) = -∑_k softmax(ℓ)_k · log softmax(ℓ)_k
+///
+/// The loss subtracts `entropy_beta · H(π)` (after mean-reduction across
+/// the batch and action dims). For `β > 0` this *encourages* higher
+/// entropy — the standard exploration bonus in policy-gradient methods.
+/// For `β < 0` it *discourages* entropy and drives the softmax to
+/// collapse toward a delta distribution (useful when a policy is stuck
+/// at uniform and needs to commit). At `β = 0` the entropy term is
+/// elided entirely and the graph is identical to the pre-regularization
+/// policy graph — parity guarantee.
 pub fn build_policy_graph(
     latent_dim: usize,
     action_dim: usize,
     hidden_dim: usize,
     batch_size: usize,
+    entropy_beta: f32,
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
@@ -83,7 +100,28 @@ pub fn build_policy_graph(
     // Policy loss: cross-entropy with one-hot action selects -log π(a|s)
     let policy_loss = g.cross_entropy_loss(logits, action);
     let value_loss = g.mse_loss(value, value_target);
-    let total_loss = g.add(policy_loss, value_loss);
+    let base_loss = g.add(policy_loss, value_loss);
+
+    // Entropy regularizer: subtract β · H(π) from the loss.
+    //
+    //   mean_all(p · log p) = -<H>/K   (negative scalar, K = action_dim)
+    //
+    // so `loss += β · mean_all(p · log p)` adds a negative term for β > 0
+    // (encouraging entropy, since minimizing a more-negative value lets
+    // |H| grow) and a positive term for β < 0. Elide entirely at β = 0 so
+    // we don't add a no-op `softmax→log_softmax→mul→mean→scalar→mul→add`
+    // chain that the optimizer would then have to prove away.
+    let total_loss = if entropy_beta == 0.0 {
+        base_loss
+    } else {
+        let sm = g.softmax(logits);
+        let lsm = g.log_softmax(logits);
+        let p_log_p = g.mul(sm, lsm);
+        let mean_ent = g.mean_all(p_log_p);
+        let beta_node = g.scalar(entropy_beta);
+        let ent_penalty = g.mul(mean_ent, beta_node);
+        g.add(base_loss, ent_penalty)
+    };
 
     g.set_outputs(vec![total_loss, logits, value]);
     g

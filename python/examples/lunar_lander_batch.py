@@ -142,6 +142,14 @@ def main() -> int:
         help="policy+value head LR override. Default is lr × 0.5. Set higher "
         "if the policy's softmax stays stuck at uniform despite WM training.",
     )
+    parser.add_argument(
+        "--entropy-beta",
+        type=float,
+        default=None,
+        help="entropy regularization coefficient. Positive values encourage "
+        "exploration (prevent softmax collapse); negative values force "
+        "commitment. 0 disables. Applies only to discrete-action envs.",
+    )
     args = parser.parse_args()
 
     # One env per lane, each with a distinct seed so the lanes diverge.
@@ -177,6 +185,7 @@ def main() -> int:
         hidden_dim=args.hidden_dim,
         action_repeat=args.action_repeat,
         lr_policy=args.lr_policy,
+        entropy_beta=args.entropy_beta,
     )
     print("agent ready (compiled graphs once, N lanes)")
 

@@ -360,8 +360,12 @@ impl Agent {
                     MAX_ACTION_DIM,
                     config.hidden_dim,
                     config.batch_size,
+                    config.entropy_beta,
                 )
             } else {
+                // Gaussian policies with fixed unit variance have constant
+                // entropy — the regularizer has nothing to scale. The MSE
+                // graph ignores `entropy_beta` entirely.
                 policy::build_continuous_policy_graph(
                     config.latent_dim,
                     MAX_ACTION_DIM,

@@ -406,6 +406,7 @@ impl PyBatchAgent {
         action_repeat = None,
         lr_policy = None,
         lr_credit = None,
+        entropy_beta = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -421,6 +422,7 @@ impl PyBatchAgent {
         action_repeat: Option<usize>,
         lr_policy: Option<f32>,
         lr_credit: Option<f32>,
+        entropy_beta: Option<f32>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -485,6 +487,9 @@ impl PyBatchAgent {
         }
         if let Some(lrc) = lr_credit {
             config.lr_credit = lrc;
+        }
+        if let Some(eb) = entropy_beta {
+            config.entropy_beta = eb;
         }
         let agent = Agent::new(config, adapters);
         Ok(Self {
