@@ -20,8 +20,8 @@ use kindle::{Agent, AgentConfig};
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 /// A kindle agent wired to a Python-side environment.
 ///
@@ -224,8 +224,7 @@ impl PyAgent {
         let d = diags
             .first()
             .ok_or_else(|| PyRuntimeError::new_err("agent has no lanes"))?;
-        let json =
-            serde_json::to_string(d).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let json = serde_json::to_string(d).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         let json_mod = py.import_bound("json")?;
         json_mod.call_method1("loads", (json,))
     }
@@ -342,9 +341,9 @@ fn unpack_reset(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
 /// Gymnasium: `(obs, reward, terminated, truncated, info)`.
 /// Older gym:  `(obs, reward, done, info)`.
 fn unpack_step(obj: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, f32, bool, bool)> {
-    let tup = obj.downcast::<PyTuple>().map_err(|_| {
-        PyValueError::new_err("env.step() must return a tuple")
-    })?;
+    let tup = obj
+        .downcast::<PyTuple>()
+        .map_err(|_| PyValueError::new_err("env.step() must return a tuple"))?;
     let n = tup.len();
     if n < 4 {
         return Err(PyValueError::new_err(
@@ -451,8 +450,10 @@ impl PyBatchAgent {
                     as Box<dyn kindle::EnvAdapter>
             })
             .collect();
-        let mut config = AgentConfig::default();
-        config.batch_size = batch_size;
+        let mut config = AgentConfig {
+            batch_size,
+            ..AgentConfig::default()
+        };
         if let Some(lr) = learning_rate {
             config.learning_rate = lr;
             // Scale dependent LRs proportionally to preserve the 0.3×/0.5×

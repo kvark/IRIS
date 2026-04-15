@@ -203,6 +203,12 @@ pub struct Agent {
     z_target_scratch: Vec<f32>,
     task_scratch: Vec<f32>,
     value_target_scratch: Vec<f32>,
+    /// Per-row advantage-weighted action targets for the policy dispatch,
+    /// sized `[N, MAX_ACTION_DIM]`. Computed as `advantage_i · one_hot_i`,
+    /// which gives each lane its own signed gradient magnitude through
+    /// either the cross-entropy or MSE loss path without needing a
+    /// per-row loss weighting input on the graph side.
+    policy_action_scratch: Vec<f32>,
 }
 
 /// Xavier (Glorot uniform) initialization.
@@ -426,6 +432,7 @@ impl Agent {
             z_target_scratch: vec![0.0; n * config.latent_dim],
             task_scratch: vec![0.0; n * TASK_DIM],
             value_target_scratch: vec![0.0; n],
+            policy_action_scratch: vec![0.0; n * MAX_ACTION_DIM],
             config,
         }
     }
@@ -950,50 +957,62 @@ impl Agent {
     /// Batched policy + value step over all lanes. The graph input `"z"` is
     /// the stacked per-lane latents produced this step; `"action"` is the
     /// stacked action tokens already in `action_token_scratch`;
-    /// `"value_target"` is the stacked per-lane rewards.
+    /// `"value_target"` is the stacked per-lane rewards. `"action"` is
+    /// fed as a per-row advantage-weighted scaled one-hot — see below.
     ///
-    /// One scalar learning rate is applied to the whole batch. We derive it
-    /// as the mean of per-lane advantage-weighted scales, gated per-lane by
-    /// the entropy floor (lanes below the floor contribute zero scale).
+    /// Per-row advantage weighting, without a graph change: for either
+    /// policy loss variant the gradient w.r.t. logits is
+    /// `target_weight · (pred − one_hot)`. So if we feed the action
+    /// input as `advantage_i · one_hot_i` (signed, clamped) rather than
+    /// just `one_hot_i`, each lane's gradient magnitude and sign come
+    /// from its own advantage. Lanes with positive advantage push the
+    /// policy toward the taken action, lanes with negative advantage
+    /// push it away, and lanes with ~zero advantage contribute ~nothing.
+    /// The shared LR is a fixed `lr_policy · batch_lr_scale`.
+    ///
+    /// This is the zero-graph-change analog of a proper per-row loss
+    /// weighting input. It works for the discrete cross-entropy graph
+    /// and the continuous MSE graph uniformly (both use `"action"` as
+    /// their target).
     fn policy_step_batched(&mut self, z_stack: &[f32]) {
-        let n = self.lanes.len();
-
         // Build stacked value targets (the rewards computed this step).
         for (i, lane) in self.lanes.iter().enumerate() {
             self.value_target_scratch[i] = lane.last_reward;
         }
 
-        // Compute the per-batch LR scale: mean of per-lane advantage-scaled
-        // scales. Lanes whose entropy is below the floor contribute 0 (no
-        // gradient signal from them in this batch). If every lane is gated
-        // out, skip the dispatch entirely.
-        let mut scale_sum = 0.0f32;
+        // Build per-row advantage-weighted action targets. Entropy floor
+        // still gates per-lane; a gated-out lane contributes a zero row
+        // (no gradient). Clamp advantages to ±1 so a single outlier lane
+        // can't dominate the shared-weight update.
+        self.policy_action_scratch.fill(0.0);
         let mut any_active = false;
-        for lane in &self.lanes {
+        for (i, lane) in self.lanes.iter().enumerate() {
             if lane.last_entropy < self.config.entropy_floor {
                 continue;
             }
+            let advantage = (lane.last_reward - lane.last_value).clamp(-1.0, 1.0);
+            if advantage == 0.0 {
+                continue;
+            }
             any_active = true;
-            let advantage = lane.last_reward - lane.last_value;
-            let scale = if advantage > 0.0 {
-                advantage.min(1.0)
-            } else {
-                0.1
-            };
-            scale_sum += scale;
+            let act_src = &self.action_token_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+            let act_dst =
+                &mut self.policy_action_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+            for (dst, &src) in act_dst.iter_mut().zip(act_src.iter()) {
+                *dst = advantage * src;
+            }
         }
         if !any_active {
             return;
         }
-        let lr_scale = scale_sum / n as f32;
 
         self.policy_session.set_input("z", z_stack);
         self.policy_session
-            .set_input("action", &self.action_token_scratch);
+            .set_input("action", &self.policy_action_scratch);
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
         self.policy_session
-            .set_learning_rate(self.config.lr_policy * lr_scale * self.batch_lr_scale);
+            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale);
         self.policy_session.step();
         self.policy_session.wait();
 
