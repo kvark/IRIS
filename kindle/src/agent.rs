@@ -37,7 +37,7 @@ use crate::adapter::{EnvAdapter, MAX_ACTION_DIM, OBS_TOKEN_DIM, TASK_DIM};
 use crate::buffer::{ExperienceBuffer, Transition};
 use crate::credit;
 use crate::encoder::Encoder;
-use crate::env::{Action, Environment, Observation};
+use crate::env::{Action, ActionKind, Environment, Observation};
 use crate::policy;
 use crate::reward::{RewardCircuit, RewardWeights};
 use crate::world_model::WorldModel;
@@ -313,24 +313,56 @@ impl Agent {
         };
 
         // --- Policy + value graph ---
+        // Pick the policy graph shape from the adapters' action kinds. All
+        // adapters must share a kind (agent-wide single policy session), so
+        // we check all of them and pick:
         //
-        // We always build the continuous-Gaussian graph (MSE loss against
-        // the action token). For discrete envs the adapter interprets the
-        // first `n` head dims as logits and samples categorically at act()
-        // time; during training the taken action is encoded as a one-hot
-        // in the action token, so MSE against one-hot has the same
-        // gradient sign as cross-entropy: minimizing MSE with a one-hot
-        // target pushes the mean toward the taken dim. It's not strictly
-        // equivalent to cross-entropy but it's numerically stable and
-        // unifies the discrete/continuous training path into a single
-        // graph — a big simplification for env hopping.
-        let policy_session = {
-            let g = policy::build_continuous_policy_graph(
-                config.latent_dim,
-                MAX_ACTION_DIM,
-                config.hidden_dim,
-                config.batch_size,
+        //   Discrete    → cross_entropy_loss(logits, one_hot_action).
+        //                 The gradient w.r.t. logits is
+        //                 `softmax(logits) − one_hot`, which gives every
+        //                 logit a well-conditioned update every step and
+        //                 lets the softmax actually narrow toward preferred
+        //                 actions. This is what kindle should use for any
+        //                 all-discrete setup.
+        //
+        //   Continuous  → mse_loss(mean, action). Gaussian-NLL with fixed
+        //                 unit variance reduces to MSE up to a constant,
+        //                 which is the right loss for continuous actions.
+        //
+        // Mixed-kind adapter sets aren't currently supported because one
+        // compiled graph has one loss op. If that ever matters, we'd route
+        // per-lane into one of two graphs (different shape) — out of scope
+        // here.
+        let first_kind = adapters[0].action_kind();
+        for (i, a) in adapters.iter().enumerate().skip(1) {
+            assert!(
+                kinds_match(first_kind, a.action_kind()),
+                "Agent::new: all adapters must share the same ActionKind \
+                 variant (lane 0 is {:?}, lane {} is {:?}). Mixed discrete/\
+                 continuous in one batched session is not supported.",
+                first_kind,
+                i,
+                a.action_kind()
             );
+        }
+        let is_discrete = matches!(first_kind, ActionKind::Discrete { .. });
+
+        let policy_session = {
+            let g = if is_discrete {
+                policy::build_policy_graph(
+                    config.latent_dim,
+                    MAX_ACTION_DIM,
+                    config.hidden_dim,
+                    config.batch_size,
+                )
+            } else {
+                policy::build_continuous_policy_graph(
+                    config.latent_dim,
+                    MAX_ACTION_DIM,
+                    config.hidden_dim,
+                    config.batch_size,
+                )
+            };
             let mut s = build_session(&g, config.opt_level);
             init_parameters(&mut s);
             s
@@ -1013,6 +1045,17 @@ impl Agent {
 }
 
 /// Deterministic per-env task embedding. Same env_id always produces the
+/// Variant-only equality on `ActionKind`. The enum isn't `Eq` because it
+/// carries `f32` in the continuous branch; we just want to check the two
+/// adapters agree on which branch of the sum type they are.
+fn kinds_match(a: ActionKind, b: ActionKind) -> bool {
+    matches!(
+        (a, b),
+        (ActionKind::Discrete { .. }, ActionKind::Discrete { .. })
+            | (ActionKind::Continuous { .. }, ActionKind::Continuous { .. })
+    )
+}
+
 /// same vector, so swapping in and out across runs is consistent. Values
 /// are spread in [-0.5, 0.5] via a golden-ratio hash.
 fn embedding_for(env_id: u32, dim: usize) -> Vec<f32> {
