@@ -150,6 +150,14 @@ def main() -> int:
         "exploration (prevent softmax collapse); negative values force "
         "commitment. 0 disables. Applies only to discrete-action envs.",
     )
+    parser.add_argument(
+        "--label-smoothing",
+        type=float,
+        default=None,
+        help="label-smoothing ε on the action target (0=none, 0.1=standard). "
+        "Prevents the softmax from fully collapsing to deterministic by "
+        "keeping gradient alive on every logit even at a one-hot softmax.",
+    )
     args = parser.parse_args()
 
     # One env per lane, each with a distinct seed so the lanes diverge.
@@ -186,6 +194,7 @@ def main() -> int:
         action_repeat=args.action_repeat,
         lr_policy=args.lr_policy,
         entropy_beta=args.entropy_beta,
+        label_smoothing=args.label_smoothing,
     )
     print("agent ready (compiled graphs once, N lanes)")
 

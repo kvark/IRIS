@@ -114,9 +114,26 @@ pub fn build_policy_graph(
     let total_loss = if entropy_beta == 0.0 {
         base_loss
     } else {
+        // NB: we deliberately use `log(softmax(ℓ) + ε)` rather than the
+        // fused `log_softmax(ℓ)`. Meganeura has a forward kernel for
+        // LogSoftmax but its BACKWARD isn't implemented (src/autodiff.rs
+        // just logs a warning and skips), so using `log_softmax` gives
+        // the right forward value of H(π) but a zero gradient. Using
+        // `log(softmax(ℓ))` directly works at moderate β but NaNs at
+        // β ≳ 5 because meganeura's softmax kernel underflows to exact
+        // 0.0 for large logit spreads, and `0 · log(0) = 0 · −∞ = NaN`
+        // in float32 even though the analytical value is 0. Adding a
+        // small positive ε inside the log keeps the argument strictly
+        // positive. `ε = 1e-6` perturbs H by at most K·ε/H_max ≈ 1e-6
+        // — below any scale that matters for regularization strength.
         let sm = g.softmax(logits);
-        let lsm = g.log_softmax(logits);
-        let p_log_p = g.mul(sm, lsm);
+        let eps_const = g.constant(
+            vec![1e-6f32; batch_size * action_dim],
+            &[batch_size, action_dim],
+        );
+        let sm_safe = g.add(sm, eps_const);
+        let log_sm = g.log(sm_safe);
+        let p_log_p = g.mul(sm, log_sm);
         let mean_ent = g.mean_all(p_log_p);
         let beta_node = g.scalar(entropy_beta);
         let ent_penalty = g.mul(mean_ent, beta_node);
