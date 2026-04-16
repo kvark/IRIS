@@ -451,6 +451,22 @@ impl Agent {
             );
             let mut s = build_session(&g, config.opt_level);
             init_parameters(&mut s);
+            // Override the goal decoder weights so each option starts with
+            // an orthogonal goal-latent. Without this, all options decode
+            // to similar random vectors and L0 can't distinguish them.
+            // We set option_i's goal to a one-hot-like pattern in the first
+            // min(num_options, option_dim) dims, scaled by 0.5.
+            let goal_size = config.num_options * option_dim;
+            let mut goal_weights = vec![0.0f32; config.hidden_dim * goal_size];
+            for o in 0..config.num_options.min(option_dim) {
+                // For the first hidden unit, set the weight to option_o's
+                // o-th goal dim. This is a crude init — the output of
+                // Linear(hidden, goal_size) after relu'd hidden will be
+                // biased toward orthogonal goals.
+                let col = o * option_dim + o; // goal_flat index for option o, dim o
+                goal_weights[col] = 0.5; // row 0 of the weight matrix
+            }
+            s.set_parameter("option.goal_dec.weight", &goal_weights);
             Some(s)
         } else {
             None
