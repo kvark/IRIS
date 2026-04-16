@@ -618,11 +618,6 @@ impl Agent {
 
             if any_needs_option {
                 // --- L1 backward for lanes whose option just finished ---
-                // Build per-row advantage-weighted option_taken for training.
-                // Lanes that haven't terminated (steps_left > 0) get zero
-                // rows (no gradient). Lanes at steps_left == 0 whose
-                // option_return is meaningful get the advantage-scaled
-                // one-hot of the option they'd been executing.
                 self.option_taken_scratch.fill(0.0);
                 self.option_return_scratch.fill(0.0);
                 let mut any_train = false;
@@ -630,7 +625,6 @@ impl Agent {
                     if lane.option_steps_left != 0 {
                         continue;
                     }
-                    // Advantage = accumulated return − value at option start.
                     let advantage = (lane.option_return - lane.option_start_value).clamp(-1.0, 1.0);
                     if advantage.abs() < 1e-8 {
                         continue;
