@@ -150,6 +150,10 @@ def main() -> int:
         "exploration (prevent softmax collapse); negative values force "
         "commitment. 0 disables. Applies only to discrete-action envs.",
     )
+    parser.add_argument("--num-options", type=int, default=None,
+                        help="L1 option count. 1 (default) = L0-only. ≥ 2 activates Phase G.")
+    parser.add_argument("--option-horizon", type=int, default=None,
+                        help="env steps per option (Phase G). Default 10.")
     parser.add_argument(
         "--label-smoothing",
         type=float,
@@ -195,6 +199,8 @@ def main() -> int:
         lr_policy=args.lr_policy,
         entropy_beta=args.entropy_beta,
         label_smoothing=args.label_smoothing,
+        num_options=args.num_options,
+        option_horizon=args.option_horizon,
     )
     print("agent ready (compiled graphs once, N lanes)")
 

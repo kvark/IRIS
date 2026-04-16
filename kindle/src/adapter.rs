@@ -146,6 +146,13 @@ impl EnvAdapter for GenericAdapter {
 }
 
 /// Categorical sample from logits via softmax + inverse-CDF.
+/// Categorical sample from logits via softmax + inverse-CDF. Public so
+/// the agent's L1 option policy can reuse it for option sampling.
+pub fn sample_discrete_from_logits(logits: &[f32], rng: &mut dyn RngCore) -> usize {
+    sample_discrete(logits, rng)
+}
+
+/// Categorical sample from logits via softmax + inverse-CDF.
 fn sample_discrete(logits: &[f32], rng: &mut dyn RngCore) -> usize {
     let max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let exp: Vec<f32> = logits.iter().map(|&x| (x - max).exp()).collect();

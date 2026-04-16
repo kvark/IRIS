@@ -38,6 +38,7 @@ use crate::buffer::{ExperienceBuffer, Transition};
 use crate::credit;
 use crate::encoder::Encoder;
 use crate::env::{Action, ActionKind, Environment, Observation};
+use crate::option;
 use crate::policy;
 use crate::reward::{RewardCircuit, RewardWeights};
 use crate::world_model::WorldModel;
@@ -85,6 +86,18 @@ pub struct AgentConfig {
     /// minima). At `ε = 0` (default), the target is exact one-hot —
     /// backward compatible. `ε = 0.1` is a standard starting point.
     pub label_smoothing: f32,
+    /// Number of discrete options for the L1 option-policy (Phase G).
+    /// `1` (default) skips L1 entirely — no option_session compiled, no
+    /// goal conditioning, byte-parity with the pre-Phase-G agent.
+    /// `≥ 2` activates the full L1 path: option_session, per-lane goal
+    /// conditioning on L0's z input, option-return training.
+    pub num_options: usize,
+    /// Goal-latent width decoded per option. Defaults to `latent_dim`.
+    pub option_dim: usize,
+    /// Fixed number of env steps per option (v1: no learned termination).
+    pub option_horizon: usize,
+    /// L1 option-policy learning rate.
+    pub lr_option: f32,
     pub opt_level: OptLevel,
 }
 
@@ -109,6 +122,10 @@ impl Default for AgentConfig {
             drift_threshold: 1.0,
             action_repeat: 1,
             label_smoothing: 0.0,
+            num_options: 1,
+            option_dim: 0, // 0 = use latent_dim
+            option_horizon: 10,
+            lr_option: 2.5e-4,
             opt_level: OptLevel::Full,
         }
     }
@@ -161,6 +178,14 @@ struct Lane {
     cached_action: Option<Action>,
     repeats_left: usize,
 
+    // --- L1 option state (Phase G) ---
+    current_option: u32,
+    option_goal: Vec<f32>,
+    option_steps_left: usize,
+    option_return: f32,
+    /// Value prediction cached at option-start for advantage computation.
+    option_start_value: f32,
+
     // Cached last-step values for diagnostics & policy advantage.
     last_value: f32,
     last_entropy: f32,
@@ -188,6 +213,8 @@ pub struct Agent {
     /// means). For discrete envs, the adapter softmax+samples over the
     /// first `n` head dims. This gives one universal policy graph.
     policy_session: Session,
+    /// L1 option-policy session. `None` when `num_options <= 1` (L0-only).
+    option_session: Option<Session>,
     /// Per-lane latent dim (the WM graph is [N, latent_dim]).
     latent_dim: usize,
     step_count: usize,
@@ -219,6 +246,13 @@ pub struct Agent {
     /// either the cross-entropy or MSE loss path without needing a
     /// per-row loss weighting input on the graph side.
     policy_action_scratch: Vec<f32>,
+    /// Effective option_dim (resolved from config: 0 → latent_dim).
+    option_dim: usize,
+    /// Stacked z_concat = [z, goal] for the widened policy input.
+    z_concat_scratch: Vec<f32>,
+    /// L1 scratch buffers.
+    option_taken_scratch: Vec<f32>,
+    option_return_scratch: Vec<f32>,
 }
 
 /// Xavier (Glorot uniform) initialization.
@@ -363,21 +397,33 @@ impl Agent {
         }
         let is_discrete = matches!(first_kind, ActionKind::Discrete { .. });
 
+        // Resolve option_dim: 0 in config means "use latent_dim".
+        let option_dim = if config.option_dim == 0 {
+            config.latent_dim
+        } else {
+            config.option_dim
+        };
+        let l1_active = config.num_options >= 2;
+
+        // L0 policy graph — z input is widened by option_dim when L1 is
+        // active so the policy can condition on the current goal-latent.
+        let z_dim = if l1_active {
+            config.latent_dim + option_dim
+        } else {
+            config.latent_dim
+        };
         let policy_session = {
             let g = if is_discrete {
                 policy::build_policy_graph(
-                    config.latent_dim,
+                    z_dim,
                     MAX_ACTION_DIM,
                     config.hidden_dim,
                     config.batch_size,
                     config.entropy_beta,
                 )
             } else {
-                // Gaussian policies with fixed unit variance have constant
-                // entropy — the regularizer has nothing to scale. The MSE
-                // graph ignores `entropy_beta` entirely.
                 policy::build_continuous_policy_graph(
-                    config.latent_dim,
+                    z_dim,
                     MAX_ACTION_DIM,
                     config.hidden_dim,
                     config.batch_size,
@@ -386,6 +432,22 @@ impl Agent {
             let mut s = build_session(&g, config.opt_level);
             init_parameters(&mut s);
             s
+        };
+
+        // L1 option-policy session — only built when num_options >= 2.
+        let option_session = if l1_active {
+            let g = option::build_option_graph(
+                config.latent_dim,
+                config.num_options,
+                option_dim,
+                config.hidden_dim,
+                config.batch_size,
+            );
+            let mut s = build_session(&g, config.opt_level);
+            init_parameters(&mut s);
+            Some(s)
+        } else {
+            None
         };
 
         let n = config.batch_size;
@@ -414,6 +476,11 @@ impl Agent {
                 pending_boundary: false,
                 cached_action: None,
                 repeats_left: 0,
+                current_option: 0,
+                option_goal: vec![0.0; option_dim],
+                option_steps_left: 0, // triggers initial option sample
+                option_return: 0.0,
+                option_start_value: 0.0,
                 last_value: 0.0,
                 last_entropy: 0.0,
                 last_surprise: 0.0,
@@ -430,6 +497,7 @@ impl Agent {
             wm_session,
             credit_session,
             policy_session,
+            option_session,
             latent_dim: config.latent_dim,
             step_count: 0,
             probe_obs: None,
@@ -447,6 +515,10 @@ impl Agent {
             task_scratch: vec![0.0; n * TASK_DIM],
             value_target_scratch: vec![0.0; n],
             policy_action_scratch: vec![0.0; n * MAX_ACTION_DIM],
+            option_dim,
+            z_concat_scratch: vec![0.0; n * z_dim],
+            option_taken_scratch: vec![0.0; n * config.num_options],
+            option_return_scratch: vec![0.0; n],
             config,
         }
     }
@@ -469,6 +541,9 @@ impl Agent {
         // is semantically stale.
         lane.cached_action = None;
         lane.repeats_left = 0;
+        // Episode reset terminates the current option early — force a
+        // resample next act().
+        lane.option_steps_left = 0;
     }
 
     /// Swap the active adapter on one lane. Preserves all learned
@@ -491,6 +566,7 @@ impl Agent {
         lane.pending_boundary = true;
         lane.cached_action = None;
         lane.repeats_left = 0;
+        lane.option_steps_left = 0;
     }
 
     /// Env id of the adapter currently bound to `lane_idx`.
@@ -515,8 +591,9 @@ impl Agent {
             n
         );
 
-        // Stack per-lane previous latents into the batched `z` input.
+        // Stack per-lane previous latents.
         let ld = self.latent_dim;
+        let od = self.option_dim;
         let mut z_stack = vec![0.0f32; n * ld];
         for (i, lane) in self.lanes.iter().enumerate() {
             if let Some(prev) = lane.buffer.last() {
@@ -524,7 +601,101 @@ impl Agent {
             }
         }
 
-        self.policy_session.set_input("z", &z_stack);
+        // --- L1 option management (Phase G) ---
+        if let Some(ref mut opt_sess) = self.option_session {
+            let num_options = self.config.num_options;
+            let horizon = self.config.option_horizon;
+
+            // Train L1 on terminated options, then sample new ones.
+            // A lane needs a new option when option_steps_left == 0.
+            let any_needs_option = self.lanes.iter().any(|l| l.option_steps_left == 0);
+
+            if any_needs_option {
+                // --- L1 backward for lanes whose option just finished ---
+                // Build per-row advantage-weighted option_taken for training.
+                // Lanes that haven't terminated (steps_left > 0) get zero
+                // rows (no gradient). Lanes at steps_left == 0 whose
+                // option_return is meaningful get the advantage-scaled
+                // one-hot of the option they'd been executing.
+                self.option_taken_scratch.fill(0.0);
+                self.option_return_scratch.fill(0.0);
+                let mut any_train = false;
+                for (i, lane) in self.lanes.iter().enumerate() {
+                    if lane.option_steps_left != 0 {
+                        continue;
+                    }
+                    // Advantage = accumulated return − value at option start.
+                    let advantage = (lane.option_return - lane.option_start_value).clamp(-1.0, 1.0);
+                    if advantage.abs() < 1e-8 {
+                        continue;
+                    }
+                    any_train = true;
+                    let row =
+                        &mut self.option_taken_scratch[i * num_options..(i + 1) * num_options];
+                    row[lane.current_option as usize] = advantage;
+                    self.option_return_scratch[i] = lane.option_return;
+                }
+
+                if any_train && self.step_count >= self.config.warmup_steps {
+                    opt_sess.set_input("z", &z_stack);
+                    opt_sess.set_input("option_taken", &self.option_taken_scratch);
+                    opt_sess.set_input("option_return", &self.option_return_scratch);
+                    opt_sess.set_learning_rate(self.config.lr_option * self.batch_lr_scale);
+                    opt_sess.step();
+                    opt_sess.wait();
+                }
+
+                // --- L1 forward: sample new options for lanes at step 0 ---
+                opt_sess.set_input("z", &z_stack);
+                self.option_taken_scratch.fill(0.0);
+                opt_sess.set_input("option_taken", &self.option_taken_scratch);
+                self.option_return_scratch.fill(0.0);
+                opt_sess.set_input("option_return", &self.option_return_scratch);
+                opt_sess.set_learning_rate(0.0);
+                opt_sess.step();
+                opt_sess.wait();
+
+                // Read logits + value + goal latents.
+                let mut logits = vec![0.0f32; n * num_options];
+                opt_sess.read_output_by_index(1, &mut logits);
+                let mut values = vec![0.0f32; n];
+                opt_sess.read_output_by_index(2, &mut values);
+                let goal_total = n * num_options * od;
+                let mut goals_flat = vec![0.0f32; goal_total];
+                opt_sess.read_output_by_index(3, &mut goals_flat);
+
+                // For each lane needing a new option: sample + decode goal.
+                for (i, lane) in self.lanes.iter_mut().enumerate() {
+                    if lane.option_steps_left != 0 {
+                        continue;
+                    }
+                    // Categorical sample from option logits.
+                    let row = &logits[i * num_options..(i + 1) * num_options];
+                    let opt_idx = crate::adapter::sample_discrete_from_logits(row, rng);
+                    lane.current_option = opt_idx as u32;
+                    lane.option_start_value = values[i];
+                    lane.option_steps_left = horizon;
+                    lane.option_return = 0.0;
+
+                    // Decode goal-latent for the selected option.
+                    let base = i * num_options * od + opt_idx * od;
+                    lane.option_goal
+                        .copy_from_slice(&goals_flat[base..base + od]);
+                }
+            }
+
+            // Build z_concat = [z, goal] per lane for the widened L0 policy.
+            for (i, lane) in self.lanes.iter().enumerate() {
+                let row = &mut self.z_concat_scratch[i * (ld + od)..(i + 1) * (ld + od)];
+                row[..ld].copy_from_slice(&z_stack[i * ld..(i + 1) * ld]);
+                row[ld..].copy_from_slice(&lane.option_goal);
+            }
+            self.policy_session.set_input("z", &self.z_concat_scratch);
+        } else {
+            // L0-only path — feed z directly.
+            self.policy_session.set_input("z", &z_stack);
+        }
+
         self.action_token_scratch.fill(0.0);
         self.policy_session
             .set_input("action", &self.action_token_scratch);
@@ -669,6 +840,12 @@ impl Agent {
             lane.last_homeo = homeo;
             lane.last_order = order;
             lane.last_reward = reward;
+
+            // L1: accumulate reward into the current option's return and
+            // count down. The next act() call will detect steps_left == 0
+            // and handle training + resampling.
+            lane.option_return += reward;
+            lane.option_steps_left = lane.option_steps_left.saturating_sub(1);
         }
 
         // --- Credit assignment (per-lane, sequential CPU-light dispatches) ---
@@ -1049,7 +1226,20 @@ impl Agent {
             return;
         }
 
-        self.policy_session.set_input("z", z_stack);
+        // When L1 is active, feed z_concat = [z, goal] to the widened
+        // policy graph. Otherwise feed z directly.
+        if self.option_session.is_some() {
+            let ld = self.latent_dim;
+            let od = self.option_dim;
+            for (i, lane) in self.lanes.iter().enumerate() {
+                let row = &mut self.z_concat_scratch[i * (ld + od)..(i + 1) * (ld + od)];
+                row[..ld].copy_from_slice(&z_stack[i * ld..(i + 1) * ld]);
+                row[ld..].copy_from_slice(&lane.option_goal);
+            }
+            self.policy_session.set_input("z", &self.z_concat_scratch);
+        } else {
+            self.policy_session.set_input("z", z_stack);
+        }
         self.policy_session
             .set_input("action", &self.policy_action_scratch);
         self.policy_session
