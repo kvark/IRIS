@@ -408,8 +408,6 @@ impl PyBatchAgent {
         lr_credit = None,
         entropy_beta = None,
         label_smoothing = None,
-        gamma = None,
-        gae_lambda = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -427,8 +425,6 @@ impl PyBatchAgent {
         lr_credit: Option<f32>,
         entropy_beta: Option<f32>,
         label_smoothing: Option<f32>,
-        gamma: Option<f32>,
-        gae_lambda: Option<f32>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -499,12 +495,6 @@ impl PyBatchAgent {
         }
         if let Some(ls) = label_smoothing {
             config.label_smoothing = ls;
-        }
-        if let Some(g) = gamma {
-            config.gamma = g;
-        }
-        if let Some(gl) = gae_lambda {
-            config.gae_lambda = gl;
         }
         let agent = Agent::new(config, adapters);
         Ok(Self {

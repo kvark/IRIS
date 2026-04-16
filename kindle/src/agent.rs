@@ -85,19 +85,6 @@ pub struct AgentConfig {
     /// minima). At `ε = 0` (default), the target is exact one-hot —
     /// backward compatible. `ε = 0.1` is a standard starting point.
     pub label_smoothing: f32,
-    /// Discount factor for computing multi-step returns as the value
-    /// target, and for GAE advantage estimation. `γ = 0` is single-step
-    /// (equivalent to the pre-TD behaviour). `γ = 0.99` is standard RL.
-    /// Both the value target and the advantage benefit from chaining:
-    /// the value head learns to predict future discounted return rather
-    /// than just the immediate reward, and the advantage naturally
-    /// produces mixed-sign signal (positive for better-than-expected,
-    /// negative for worse) without explicit normalization.
-    pub gamma: f32,
-    /// GAE lambda for advantage estimation. `λ = 1` is Monte Carlo
-    /// (full-trajectory advantage), `λ = 0` is single-step TD. `0.95`
-    /// is a standard balance between bias (low λ) and variance (high λ).
-    pub gae_lambda: f32,
     pub opt_level: OptLevel,
 }
 
@@ -122,8 +109,6 @@ impl Default for AgentConfig {
             drift_threshold: 1.0,
             action_repeat: 1,
             label_smoothing: 0.0,
-            gamma: 0.0,
-            gae_lambda: 0.95,
             opt_level: OptLevel::Full,
         }
     }
@@ -1004,75 +989,28 @@ impl Agent {
     /// and the continuous MSE graph uniformly (both use `"action"` as
     /// their target).
     fn policy_step_batched(&mut self, z_stack: &[f32]) {
-        let gamma = self.config.gamma;
-        let lam = self.config.gae_lambda;
-
-        // --- N-step discounted return per lane ---
-        //
-        // Walk backward through the most recent H =
-        // min(buffer_len, history_len) transitions in each lane's
-        // buffer, accumulating `R = Σ_{k=0}^{H-1} γ^k · r_{t−k}`.
-        // This is the Monte-Carlo return over the window — no
-        // bootstrap from V, no per-step value predictions needed.
-        //
-        // value_target = R   (the value head learns to predict
-        //                     future discounted return)
-        // advantage    = R − V(s_t)   (realized minus predicted;
-        //                              naturally mixed-sign once V
-        //                              calibrates)
-        //
-        // At γ = 0 this reduces to single-step reward (backward-
-        // compatible). `gae_lambda` is kept in the config for future
-        // use but not consumed here — proper GAE would need per-step
-        // V(s) stored in the buffer.
-        let h = self.config.history_len;
-        let _ = lam; // reserved for future GAE
-
-        let mut raw_advantages = Vec::with_capacity(self.lanes.len());
+        // Build stacked value targets (the rewards computed this step).
         for (i, lane) in self.lanes.iter().enumerate() {
-            if lane.last_entropy < self.config.entropy_floor {
-                raw_advantages.push(f32::NAN);
-                continue;
-            }
-            let buf_len = lane.buffer.len();
-            let window = buf_len.min(h);
-
-            if gamma == 0.0 || window < 2 {
-                self.value_target_scratch[i] = lane.last_reward;
-                raw_advantages.push(lane.last_reward - lane.last_value);
-                continue;
-            }
-
-            // Forward-accumulate discounted return from oldest to newest
-            // within the window. Env boundaries reset the running sum
-            // (don't chain reward across episode resets).
-            let start = buf_len - window;
-            let mut disc_return = 0.0f32;
-            for k in 0..window {
-                let t = lane.buffer.get(start + k);
-                if t.env_boundary {
-                    disc_return = 0.0;
-                }
-                disc_return = t.reward + gamma * disc_return;
-            }
-            // Normalize the discounted return to a per-step average
-            // by dividing by the effective horizon Σ γ^k =
-            // (1 − γ^H)/(1 − γ). This keeps value targets on the
-            // same scale as single-step rewards regardless of γ, so
-            // the value head doesn't see 10× bigger targets at γ=0.9
-            // than at γ=0 and the advantage signal stays calibrated.
-            let eff_h = (1.0 - gamma.powi(window as i32)) / (1.0 - gamma);
-            let avg_ret = disc_return / eff_h.max(1.0);
-            let ret = if avg_ret.is_finite() {
-                avg_ret
-            } else {
-                lane.last_reward
-            };
-            self.value_target_scratch[i] = ret;
-            raw_advantages.push(ret - lane.last_value);
+            self.value_target_scratch[i] = lane.last_reward;
         }
 
-        // Advantage normalization (standard PPO/A2C practice).
+        // Build per-row advantage-weighted action targets with advantage
+        // normalization + label smoothing.
+        //
+        // Standard advantage normalization: shift to zero-mean, scale to
+        // unit-variance across the batch. This guarantees roughly half the
+        // lanes push "toward" and half push "away from" the sampled action
+        // on every dispatch — preventing the all-positive-advantage spiral
+        // that collapses the softmax when the value head is miscalibrated.
+        // Standard PPO/A2C practice.
+        let mut raw_advantages = Vec::with_capacity(self.lanes.len());
+        for lane in &self.lanes {
+            if lane.last_entropy < self.config.entropy_floor {
+                raw_advantages.push(f32::NAN); // gated out
+            } else {
+                raw_advantages.push(lane.last_reward - lane.last_value);
+            }
+        }
         let valid: Vec<f32> = raw_advantages
             .iter()
             .copied()
@@ -1092,7 +1030,7 @@ impl Agent {
         let k = MAX_ACTION_DIM as f32;
         for (i, &raw_adv) in raw_advantages.iter().enumerate() {
             if !raw_adv.is_finite() {
-                continue;
+                continue; // entropy-gated
             }
             let advantage = ((raw_adv - adv_mean) / adv_std).clamp(-1.0, 1.0);
             if advantage.abs() < 1e-8 {
