@@ -98,6 +98,11 @@ pub struct AgentConfig {
     pub option_horizon: usize,
     /// L1 option-policy learning rate.
     pub lr_option: f32,
+    /// Goal-achievement bonus coefficient. When L1 is active, each step's
+    /// L0 reward is augmented with `−α · ‖z_t − goal‖`, giving L0 a
+    /// self-supervised signal to drive the latent toward the option's goal
+    /// regardless of the frozen reward circuit's output. `α = 0` disables.
+    pub goal_bonus_alpha: f32,
     pub opt_level: OptLevel,
 }
 
@@ -126,6 +131,7 @@ impl Default for AgentConfig {
             option_dim: 0, // 0 = use latent_dim
             option_horizon: 10,
             lr_option: 2.5e-4,
+            goal_bonus_alpha: 0.1,
             opt_level: OptLevel::Full,
         }
     }
@@ -820,7 +826,25 @@ impl Agent {
             let novelty = RewardCircuit::novelty(visit_count);
             let homeo = RewardCircuit::homeostatic(envs[i].homeostatic_variables());
             let order = lane.reward_circuit.observe_order(obs_row);
-            let reward = lane.reward_circuit.compute(surprise, novelty, homeo, order);
+            let mut reward = lane.reward_circuit.compute(surprise, novelty, homeo, order);
+
+            // Goal-achievement bonus (Phase G): when L1 is active, add
+            // −α · ‖z_t − goal‖ to the reward. This gives L0 a per-step
+            // self-supervised signal to drive the latent toward the
+            // current option's decoded goal, independent of the frozen
+            // reward circuit. Without it, L0 has no gradient linking its
+            // actions to the goal direction, so it ignores the goal
+            // dimension of z_concat and collapses to the same deterministic
+            // action regardless of which option L1 selected.
+            if self.option_session.is_some() && self.config.goal_bonus_alpha > 0.0 {
+                let dist: f32 = z_row
+                    .iter()
+                    .zip(lane.option_goal.iter())
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f32>()
+                    .sqrt();
+                reward -= self.config.goal_bonus_alpha * dist;
+            }
 
             let env_boundary = lane.pending_boundary;
             lane.pending_boundary = false;
