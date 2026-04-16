@@ -76,6 +76,15 @@ pub struct AgentConfig {
     /// graph change — a cheap precursor to the Phase G option layer.
     /// See `docs/phase-g-l1-options.md`.
     pub action_repeat: usize,
+    /// Label-smoothing coefficient for the per-row advantage-weighted
+    /// action target sent to the policy graph. At `ε > 0`, the pure
+    /// one-hot target `[0, 0, 1, 0]` becomes `[(1−ε)·one_hot + ε/K]`
+    /// before advantage scaling, preventing the softmax from collapsing
+    /// to deterministic (gradient is nonzero on every logit even at a
+    /// one-hot softmax, so the policy can always recover from bad local
+    /// minima). At `ε = 0` (default), the target is exact one-hot —
+    /// backward compatible. `ε = 0.1` is a standard starting point.
+    pub label_smoothing: f32,
     pub opt_level: OptLevel,
 }
 
@@ -99,6 +108,7 @@ impl Default for AgentConfig {
             drift_interval: 500,
             drift_threshold: 1.0,
             action_repeat: 1,
+            label_smoothing: 0.0,
             opt_level: OptLevel::Full,
         }
     }
@@ -984,18 +994,46 @@ impl Agent {
             self.value_target_scratch[i] = lane.last_reward;
         }
 
-        // Build per-row advantage-weighted action targets. Entropy floor
-        // still gates per-lane; a gated-out lane contributes a zero row
-        // (no gradient). Clamp advantages to ±1 so a single outlier lane
-        // can't dominate the shared-weight update.
+        // Build per-row advantage-weighted action targets with advantage
+        // normalization + label smoothing.
+        //
+        // Standard advantage normalization: shift to zero-mean, scale to
+        // unit-variance across the batch. This guarantees roughly half the
+        // lanes push "toward" and half push "away from" the sampled action
+        // on every dispatch — preventing the all-positive-advantage spiral
+        // that collapses the softmax when the value head is miscalibrated.
+        // Standard PPO/A2C practice.
+        let mut raw_advantages = Vec::with_capacity(self.lanes.len());
+        for lane in &self.lanes {
+            if lane.last_entropy < self.config.entropy_floor {
+                raw_advantages.push(f32::NAN); // gated out
+            } else {
+                raw_advantages.push(lane.last_reward - lane.last_value);
+            }
+        }
+        let valid: Vec<f32> = raw_advantages
+            .iter()
+            .copied()
+            .filter(|a| a.is_finite())
+            .collect();
+        if valid.is_empty() {
+            return;
+        }
+        let adv_mean = valid.iter().sum::<f32>() / valid.len() as f32;
+        let adv_var =
+            valid.iter().map(|a| (a - adv_mean).powi(2)).sum::<f32>() / valid.len() as f32;
+        let adv_std = adv_var.sqrt().max(1e-6);
+
         self.policy_action_scratch.fill(0.0);
         let mut any_active = false;
-        for (i, lane) in self.lanes.iter().enumerate() {
-            if lane.last_entropy < self.config.entropy_floor {
-                continue;
+        let eps = self.config.label_smoothing;
+        let k = MAX_ACTION_DIM as f32;
+        for (i, &raw_adv) in raw_advantages.iter().enumerate() {
+            if !raw_adv.is_finite() {
+                continue; // entropy-gated
             }
-            let advantage = (lane.last_reward - lane.last_value).clamp(-1.0, 1.0);
-            if advantage == 0.0 {
+            let advantage = ((raw_adv - adv_mean) / adv_std).clamp(-1.0, 1.0);
+            if advantage.abs() < 1e-8 {
                 continue;
             }
             any_active = true;
@@ -1003,7 +1041,8 @@ impl Agent {
             let act_dst =
                 &mut self.policy_action_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
             for (dst, &src) in act_dst.iter_mut().zip(act_src.iter()) {
-                *dst = advantage * src;
+                let smoothed = (1.0 - eps) * src + eps / k;
+                *dst = advantage * smoothed;
             }
         }
         if !any_active {
