@@ -46,8 +46,7 @@ pub fn build_option_graph(
     let value_head = nn::Linear::no_bias(&mut g, "option.value", hidden_dim, 1);
     let option_value = value_head.forward(&mut g, h);
 
-    let policy_loss_raw = g.cross_entropy_loss(option_logits, option_taken);
-    let policy_loss = g.sum_all(policy_loss_raw);
+    let policy_loss = g.cross_entropy_loss(option_logits, option_taken);
     let value_loss = g.mse_loss(option_value, option_return);
     let total_loss = g.add(policy_loss, value_loss);
 
