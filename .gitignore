@@ -7,3 +7,4 @@ python/Cargo.lock
 python/.venv/
 python/**/__pycache__/
 python/*.egg-info/
+python/**/*.so
