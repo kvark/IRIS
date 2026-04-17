@@ -99,9 +99,11 @@ pub fn build_policy_graph(
 
     // Policy loss: cross-entropy with one-hot action selects -log π(a|s).
     // meganeura's cross_entropy_loss returns per-row losses [batch]; reduce
-    // to scalar so it's compatible with the scalar value MSE loss.
+    // to scalar via sum_all. The CE backward ignores incoming gradient
+    // (always produces (softmax-labels)/batch), so sum vs mean doesn't
+    // affect the training gradient — only the loss diagnostic value.
     let policy_loss_raw = g.cross_entropy_loss(logits, action);
-    let policy_loss = g.mean_all(policy_loss_raw);
+    let policy_loss = g.sum_all(policy_loss_raw);
     let value_loss = g.mse_loss(value, value_target);
     let base_loss = g.add(policy_loss, value_loss);
 
