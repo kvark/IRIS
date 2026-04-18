@@ -25,24 +25,11 @@ import time
 _FUEL_COST = {0: 0.0, 1: 0.03, 2: 0.3, 3: 0.03}
 
 
-def lunar_lander_homeo(obs, action):
-    """Homeostatic targets for "land safely, anywhere".
-
-    We deliberately *don't* reward reaching the landing pad — no
-    target on `x` position, no target on altitude going to zero in
-    isolation. The agent is pushed to:
-
-      * not crash (severe penalty for falling fast near the ground),
-      * not tilt at touchdown,
-      * not slam sideways at touchdown,
-      * conserve fuel,
-      * eventually get at least one leg on the ground and stay there.
-
-    Together those should incentivize the policy to decelerate and
-    settle onto any terrain rather than fuel-up toward the pad.
-
-    `obs` is the raw gymnasium observation (not normalized). `action`
-    is the discrete gymnasium action index (so we can charge fuel).
+def lunar_lander_homeo_v1(obs, action):
+    """Original shaping (pre-2026-04-18). Dominated by a `-5` constant
+    "not safely landed" offset that the value baseline mostly absorbs,
+    leaving the crash-risk / tilt / speed gradients weak in mid-flight.
+    Kept for A/B comparison.
     """
     altitude = float(obs[1])
     vx = float(obs[2])
@@ -51,50 +38,106 @@ def lunar_lander_homeo(obs, action):
     speed = math.sqrt(vx * vx + vy * vy)
     leg1 = float(obs[6])
     leg2 = float(obs[7])
-
-    # Smooth proximity-to-ground weight: ~1 at the surface, decays aloft.
     proximity = math.exp(-max(0.0, altitude) * 2.0)
-    # Downward speed only — upward motion isn't a crash risk.
     descent = max(0.0, -vy)
     crash_risk = descent * proximity
-
     fuel = _FUEL_COST.get(int(action), 0.0)
-
-    # Sharp "safely landed, anywhere" indicator — 0 iff BOTH legs are down
-    # AND the lander is essentially stopped; 1 in every other state. This
-    # replaces the softer "not_landed" signal with one that draws a much
-    # bigger gap between "I've actually landed" and "I'm hovering low,"
-    # so the averaged gradient at large N still carries enough weight to
-    # pull the policy toward committing to a landing rather than
-    # equilibrating in mid-air.
     both_legs = 1.0 if (leg1 > 0 and leg2 > 0) else 0.0
     stopped = 1.0 if speed < 0.1 else 0.0
     not_safely_landed = 1.0 - both_legs * stopped
-
     return [
-        # Severe crash-risk penalty — ×10 so it dominates the averaged-
-        # across-N-lanes gradient whenever any lane is near a crash.
-        # I'd briefly dropped this to ×3 on the theory that a weaker
-        # crash signal would let the other primitives (tilt, fuel,
-        # legs) have more voice; the subsequent N=64 run performed
-        # identically on soft-landings and slightly worse on
-        # avg_return, suggesting the extra "crash avoidance" gradient
-        # is still pulling more weight than the fuel/tilt signals
-        # getting released. Back to ×10.
         {"value": crash_risk * 10.0, "target": 0.0, "tolerance": 0.0},
-        # Don't tilt when close to the ground.
         {"value": abs(angle) * proximity, "target": 0.0, "tolerance": 0.05},
-        # Don't arrive fast when close to the ground.
         {"value": speed * proximity, "target": 0.0, "tolerance": 0.1},
-        # Each engine firing costs fuel.
         {"value": fuel, "target": 0.0, "tolerance": 0.0},
-        # Strong landing reward: only zero when both legs are down AND
-        # speed is near zero, penalty of 5 everywhere else. That's the
-        # "large reward for actually landing" signal — a ~5-unit negative
-        # homeostatic that vanishes the moment a safe landing materializes,
-        # so the policy sees a big positive contrast when it commits.
         {"value": not_safely_landed * 5.0, "target": 0.0, "tolerance": 0.0},
     ]
+
+
+def lunar_lander_homeo_v2(obs, action):
+    """v2 shaping: continuous gradient toward the landed state.
+
+    Changes from v1:
+      - Drop the `not_safely_landed * 5.0` flat offset (it was a
+        near-constant -5 baseline in mid-flight that the value head
+        absorbed, killing advantage variance).
+      - Add smooth altitude shaping — each unit of altitude above the
+        tolerance contributes a penalty, so the agent gets a continuous
+        downward-gradient signal regardless of position over the pad.
+      - Add a smooth descent-rate target centered at a gentle negative
+        velocity: reward slow controlled descent, penalize both fall
+        and hover.
+      - Keep the crash-risk and touchdown penalties unchanged — those
+        are already local gradients, not offsets.
+    """
+    altitude = float(obs[1])
+    vx = float(obs[2])
+    vy = float(obs[3])
+    angle = float(obs[4])
+    speed = math.sqrt(vx * vx + vy * vy)
+    proximity = math.exp(-max(0.0, altitude) * 2.0)
+    descent = max(0.0, -vy)
+    crash_risk = descent * proximity
+    fuel = _FUEL_COST.get(int(action), 0.0)
+    return [
+        {"value": crash_risk * 10.0, "target": 0.0, "tolerance": 0.0},
+        {"value": abs(angle) * proximity, "target": 0.0, "tolerance": 0.05},
+        {"value": speed * proximity, "target": 0.0, "tolerance": 0.1},
+        {"value": fuel, "target": 0.0, "tolerance": 0.0},
+        # Smooth altitude shaping: positive altitude beyond tolerance
+        # is a continuous penalty. This is the gradient that tells the
+        # policy to descend when it's far from the ground, complementing
+        # crash_risk (which only fires *near* the ground).
+        {"value": max(0.0, altitude), "target": 0.0, "tolerance": 0.1},
+        # Target a gentle controlled descent — vy between -0.5 and 0
+        # is "good." Above (ascent) or below (falling) are both penalty.
+        {"value": vy, "target": -0.25, "tolerance": 0.25},
+    ]
+
+
+def lunar_lander_homeo_v3(obs, action):
+    """v3 shaping: v2 + a softer landed-bonus.
+
+    Keeps v2's altitude and descent-rate gradients but reintroduces a
+    `not_safely_landed * 1.0` term (vs v1's ×5.0). The idea: give the
+    policy a contrast at the actual landing event without swamping
+    mid-flight gradients with a constant offset.
+    """
+    altitude = float(obs[1])
+    vx = float(obs[2])
+    vy = float(obs[3])
+    angle = float(obs[4])
+    speed = math.sqrt(vx * vx + vy * vy)
+    leg1 = float(obs[6])
+    leg2 = float(obs[7])
+    proximity = math.exp(-max(0.0, altitude) * 2.0)
+    descent = max(0.0, -vy)
+    crash_risk = descent * proximity
+    fuel = _FUEL_COST.get(int(action), 0.0)
+    both_legs = 1.0 if (leg1 > 0 and leg2 > 0) else 0.0
+    stopped = 1.0 if speed < 0.1 else 0.0
+    not_safely_landed = 1.0 - both_legs * stopped
+    return [
+        {"value": crash_risk * 10.0, "target": 0.0, "tolerance": 0.0},
+        {"value": abs(angle) * proximity, "target": 0.0, "tolerance": 0.05},
+        {"value": speed * proximity, "target": 0.0, "tolerance": 0.1},
+        {"value": fuel, "target": 0.0, "tolerance": 0.0},
+        {"value": max(0.0, altitude), "target": 0.0, "tolerance": 0.1},
+        {"value": vy, "target": -0.25, "tolerance": 0.25},
+        {"value": not_safely_landed * 1.0, "target": 0.0, "tolerance": 0.0},
+    ]
+
+
+# Backward-compat alias: old scripts/tests still call lunar_lander_homeo.
+def lunar_lander_homeo(obs, action):
+    return lunar_lander_homeo_v1(obs, action)
+
+
+_SHAPING_VARIANTS = {
+    "v1": lunar_lander_homeo_v1,
+    "v2": lunar_lander_homeo_v2,
+    "v3": lunar_lander_homeo_v3,
+}
 
 
 # Per-component LunarLander obs scales (x, y, vx, vy, angle, ang_vel, leg1, leg2).
@@ -155,6 +198,13 @@ def main() -> int:
     parser.add_argument("--option-horizon", type=int, default=None,
                         help="env steps per option (Phase G). Default 10.")
     parser.add_argument(
+        "--shaping",
+        choices=list(_SHAPING_VARIANTS.keys()),
+        default="v1",
+        help="homeostatic shaping variant. v1 = original (legacy), "
+        "v2 = with altitude + descent-rate shaping, no -5 constant offset.",
+    )
+    parser.add_argument(
         "--label-smoothing",
         type=float,
         default=None,
@@ -163,6 +213,8 @@ def main() -> int:
         "keeping gradient alive on every logit even at a one-hot softmax.",
     )
     args = parser.parse_args()
+
+    shaping_fn = _SHAPING_VARIANTS[args.shaping]
 
     # One env per lane, each with a distinct seed so the lanes diverge.
     envs = [gym.make(args.env) for _ in range(args.lanes)]
@@ -236,7 +288,7 @@ def main() -> int:
         # Homeostatic signals use raw-space interpretations (altitude, vy, ...).
         # Pass the action so the fuel-cost term can charge the right amount.
         homeos = [
-            lunar_lander_homeo(raw_next[i], actions[i]) for i in range(args.lanes)
+            shaping_fn(raw_next[i], actions[i]) for i in range(args.lanes)
         ]
         agent.observe(next_lists, actions, homeostatic=homeos)
 
