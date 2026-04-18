@@ -1236,25 +1236,64 @@ impl Agent {
         // 462-landing best (commit 18d422f) used raw clamped advantages;
         // re-introducing normalization later caused L0-42 to degrade
         // from −131 to −849.
+        //
+        // Phase G v3: `entropy_floor` no longer suppresses updates
+        // below the floor (which locked deterministic collapse once
+        // entropy hit zero — with batch_size=1 the policy then never
+        // recovered). Instead, `entropy_deficit = (floor - entropy) /
+        // floor`, clamped to `[0, 1]`, drives two self-correcting
+        // changes to the update target for that lane:
+        //
+        //   1. Label-smoothing `eps` is amplified toward `1.0` —
+        //      the softmax target shifts from the taken action's
+        //      one-hot toward the uniform distribution. The
+        //      cross-entropy gradient then pulls the dominant logit
+        //      down and the rest up, restoring entropy.
+        //   2. When the real reward advantage is near zero (value
+        //      tracks reward well, so the policy gradient would
+        //      otherwise carry no signal), `entropy_deficit` is used
+        //      as the effective advantage magnitude — a positive
+        //      recovery signal applied to the now-uniform target.
+        //
+        // Both reduce to the old behaviour at entropy ≥ floor
+        // (deficit = 0 → eps = eps_base, effective_adv = advantage).
         self.policy_action_scratch.fill(0.0);
         let mut any_active = false;
-        let eps = self.config.label_smoothing;
+        let eps_base = self.config.label_smoothing;
+        let floor = self.config.entropy_floor;
         let k = MAX_ACTION_DIM as f32;
         for (i, lane) in self.lanes.iter().enumerate() {
-            if lane.last_entropy < self.config.entropy_floor {
-                continue;
-            }
             let advantage = (lane.last_reward - lane.last_value).clamp(-1.0, 1.0);
-            if advantage.abs() < 1e-8 {
+            let entropy_deficit = if floor > 0.0 {
+                ((floor - lane.last_entropy) / floor).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+
+            // Nothing to do only when there's no reward signal AND
+            // entropy is comfortably above the floor.
+            if advantage.abs() < 1e-8 && entropy_deficit < 1e-6 {
                 continue;
             }
             any_active = true;
+
+            // Amplify label-smoothing toward uniform when entropy is low.
+            let eps = (eps_base + (1.0 - eps_base) * entropy_deficit).min(1.0);
+            // Synthesize a recovery advantage when the real reward
+            // advantage has gone silent. Sign is positive — we want
+            // the gradient to pull the policy toward the (now
+            // near-uniform) smoothed target, not away from it.
+            let effective_adv = if advantage.abs() < 1e-3 && entropy_deficit > 0.0 {
+                entropy_deficit
+            } else {
+                advantage
+            };
             let act_src = &self.action_token_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
             let act_dst =
                 &mut self.policy_action_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
             for (dst, &src) in act_dst.iter_mut().zip(act_src.iter()) {
                 let smoothed = (1.0 - eps) * src + eps / k;
-                *dst = advantage * smoothed;
+                *dst = effective_adv * smoothed;
             }
         }
         if !any_active {

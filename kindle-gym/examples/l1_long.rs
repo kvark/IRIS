@@ -84,25 +84,21 @@ fn run(
     }
 
     let mut distinct_late = std::collections::HashSet::new();
-    for o in 0..NUM_OPTIONS {
-        let total: u32 = per_option_tail[o].iter().sum();
+    for row in per_option_tail.iter().take(NUM_OPTIONS) {
+        let total: u32 = row.iter().sum();
         if total == 0 {
             continue;
         }
-        let (best_a, _) = per_option_tail[o]
-            .iter()
-            .enumerate()
-            .max_by_key(|&(_, c)| *c)
-            .unwrap();
+        let (best_a, _) = row.iter().enumerate().max_by_key(|&(_, c)| *c).unwrap();
         distinct_late.insert(best_a);
     }
     print!(
         "  {:12} α={:.1} β={:.2} | ent={:.2} wm={:.3} | ",
         name, alpha, entropy_beta, final_entropy, wm_late
     );
-    for o in 0..NUM_OPTIONS {
-        let total: u32 = per_option_tail[o].iter().sum();
-        let (best_a, best_c) = per_option_tail[o]
+    for (o, row) in per_option_tail.iter().enumerate().take(NUM_OPTIONS) {
+        let total: u32 = row.iter().sum();
+        let (best_a, best_c) = row
             .iter()
             .enumerate()
             .max_by_key(|&(_, c)| *c)

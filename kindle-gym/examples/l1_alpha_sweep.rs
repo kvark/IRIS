@@ -17,18 +17,14 @@ use kindle_gym::{
 use rand::SeedableRng;
 
 struct EnvRun {
-    name: &'static str,
-    env_id: u32,
     env: Box<dyn Environment>,
     adapter: Box<dyn kindle::EnvAdapter>,
 }
 
-fn make(name: &'static str) -> EnvRun {
+fn make(name: &str) -> EnvRun {
     use kindle_gym::*;
     match name {
         "GridWorld" => EnvRun {
-            name,
-            env_id: 0,
             env: Box::new(GridWorld::new()),
             adapter: Box::new(GenericAdapter::discrete(
                 0,
@@ -37,26 +33,18 @@ fn make(name: &'static str) -> EnvRun {
             )),
         },
         "CartPole" => EnvRun {
-            name,
-            env_id: 1,
             env: Box::new(CartPole::new()),
             adapter: Box::new(GenericAdapter::discrete(1, 4, 2)),
         },
         "MountainCar" => EnvRun {
-            name,
-            env_id: 2,
             env: Box::new(MountainCar::new()),
             adapter: Box::new(GenericAdapter::discrete(2, 2, 3)),
         },
         "Acrobot" => EnvRun {
-            name,
-            env_id: 3,
             env: Box::new(Acrobot::new()),
             adapter: Box::new(GenericAdapter::discrete(3, 6, 3)),
         },
         "Taxi" => EnvRun {
-            name,
-            env_id: 4,
             env: Box::new(Taxi::new()),
             adapter: Box::new(GenericAdapter::discrete(
                 4,
@@ -65,14 +53,10 @@ fn make(name: &'static str) -> EnvRun {
             )),
         },
         "RandomWalk" => EnvRun {
-            name,
-            env_id: 5,
             env: Box::new(RandomWalk::new(10)),
             adapter: Box::new(GenericAdapter::discrete(5, 10, 2)),
         },
         "Pendulum" => EnvRun {
-            name,
-            env_id: 6,
             env: Box::new(Pendulum::new()),
             adapter: Box::new(GenericAdapter::continuous(6, 3, 1, 0.5)),
         },
