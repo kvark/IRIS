@@ -256,8 +256,9 @@ fn run_l1_on_env(run: EnvRun, steps: usize, num_options: usize) -> RunStats {
         }
     }
 
+    let final_h_eff_l1 = agent.diagnostics()[0].h_eff_l1;
     println!(
-        "  {}: wm {:.3}→{:.3}  homeo_dev {:.2}→{:.2}  reward_mean(late) {:+.2}  entropy {:.2}",
+        "  {}: wm {:.3}→{:.3}  homeo_dev {:.2}→{:.2}  reward_mean(late) {:+.2}  entropy {:.2}  h_eff_l1 {:.2}",
         run.name,
         wm_early,
         wm_late,
@@ -265,6 +266,7 @@ fn run_l1_on_env(run: EnvRun, steps: usize, num_options: usize) -> RunStats {
         homeo_sum_late / window as f32,
         reward_sum_late / window as f32,
         final_entropy,
+        final_h_eff_l1,
     );
 
     // Option histogram and per-option modal action.

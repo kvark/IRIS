@@ -116,6 +116,50 @@ pub fn build_credit_graph(
     g
 }
 
+/// Build an L1 (option-level) credit assigner training graph.
+///
+/// Same causal-attention pattern as the L0 graph, but one row per
+/// terminated option rather than per env step. Per-option feature
+/// layout fed via the `"history"` input:
+/// `[z_start (latent_dim), option_onehot (num_options), option_return (1),
+///  option_length (1)]` — `latent_dim + num_options + 2` floats per row.
+///
+/// The contrastive target comes from option-choice divergence between
+/// a high-return and a low-return option in recent history (analogous
+/// to the L0 action-divergence signal).
+///
+/// Inputs:
+/// - `"history"`: `[option_history_len, input_dim]`
+/// - `"credit_target"`: `[option_history_len, 1]`
+///
+/// Outputs:
+/// - `[0]`: loss (scalar)
+/// - `[1]`: option credit logits `[option_history_len, 1]`
+pub fn build_option_credit_graph(
+    latent_dim: usize,
+    num_options: usize,
+    option_history_len: usize,
+    hidden_dim: usize,
+) -> Graph {
+    // L0's CreditAssigner takes (latent_dim, action_dim). For L1 we
+    // pass `num_options + 1` as the "action_dim" so input_dim expands
+    // to `latent_dim + num_options + 1 + 1 = latent_dim + num_options
+    // + 2` — covering option_onehot + option_length + option_return.
+    let extra_dim = num_options + 1;
+    let input_dim = CreditAssigner::input_dim(latent_dim, extra_dim);
+
+    let mut g = Graph::new();
+    let history = g.input("history", &[option_history_len, input_dim]);
+    let credit_target = g.input("credit_target", &[option_history_len, 1]);
+
+    let ca = CreditAssigner::new(&mut g, latent_dim, extra_dim, option_history_len, hidden_dim);
+    let credit_pred = ca.forward(&mut g, history);
+    let loss = CreditAssigner::loss(&mut g, credit_pred, credit_target);
+
+    g.set_outputs(vec![loss, credit_pred]);
+    g
+}
+
 /// Compute the effective temporal scope from credit weights.
 ///
 /// `H_eff = sum_i (i * alpha_i)` where alpha is softmax-normalized.

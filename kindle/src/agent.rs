@@ -98,11 +98,31 @@ pub struct AgentConfig {
     pub option_horizon: usize,
     /// L1 option-policy learning rate.
     pub lr_option: f32,
+    /// Phase G v5: number of recent options held in the L1 credit
+    /// assigner's history window. A value < 2 disables the L1 credit
+    /// assigner (its session is not compiled); the option policy then
+    /// trains on per-option advantage only, no cross-option credit.
+    /// Default `8` mirrors the design-doc recommendation.
+    pub option_history_len: usize,
+    /// L1 credit assigner learning rate (analogous to `lr_credit` for
+    /// L0). Applied with the same `√N` batch scale as other L1 LRs.
+    pub lr_option_credit: f32,
     /// Goal-achievement bonus coefficient. When L1 is active, each step's
     /// L0 reward is augmented with `−α · ‖z_t − goal‖`, giving L0 a
     /// self-supervised signal to drive the latent toward the option's goal
     /// regardless of the frozen reward circuit's output. `α = 0` disables.
     pub goal_bonus_alpha: f32,
+    /// Phase G v4: enable the learned-termination head. When `true`, the
+    /// agent forwards the option session every step, samples a Bernoulli
+    /// from the predicted `β(z_t)`, and terminates the current option if
+    /// either the sample or the fixed-horizon cap fires. The termination
+    /// head is trained via BCE against a target derived from whether
+    /// switching options would have been beneficial at that state.
+    /// When `false`, termination is purely horizon-based (v1/v2/v3
+    /// behaviour) and the head receives no gradient; the option-session
+    /// graph shape is identical either way to keep parameter layouts
+    /// stable across config changes.
+    pub learned_termination: bool,
     pub opt_level: OptLevel,
 }
 
@@ -131,7 +151,10 @@ impl Default for AgentConfig {
             option_dim: 0, // 0 = use latent_dim
             option_horizon: 10,
             lr_option: 2.5e-4,
+            option_history_len: 8,
+            lr_option_credit: 7.5e-5,
             goal_bonus_alpha: 0.1,
+            learned_termination: false,
             opt_level: OptLevel::Full,
         }
     }
@@ -161,6 +184,12 @@ pub struct Diagnostics {
     pub option_return: f32,
     /// L1: ‖z_t − goal‖ — how close the lane's latent is to its goal.
     pub goal_distance: f32,
+    /// L1 effective credit scope: `Σ_i (i · α_i)` over the last
+    /// `option_history_len` options. Zero when the L1 credit assigner
+    /// is disabled (`option_history_len < 2`). Increasing over training
+    /// means option credit is being attributed to older options — the
+    /// agent is learning longer-horizon option structure.
+    pub h_eff_l1: f32,
 }
 
 /// Per-lane state. One per concurrent batch slot. Every slot owns its own
@@ -175,6 +204,154 @@ struct ReplaySample {
     action: Vec<f32>,
     z_target: Vec<f32>,
     env_id: u32,
+}
+
+/// One completed-option entry for the L1 credit assigner's history.
+#[derive(Clone)]
+struct OptionEntry {
+    /// Encoder latent at option start — the "state" input row for the
+    /// L1 credit graph.
+    z_start: Vec<f32>,
+    /// Option index (one-hot-encoded into the history row).
+    option_idx: u32,
+    /// Sum of `last_reward` over this option's window.
+    option_return: f32,
+    /// Number of env steps the option ran before termination.
+    option_length: u32,
+}
+
+/// Fixed-capacity ring buffer of recently-terminated options per lane.
+struct OptionHistory {
+    entries: std::collections::VecDeque<OptionEntry>,
+    capacity: usize,
+}
+
+impl OptionHistory {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: std::collections::VecDeque::with_capacity(capacity.max(1)),
+            capacity: capacity.max(1),
+        }
+    }
+
+    fn push(&mut self, entry: OptionEntry) {
+        if self.entries.len() == self.capacity {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(entry);
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn get(&self, i: usize) -> &OptionEntry {
+        &self.entries[i]
+    }
+
+    /// Flatten the last `history_len` entries row-major into a single
+    /// `[history_len × input_dim]` vector for the credit graph. The
+    /// per-row layout is `[z_start | option_onehot | option_return | length]`.
+    /// Panics if `self.len() < history_len`.
+    fn flatten(&self, history_len: usize, num_options: usize, latent_dim: usize) -> Vec<f32> {
+        debug_assert!(self.len() >= history_len);
+        let input_dim = latent_dim + num_options + 2;
+        let mut out = Vec::with_capacity(history_len * input_dim);
+        let start = self.len() - history_len;
+        for e in self.entries.iter().skip(start) {
+            out.extend_from_slice(&e.z_start);
+            for k in 0..num_options {
+                out.push(if k == e.option_idx as usize { 1.0 } else { 0.0 });
+            }
+            out.push(e.option_return);
+            out.push(e.option_length as f32);
+        }
+        out
+    }
+
+    /// Locate a contrastive pair in the last `history_len` entries: two
+    /// options with similar `z_start` but divergent realized returns.
+    /// Returns `(high_return_idx_within_window, low_return_idx_within_window)`
+    /// in `[0, history_len)`. None if not enough data or no useful pair.
+    fn find_contrastive_pair<R: Rng>(
+        &self,
+        rng: &mut R,
+        history_len: usize,
+    ) -> Option<(usize, usize)> {
+        if self.len() < history_len {
+            return None;
+        }
+        let start = self.len() - history_len;
+        let mut best: Option<(usize, usize)> = None;
+        let mut best_score = 0.0f32;
+        // Brute-force over all (i, j) pairs in the window; history_len
+        // is O(8) so this is 56 comparisons.
+        for a in 0..history_len {
+            for b in (a + 1)..history_len {
+                let ei = self.get(start + a);
+                let ej = self.get(start + b);
+                let z_dist: f32 = ei
+                    .z_start
+                    .iter()
+                    .zip(ej.z_start.iter())
+                    .map(|(x, y)| (x - y).powi(2))
+                    .sum::<f32>()
+                    .sqrt();
+                let ret_diff = (ei.option_return - ej.option_return).abs();
+                let score = ret_diff / (z_dist + 0.1);
+                if score > best_score {
+                    best_score = score;
+                    best = if ei.option_return >= ej.option_return {
+                        Some((a, b))
+                    } else {
+                        Some((b, a))
+                    };
+                }
+            }
+        }
+        // Optional RNG usage so the seed remains referenced; swaps the
+        // returned pair with a small probability for sample diversity.
+        if let Some((hi, lo)) = best {
+            if rng.random_range(0.0..1.0) < 0.1 {
+                return Some((lo, hi));
+            }
+            return Some((hi, lo));
+        }
+        None
+    }
+
+    /// Option-divergence contrastive target for the credit assigner.
+    /// Produces a softmax-normalized `[history_len]` vector whose peak
+    /// is at indices where the hi/lo pair took different options.
+    fn contrastive_target(&self, hi: usize, lo: usize, history_len: usize) -> Vec<f32> {
+        let start = self.len() - history_len;
+        let mut divergence = vec![0.0f32; history_len];
+        // We don't align two windows here (unlike L0 which compares
+        // parallel histories at two end-points). Instead we measure
+        // divergence as "this step's option differs from the
+        // high-return option at hi" — a cheap heuristic that scores
+        // steps where the agent took an option distinct from the
+        // locally best one.
+        let hi_idx = self.get(start + hi).option_idx;
+        for (i, div) in divergence.iter_mut().enumerate() {
+            let ent = self.get(start + i);
+            *div = if ent.option_idx == hi_idx { 0.0 } else { 1.0 };
+        }
+        // Softmax normalize.
+        let max = divergence.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let exp_sum: f32 = divergence.iter().map(|d| (d - max).exp()).sum();
+        if exp_sum > 0.0 {
+            for d in divergence.iter_mut() {
+                *d = (*d - max).exp() / exp_sum;
+            }
+        } else {
+            for d in divergence.iter_mut() {
+                *d = 1.0 / history_len as f32;
+            }
+        }
+        let _ = lo;
+        divergence
+    }
 }
 
 struct Lane {
@@ -194,9 +371,17 @@ struct Lane {
     current_option: u32,
     option_goal: Vec<f32>,
     option_steps_left: usize,
+    /// Number of env steps since the current option was last (re)sampled.
+    option_elapsed: u32,
     option_return: f32,
     /// Value prediction cached at option-start for advantage computation.
     option_start_value: f32,
+    /// Encoder latent captured at option-start, used as the per-option
+    /// `z_start` row fed to the L1 credit assigner.
+    option_start_z: Vec<f32>,
+    /// Option-level history ring buffer for the L1 credit assigner.
+    /// Each entry is one completed option window.
+    option_history: OptionHistory,
 
     // Cached last-step values for diagnostics & policy advantage.
     last_value: f32,
@@ -234,6 +419,10 @@ pub struct Agent {
     policy_session: Session,
     /// L1 option-policy session. `None` when `num_options <= 1` (L0-only).
     option_session: Option<Session>,
+    /// L1 credit-assigner session. `None` when L1 is off or when
+    /// `option_history_len < 2`. Runs contrastively per-lane like the
+    /// L0 credit graph.
+    option_credit_session: Option<Session>,
     /// Per-lane latent dim (the WM graph is [N, latent_dim]).
     latent_dim: usize,
     step_count: usize,
@@ -243,6 +432,8 @@ pub struct Agent {
     last_credit_loss: f32,
     last_policy_loss: f32,
     last_replay_loss: f32,
+    last_option_credit_loss: f32,
+    last_h_eff_l1: f32,
     last_drift: f32,
     encoder_lr_scale: f32,
     /// Batch LR compensation: user's `learning_rate` is per-sample, but
@@ -276,6 +467,9 @@ pub struct Agent {
     /// L1 scratch buffers.
     option_taken_scratch: Vec<f32>,
     option_return_scratch: Vec<f32>,
+    /// Termination BCE target, `[N, 1]`. Zero unless the agent decided
+    /// (this step) that the current option should have ended; then 1.
+    termination_target_scratch: Vec<f32>,
     /// Fixed goal lookup table [num_options × option_dim]. Each option
     /// maps to a pre-set orthogonal direction in latent space. L1 learns
     /// which option to pick; the goal vectors themselves are constants.
@@ -477,6 +671,22 @@ impl Agent {
             s
         };
 
+        // L1 credit-assigner session — only built when L1 is active
+        // and the user asked for a non-degenerate history window.
+        let option_credit_session = if l1_active && config.option_history_len >= 2 {
+            let g = credit::build_option_credit_graph(
+                config.latent_dim,
+                config.num_options,
+                config.option_history_len,
+                config.hidden_dim,
+            );
+            let mut s = build_session(&g, config.opt_level);
+            init_parameters(&mut s);
+            Some(s)
+        } else {
+            None
+        };
+
         // L1 option-policy session — only built when num_options >= 2.
         let option_session = if l1_active {
             let g = option::build_option_graph(
@@ -521,8 +731,11 @@ impl Agent {
                 current_option: 0,
                 option_goal: vec![0.0; option_dim],
                 option_steps_left: 0, // triggers initial option sample
+                option_elapsed: 0,
                 option_return: 0.0,
                 option_start_value: 0.0,
+                option_start_z: vec![0.0; config.latent_dim],
+                option_history: OptionHistory::new(config.option_history_len.max(1)),
                 last_value: 0.0,
                 last_entropy: 0.0,
                 last_surprise: 0.0,
@@ -541,6 +754,7 @@ impl Agent {
             credit_session,
             policy_session,
             option_session,
+            option_credit_session,
             latent_dim: config.latent_dim,
             step_count: 0,
             probe_obs: None,
@@ -549,6 +763,8 @@ impl Agent {
             last_credit_loss: 0.0,
             last_policy_loss: 0.0,
             last_replay_loss: 0.0,
+            last_option_credit_loss: 0.0,
+            last_h_eff_l1: 0.0,
             last_drift: 0.0,
             encoder_lr_scale: 1.0,
             batch_lr_scale: (config.batch_size as f32).sqrt(),
@@ -562,6 +778,7 @@ impl Agent {
             option_onehot_scratch: vec![0.0; n * config.num_options.max(1)],
             option_taken_scratch: vec![0.0; n * config.num_options],
             option_return_scratch: vec![0.0; n],
+            termination_target_scratch: vec![0.0; n],
             goal_table: option::build_goal_table(config.num_options, option_dim),
             config,
         }
@@ -649,69 +866,134 @@ impl Agent {
         if let Some(ref mut opt_sess) = self.option_session {
             let num_options = self.config.num_options;
             let horizon = self.config.option_horizon;
+            let learned_term = self.config.learned_termination;
+            let warmup_done = self.step_count >= self.config.warmup_steps;
 
-            // Train L1 on terminated options, then sample new ones.
-            // A lane needs a new option when option_steps_left == 0.
-            let any_needs_option = self.lanes.iter().any(|l| l.option_steps_left == 0);
+            // Forward option session every step to read current option
+            // logits, state value, and termination β(z_t). LR = 0 so this
+            // is forward-only; the training pass below optionally runs at
+            // the real LR on just the terminated-lane rows.
+            opt_sess.set_input("z", &z_stack);
+            self.option_taken_scratch.fill(0.0);
+            opt_sess.set_input("option_taken", &self.option_taken_scratch);
+            self.option_return_scratch.fill(0.0);
+            opt_sess.set_input("option_return", &self.option_return_scratch);
+            self.termination_target_scratch.fill(0.0);
+            opt_sess.set_input("termination_target", &self.termination_target_scratch);
+            opt_sess.set_learning_rate(0.0);
+            opt_sess.step();
+            opt_sess.wait();
 
-            if any_needs_option {
-                // --- L1 backward for lanes whose option just finished ---
+            let mut logits = vec![0.0f32; n * num_options];
+            opt_sess.read_output_by_index(1, &mut logits);
+            let mut values = vec![0.0f32; n];
+            opt_sess.read_output_by_index(2, &mut values);
+            let mut term_probs = vec![0.0f32; n];
+            opt_sess.read_output_by_index(3, &mut term_probs);
+
+            // Per-lane termination decision: horizon cap (always) or
+            // Bernoulli(β) sample (only when learned_termination is on
+            // and past warmup).
+            let mut lanes_to_terminate: Vec<usize> = Vec::with_capacity(n);
+            for (i, lane) in self.lanes.iter().enumerate() {
+                let horizon_expired = lane.option_steps_left == 0;
+                let learned_fire = learned_term
+                    && warmup_done
+                    && rng.random_range(0.0..1.0) < term_probs[i];
+                if horizon_expired || learned_fire {
+                    lanes_to_terminate.push(i);
+                }
+            }
+
+            if !lanes_to_terminate.is_empty() {
+                // --- L1 backward: train at the lanes that just
+                // terminated. Other lanes contribute zero rows and are
+                // effectively excluded from this step's gradient.
                 self.option_taken_scratch.fill(0.0);
                 self.option_return_scratch.fill(0.0);
+                self.termination_target_scratch.fill(0.0);
                 let mut any_train = false;
-                for (i, lane) in self.lanes.iter().enumerate() {
-                    if lane.option_steps_left != 0 {
-                        continue;
-                    }
-                    let advantage = (lane.option_return - lane.option_start_value).clamp(-1.0, 1.0);
+                for &i in &lanes_to_terminate {
+                    let lane = &self.lanes[i];
+                    let advantage =
+                        (lane.option_return - lane.option_start_value).clamp(-1.0, 1.0);
                     if advantage.abs() < 1e-8 {
                         continue;
                     }
                     any_train = true;
-                    let row =
-                        &mut self.option_taken_scratch[i * num_options..(i + 1) * num_options];
+                    let row = &mut self.option_taken_scratch
+                        [i * num_options..(i + 1) * num_options];
                     row[lane.current_option as usize] = advantage;
                     self.option_return_scratch[i] = lane.option_return;
+                    // Termination target at the step where the option
+                    // ended, with a deadband: only train β when the
+                    // option's realized advantage is clearly signed.
+                    //
+                    //   |adv| < 0.3 → target = 0 (keep β low; noisy
+                    //                  signals shouldn't raise β).
+                    //   adv < −0.3   → target = 1 (raise β here).
+                    //   adv > +0.3   → target = 0 (correct to have
+                    //                  continued).
+                    //
+                    // Paired with the −3 logit bias in `option.rs`,
+                    // this keeps β strongly low by default; β only
+                    // rises when states with consistently-negative
+                    // option returns accumulate training signal.
+                    let deadband = 0.3f32;
+                    self.termination_target_scratch[i] = if advantage < -deadband {
+                        1.0
+                    } else {
+                        0.0
+                    };
                 }
 
-                if any_train && self.step_count >= self.config.warmup_steps {
+                if any_train && warmup_done {
                     opt_sess.set_input("z", &z_stack);
                     opt_sess.set_input("option_taken", &self.option_taken_scratch);
                     opt_sess.set_input("option_return", &self.option_return_scratch);
+                    opt_sess
+                        .set_input("termination_target", &self.termination_target_scratch);
                     opt_sess.set_learning_rate(self.config.lr_option * self.batch_lr_scale);
                     opt_sess.step();
                     opt_sess.wait();
                 }
 
-                // --- L1 forward: sample new options for lanes at step 0 ---
-                opt_sess.set_input("z", &z_stack);
-                self.option_taken_scratch.fill(0.0);
-                opt_sess.set_input("option_taken", &self.option_taken_scratch);
-                self.option_return_scratch.fill(0.0);
-                opt_sess.set_input("option_return", &self.option_return_scratch);
-                opt_sess.set_learning_rate(0.0);
-                opt_sess.step();
-                opt_sess.wait();
-
-                // Read logits + value (goals come from the fixed table).
-                let mut logits = vec![0.0f32; n * num_options];
-                opt_sess.read_output_by_index(1, &mut logits);
-                let mut values = vec![0.0f32; n];
-                opt_sess.read_output_by_index(2, &mut values);
-
-                // For each lane needing a new option: sample + look up goal.
-                for (i, lane) in self.lanes.iter_mut().enumerate() {
-                    if lane.option_steps_left != 0 {
-                        continue;
+                // --- Record each terminated option into its lane's
+                // history and, if L1 credit is enabled, run one credit
+                // forward+backward pass on the resulting window. The
+                // option's `z_start` was captured at its last
+                // resample; `option_elapsed` tracks the realized
+                // length even when learned-termination fires early.
+                for &i in &lanes_to_terminate {
+                    let lane = &mut self.lanes[i];
+                    if lane.option_elapsed > 0 {
+                        let entry = OptionEntry {
+                            z_start: lane.option_start_z.clone(),
+                            option_idx: lane.current_option,
+                            option_return: lane.option_return,
+                            option_length: lane.option_elapsed,
+                        };
+                        lane.option_history.push(entry);
                     }
+                }
+                self.option_credit_step(rng, &lanes_to_terminate);
+
+                // --- Sample new option for each terminated lane ---
+                for &i in &lanes_to_terminate {
+                    let lane = &mut self.lanes[i];
                     let row = &logits[i * num_options..(i + 1) * num_options];
                     let opt_idx = crate::adapter::sample_discrete_from_logits(row, rng);
                     lane.current_option = opt_idx as u32;
                     lane.option_start_value = values[i];
                     lane.option_steps_left = horizon;
+                    lane.option_elapsed = 0;
                     lane.option_return = 0.0;
-
-                    // Fixed goal from the lookup table.
+                    // Capture `z_start` for this new option from the
+                    // current z_stack row — this is the latent we just
+                    // computed above and will begin this option from.
+                    let z_row = &z_stack[i * ld..(i + 1) * ld];
+                    lane.option_start_z.clear();
+                    lane.option_start_z.extend_from_slice(z_row);
                     let base = opt_idx * od;
                     lane.option_goal
                         .copy_from_slice(&self.goal_table[base..base + od]);
@@ -898,6 +1180,7 @@ impl Agent {
             // and handle training + resampling.
             lane.option_return += reward;
             lane.option_steps_left = lane.option_steps_left.saturating_sub(1);
+            lane.option_elapsed = lane.option_elapsed.saturating_add(1);
         }
 
         // --- Credit assignment (per-lane, sequential CPU-light dispatches) ---
@@ -1197,6 +1480,69 @@ impl Agent {
         self.lanes[lane_idx].buffer.write_credits(&credits);
     }
 
+    /// Run the L1 credit assigner for each lane that just terminated an
+    /// option (and thus has a fresh row in `option_history`). Trains the
+    /// option-credit graph contrastively on the lane's own option
+    /// history; reads back credit logits, softmaxes them, and updates
+    /// the per-lane `h_eff_l1` diagnostic. Agent-wide loss reported as
+    /// the last lane's loss (sufficient for diagnostic tracking).
+    ///
+    /// Called from `act()` after new history entries are pushed and
+    /// before the next options are sampled.
+    fn option_credit_step<R: Rng>(&mut self, rng: &mut R, lanes_to_update: &[usize]) {
+        let Some(ref mut opt_credit_sess) = self.option_credit_session else {
+            return;
+        };
+        let history_len = self.config.option_history_len;
+        let num_options = self.config.num_options;
+        let latent_dim = self.latent_dim;
+        let lr = self.config.lr_option_credit * self.batch_lr_scale;
+        let warmup_done = self.step_count >= self.config.warmup_steps;
+
+        for &i in lanes_to_update {
+            // Stage the per-lane history + contrastive target, then
+            // drop the borrow before touching the session mutably.
+            let (history_flat, target_flat) = {
+                let lane = &self.lanes[i];
+                if lane.option_history.len() < history_len {
+                    continue;
+                }
+                let hist = lane
+                    .option_history
+                    .flatten(history_len, num_options, latent_dim);
+                let tgt = if let Some((hi, lo)) =
+                    lane.option_history.find_contrastive_pair(rng, history_len)
+                {
+                    lane.option_history.contrastive_target(hi, lo, history_len)
+                } else {
+                    vec![1.0 / history_len as f32; history_len]
+                };
+                (hist, tgt)
+            };
+
+            opt_credit_sess.set_input("history", &history_flat);
+            opt_credit_sess.set_input("credit_target", &target_flat);
+            opt_credit_sess.set_learning_rate(if warmup_done { lr } else { 0.0 });
+            opt_credit_sess.step();
+            opt_credit_sess.wait();
+
+            self.last_option_credit_loss = opt_credit_sess.read_loss();
+
+            let mut credit_logits = vec![0.0f32; history_len];
+            opt_credit_sess.read_output_by_index(1, &mut credit_logits);
+            // Sanitize any NaN/Inf before softmax: the credit graph
+            // occasionally produces non-finite values in early training
+            // on small-variance envs (Pendulum). Fall back to 0 so the
+            // softmax becomes uniform and `h_eff_l1` stays finite.
+            for v in credit_logits.iter_mut() {
+                if !v.is_finite() {
+                    *v = 0.0;
+                }
+            }
+            self.last_h_eff_l1 = credit::effective_scope(&credit_logits);
+        }
+    }
+
     /// Batched policy + value step over all lanes. The graph input `"z"` is
     /// the stacked per-lane latents produced this step; `"action"` is the
     /// stacked action tokens already in `action_token_scratch`;
@@ -1383,6 +1729,7 @@ impl Agent {
                     current_option: lane.current_option,
                     option_return: lane.option_return,
                     goal_distance,
+                    h_eff_l1: self.last_h_eff_l1,
                 }
             })
             .collect()

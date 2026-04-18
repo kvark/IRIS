@@ -57,3 +57,7 @@ path = "examples/l1_alpha_sweep.rs"
 [[example]]
 name = "l1_long"
 path = "examples/l1_long.rs"
+
+[[example]]
+name = "l1_learned_term"
+path = "examples/l1_learned_term.rs"
