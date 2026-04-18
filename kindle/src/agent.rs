@@ -206,6 +206,13 @@ struct Lane {
     last_homeo: f32,
     last_order: f32,
     last_reward: f32,
+    /// Reward excluding the L1 goal-alignment bonus. Used as the value
+    /// head's TD target so that the value baseline does NOT absorb the
+    /// option-conditioned bonus; otherwise advantage = reward − value
+    /// would cancel the bonus out and the policy-gradient signal that
+    /// distinguishes options would collapse. When L1 is inactive this
+    /// equals `last_reward`.
+    last_base_reward: f32,
 }
 
 /// The kindle agent.
@@ -258,10 +265,14 @@ pub struct Agent {
     /// either the cross-entropy or MSE loss path without needing a
     /// per-row loss weighting input on the graph side.
     policy_action_scratch: Vec<f32>,
-    /// Effective option_dim (resolved from config: 0 → latent_dim).
+    /// Effective option_dim (resolved from config: 0 → latent_dim). The
+    /// goal vector width used by the goal-alignment reward bonus.
     option_dim: usize,
-    /// Stacked z_concat = [z, goal] for the widened policy input.
-    z_concat_scratch: Vec<f32>,
+    /// Stacked per-lane one-hot option encodings fed to the policy
+    /// graph's `option_onehot` input when L1 is active. Each row's
+    /// active-option slot is `1.0`, others `0.0`. Empty (`n * 0`) when
+    /// `num_options = 1`.
+    option_onehot_scratch: Vec<f32>,
     /// L1 scratch buffers.
     option_taken_scratch: Vec<f32>,
     option_return_scratch: Vec<f32>,
@@ -269,6 +280,19 @@ pub struct Agent {
     /// maps to a pre-set orthogonal direction in latent space. L1 learns
     /// which option to pick; the goal vectors themselves are constants.
     goal_table: Vec<f32>,
+}
+
+/// Cosine similarity between two equal-length vectors. Returns 0 when
+/// either side has zero norm (no direction defined).
+fn unit_cosine(a: &[f32], b: &[f32]) -> f32 {
+    debug_assert_eq!(a.len(), b.len());
+    let a_norm: f32 = a.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let b_norm: f32 = b.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if a_norm < 1e-6 || b_norm < 1e-6 {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    dot / (a_norm * b_norm)
 }
 
 /// Xavier (Glorot uniform) initialization.
@@ -413,7 +437,11 @@ impl Agent {
         }
         let is_discrete = matches!(first_kind, ActionKind::Discrete { .. });
 
-        // Resolve option_dim: 0 in config means "use latent_dim".
+        // Resolve option_dim: 0 in config means "use latent_dim". This
+        // is the dimensionality of the `option_goal` vector used by the
+        // goal-alignment reward bonus; it is no longer mixed into the
+        // policy's `z` input (Phase G v2 uses a per-option bias head
+        // instead, which is plumbed through `option_onehot`).
         let option_dim = if config.option_dim == 0 {
             config.latent_dim
         } else {
@@ -421,28 +449,27 @@ impl Agent {
         };
         let l1_active = config.num_options >= 2;
 
-        // L0 policy graph — z input is widened by option_dim when L1 is
-        // active so the policy can condition on the current goal-latent.
-        let z_dim = if l1_active {
-            config.latent_dim + option_dim
-        } else {
-            config.latent_dim
-        };
+        // L0 policy graph — `z` is just the encoder latent. When L1 is
+        // active, the graph also takes a one-hot `option_onehot` input
+        // and routes it through a direct-to-logits bias head (see
+        // `policy::build_policy_graph`).
         let policy_session = {
             let g = if is_discrete {
                 policy::build_policy_graph(
-                    z_dim,
+                    config.latent_dim,
                     MAX_ACTION_DIM,
                     config.hidden_dim,
                     config.batch_size,
                     config.entropy_beta,
+                    config.num_options,
                 )
             } else {
                 policy::build_continuous_policy_graph(
-                    z_dim,
+                    config.latent_dim,
                     MAX_ACTION_DIM,
                     config.hidden_dim,
                     config.batch_size,
+                    config.num_options,
                 )
             };
             let mut s = build_session(&g, config.opt_level);
@@ -503,6 +530,7 @@ impl Agent {
                 last_homeo: 0.0,
                 last_order: 0.0,
                 last_reward: 0.0,
+                last_base_reward: 0.0,
             })
             .collect();
 
@@ -531,7 +559,7 @@ impl Agent {
             value_target_scratch: vec![0.0; n],
             policy_action_scratch: vec![0.0; n * MAX_ACTION_DIM],
             option_dim,
-            z_concat_scratch: vec![0.0; n * z_dim],
+            option_onehot_scratch: vec![0.0; n * config.num_options.max(1)],
             option_taken_scratch: vec![0.0; n * config.num_options],
             option_return_scratch: vec![0.0; n],
             goal_table: option::build_goal_table(config.num_options, option_dim),
@@ -690,13 +718,18 @@ impl Agent {
                 }
             }
 
-            // Build z_concat = [z, goal] per lane for the widened L0 policy.
+            // Build per-lane one-hot option encodings and feed both z
+            // (pure latent) and option_onehot to the policy graph.
+            // The option identity signals directly into the per-option
+            // bias head inside the policy graph.
+            self.option_onehot_scratch.fill(0.0);
             for (i, lane) in self.lanes.iter().enumerate() {
-                let row = &mut self.z_concat_scratch[i * (ld + od)..(i + 1) * (ld + od)];
-                row[..ld].copy_from_slice(&z_stack[i * ld..(i + 1) * ld]);
-                row[ld..].copy_from_slice(&lane.option_goal);
+                let row = &mut self.option_onehot_scratch[i * num_options..(i + 1) * num_options];
+                row[lane.current_option as usize] = 1.0;
             }
-            self.policy_session.set_input("z", &self.z_concat_scratch);
+            self.policy_session.set_input("z", &z_stack);
+            self.policy_session
+                .set_input("option_onehot", &self.option_onehot_scratch);
         } else {
             // L0-only path — feed z directly.
             self.policy_session.set_input("z", &z_stack);
@@ -826,25 +859,19 @@ impl Agent {
             let novelty = RewardCircuit::novelty(visit_count);
             let homeo = RewardCircuit::homeostatic(envs[i].homeostatic_variables());
             let order = lane.reward_circuit.observe_order(obs_row);
-            let mut reward = lane.reward_circuit.compute(surprise, novelty, homeo, order);
+            let base_reward = lane.reward_circuit.compute(surprise, novelty, homeo, order);
 
-            // Goal-achievement bonus (Phase G): when L1 is active, add
-            // −α · ‖z_t − goal‖ to the reward. This gives L0 a per-step
-            // self-supervised signal to drive the latent toward the
-            // current option's decoded goal, independent of the frozen
-            // reward circuit. Without it, L0 has no gradient linking its
-            // actions to the goal direction, so it ignores the goal
-            // dimension of z_concat and collapses to the same deterministic
-            // action regardless of which option L1 selected.
+            // Goal-alignment bonus (Phase G): when L1 is active, add
+            // `α · cos(z_t, goal)` — scale-invariant, bounded in
+            // `[-α, +α]`. Kept in `last_reward` (advantage input) but
+            // NOT in `last_base_reward` (value TD target), so the
+            // value baseline can't absorb the option signal.
+            let mut bonus = 0.0f32;
             if self.option_session.is_some() && self.config.goal_bonus_alpha > 0.0 {
-                let dist: f32 = z_row
-                    .iter()
-                    .zip(lane.option_goal.iter())
-                    .map(|(a, b)| (a - b).powi(2))
-                    .sum::<f32>()
-                    .sqrt();
-                reward -= self.config.goal_bonus_alpha * dist;
+                let cos = unit_cosine(z_row, &lane.option_goal);
+                bonus = self.config.goal_bonus_alpha * cos;
             }
+            let reward = base_reward + bonus;
 
             let env_boundary = lane.pending_boundary;
             lane.pending_boundary = false;
@@ -864,6 +891,7 @@ impl Agent {
             lane.last_homeo = homeo;
             lane.last_order = order;
             lane.last_reward = reward;
+            lane.last_base_reward = base_reward;
 
             // L1: accumulate reward into the current option's return and
             // count down. The next act() call will detect steps_left == 0
@@ -1190,9 +1218,13 @@ impl Agent {
     /// and the continuous MSE graph uniformly (both use `"action"` as
     /// their target).
     fn policy_step_batched(&mut self, z_stack: &[f32]) {
-        // Build stacked value targets (the rewards computed this step).
+        // Build stacked value targets: use the *base* reward (no L1
+        // goal-alignment bonus). The bonus is retained in `last_reward`
+        // for the advantage computation below — so the value baseline
+        // doesn't learn to cancel the option-discriminating signal.
+        // When L1 is inactive the two are identical.
         for (i, lane) in self.lanes.iter().enumerate() {
-            self.value_target_scratch[i] = lane.last_reward;
+            self.value_target_scratch[i] = lane.last_base_reward;
         }
 
         // Build per-row advantage-weighted action targets.
@@ -1229,19 +1261,19 @@ impl Agent {
             return;
         }
 
-        // When L1 is active, feed z_concat = [z, goal] to the widened
-        // policy graph. Otherwise feed z directly.
+        // Feed the pure latent `z` plus, when L1 is active, the per-lane
+        // one-hot `option_onehot` so the policy graph's option bias head
+        // receives the current option identity for training.
+        self.policy_session.set_input("z", z_stack);
         if self.option_session.is_some() {
-            let ld = self.latent_dim;
-            let od = self.option_dim;
+            let num_options = self.config.num_options;
+            self.option_onehot_scratch.fill(0.0);
             for (i, lane) in self.lanes.iter().enumerate() {
-                let row = &mut self.z_concat_scratch[i * (ld + od)..(i + 1) * (ld + od)];
-                row[..ld].copy_from_slice(&z_stack[i * ld..(i + 1) * ld]);
-                row[ld..].copy_from_slice(&lane.option_goal);
+                let row = &mut self.option_onehot_scratch[i * num_options..(i + 1) * num_options];
+                row[lane.current_option as usize] = 1.0;
             }
-            self.policy_session.set_input("z", &self.z_concat_scratch);
-        } else {
-            self.policy_session.set_input("z", z_stack);
+            self.policy_session
+                .set_input("option_onehot", &self.option_onehot_scratch);
         }
         self.policy_session
             .set_input("action", &self.policy_action_scratch);

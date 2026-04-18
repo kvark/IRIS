@@ -85,6 +85,7 @@ pub fn build_policy_graph(
     hidden_dim: usize,
     batch_size: usize,
     entropy_beta: f32,
+    num_options: usize,
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
@@ -92,8 +93,29 @@ pub fn build_policy_graph(
     let value_target = g.input("value_target", &[batch_size, 1]);
 
     let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
-    let logits = policy.forward(&mut g, z);
+    let trunk_logits = policy.forward(&mut g, z);
 
+    // Phase G v2: per-option direct-to-logits bias head. Each option
+    // has its own learned `[action_dim]` bias vector; the bias is
+    // selected per-lane by matmul with a one-hot option encoding.
+    // This bypasses the shared trunk so the option-conditional signal
+    // is not attenuated by Xavier-init trunk weights or crowded out
+    // by the base-reward gradient through z. Only the active option's
+    // row receives gradient on each step, preventing cross-option
+    // contamination.
+    let logits = if num_options > 1 {
+        let option_onehot = g.input("option_onehot", &[batch_size, num_options]);
+        let option_bias =
+            nn::Linear::no_bias(&mut g, "policy.option_bias", num_options, action_dim);
+        let bias_out = option_bias.forward(&mut g, option_onehot);
+        g.add(trunk_logits, bias_out)
+    } else {
+        trunk_logits
+    };
+
+    // Value head conditions on z only — option-agnostic baseline so
+    // `advantage = reward − value` retains the option-conditional
+    // bonus signal instead of seeing it cancelled.
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
     let value = value_head.forward(&mut g, z);
 
@@ -152,6 +174,7 @@ pub fn build_continuous_policy_graph(
     action_dim: usize,
     hidden_dim: usize,
     batch_size: usize,
+    num_options: usize,
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
@@ -161,7 +184,21 @@ pub fn build_continuous_policy_graph(
     // The "Policy" struct outputs [1, action_dim] logits; for continuous
     // actions we reinterpret this as the Gaussian mean μ.
     let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
-    let mean = policy.forward(&mut g, z);
+    let trunk_mean = policy.forward(&mut g, z);
+
+    // Phase G v2: per-option direct-to-mean bias head. See discrete
+    // variant for the rationale; here the bias acts on the Gaussian
+    // mean, so each option chooses a different centroid for the action
+    // distribution while sharing the trunk's state-conditioned part.
+    let mean = if num_options > 1 {
+        let option_onehot = g.input("option_onehot", &[batch_size, num_options]);
+        let option_bias =
+            nn::Linear::no_bias(&mut g, "policy.option_bias", num_options, action_dim);
+        let bias_out = option_bias.forward(&mut g, option_onehot);
+        g.add(trunk_mean, bias_out)
+    } else {
+        trunk_mean
+    };
 
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
     let value = value_head.forward(&mut g, z);

@@ -41,3 +41,19 @@ path = "examples/taxi.rs"
 [[example]]
 name = "multi_env"
 path = "examples/multi_env.rs"
+
+[[example]]
+name = "l1_diagnostic"
+path = "examples/l1_diagnostic.rs"
+
+[[example]]
+name = "wm_probe"
+path = "examples/wm_probe.rs"
+
+[[example]]
+name = "l1_alpha_sweep"
+path = "examples/l1_alpha_sweep.rs"
+
+[[example]]
+name = "l1_long"
+path = "examples/l1_long.rs"
