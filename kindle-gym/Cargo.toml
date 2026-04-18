@@ -61,3 +61,7 @@ path = "examples/l1_long.rs"
 [[example]]
 name = "l1_learned_term"
 path = "examples/l1_learned_term.rs"
+
+[[example]]
+name = "taxi_credit_probe"
+path = "examples/taxi_credit_probe.rs"
