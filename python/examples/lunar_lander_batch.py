@@ -128,6 +128,30 @@ def lunar_lander_homeo_v3(obs, action):
     ]
 
 
+def lunar_lander_homeo_v4(obs, action):
+    """v4 shaping: v3 plus an explicit positive pull toward leg contact.
+
+    Every v1–v3 homeo term is either zero or negative, so the policy
+    only sees "don't do X" signals and has no asymmetric pull toward
+    the landed state. v4 adds a leg-contact target: the homeo
+    variable is `-(leg1 + leg2)` (so 0 in air, negative on contact)
+    with target `-2.0` (both legs down) — contact reduces homeo
+    deviation and produces a positive advantage for actions that
+    end up with legs on the ground.
+    """
+    entries = lunar_lander_homeo_v3(obs, action)
+    leg1 = float(obs[6])
+    leg2 = float(obs[7])
+    entries.append(
+        {
+            "value": -(leg1 + leg2),
+            "target": -2.0,
+            "tolerance": 0.1,
+        }
+    )
+    return entries
+
+
 # Backward-compat alias: old scripts/tests still call lunar_lander_homeo.
 def lunar_lander_homeo(obs, action):
     return lunar_lander_homeo_v1(obs, action)
@@ -137,6 +161,7 @@ _SHAPING_VARIANTS = {
     "v1": lunar_lander_homeo_v1,
     "v2": lunar_lander_homeo_v2,
     "v3": lunar_lander_homeo_v3,
+    "v4": lunar_lander_homeo_v4,
 }
 
 
@@ -197,6 +222,9 @@ def main() -> int:
                         help="L1 option count. 1 (default) = L0-only. ≥ 2 activates Phase G.")
     parser.add_argument("--option-horizon", type=int, default=None,
                         help="env steps per option (Phase G). Default 10.")
+    parser.add_argument("--history-len", type=int, default=None,
+                        help="L0 causal-attention credit window. Default 16. Widen to "
+                        "attribute long-horizon reward (e.g. 64 for LunarLander descent).")
     parser.add_argument(
         "--shaping",
         choices=list(_SHAPING_VARIANTS.keys()),
@@ -253,6 +281,7 @@ def main() -> int:
         label_smoothing=args.label_smoothing,
         num_options=args.num_options,
         option_horizon=args.option_horizon,
+        history_len=args.history_len,
     )
     print("agent ready (compiled graphs once, N lanes)")
 
