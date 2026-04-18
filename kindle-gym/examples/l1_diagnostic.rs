@@ -65,7 +65,7 @@ fn option_text(opt: u32, option_dim: usize, num_options: usize) -> String {
     // sign alternates in each wrap-around. See option::build_goal_table.
     let dim = (opt as usize) % option_dim;
     let wrap = (opt as usize) / option_dim;
-    let sign = if wrap % 2 == 0 { "+" } else { "-" };
+    let sign = if wrap.is_multiple_of(2) { "+" } else { "-" };
     let _ = num_options;
     format!("goal{sign}z{dim}")
 }
@@ -286,8 +286,7 @@ fn run_l1_on_env(run: EnvRun, steps: usize, num_options: usize) -> RunStats {
     println!();
 
     print!("    per-option modal L0 action: ");
-    for o in 0..num_options {
-        let actions = &per_option_action[o];
+    for (o, actions) in per_option_action.iter().enumerate().take(num_options) {
         let (best_a, best_c) = actions
             .iter()
             .enumerate()
