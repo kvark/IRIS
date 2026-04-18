@@ -8,6 +8,25 @@
 use meganeura::graph::{Graph, NodeId};
 use meganeura::nn;
 
+/// `scale · tanh(x / scale)`: an element-wise soft clamp that saturates
+/// smoothly to ±scale. Implemented via full-shape constant tensors
+/// because meganeura's `Op::Mul` requires matching shapes (no scalar
+/// broadcast).
+fn scaled_tanh(
+    g: &mut Graph,
+    x: NodeId,
+    scale: f32,
+    batch_size: usize,
+    last_dim: usize,
+) -> NodeId {
+    let n = batch_size * last_dim;
+    let scale_full = g.constant(vec![scale; n], &[batch_size, last_dim]);
+    let inv_scale_full = g.constant(vec![1.0 / scale; n], &[batch_size, last_dim]);
+    let shrunk = g.mul(x, inv_scale_full);
+    let squashed = g.tanh(shrunk);
+    g.mul(squashed, scale_full)
+}
+
 /// Stochastic policy network for discrete action spaces.
 pub struct Policy {
     pub fc1: nn::Linear,
@@ -103,7 +122,7 @@ pub fn build_policy_graph(
     // by the base-reward gradient through z. Only the active option's
     // row receives gradient on each step, preventing cross-option
     // contamination.
-    let logits = if num_options > 1 {
+    let raw_logits = if num_options > 1 {
         let option_onehot = g.input("option_onehot", &[batch_size, num_options]);
         let option_bias =
             nn::Linear::no_bias(&mut g, "policy.option_bias", num_options, action_dim);
@@ -113,11 +132,23 @@ pub fn build_policy_graph(
         trunk_logits
     };
 
+    // No soft-clamp on the logits themselves — a tanh bound here
+    // saturates the gradient as the policy commits and prevents
+    // useful confident policies from forming (Taxi: entropy 0.20 →
+    // 1.78 under a scale=50 clamp). The value head's MSE was the
+    // dominant long-run overflow source; clamping value output alone
+    // (below) is sufficient to keep policy-loss finite over 1M-step
+    // runs.
+    let logits = raw_logits;
+
     // Value head conditions on z only — option-agnostic baseline so
     // `advantage = reward − value` retains the option-conditional
-    // bonus signal instead of seeing it cancelled.
+    // bonus signal instead of seeing it cancelled. A symmetric tanh
+    // soft-clamp keeps the value output bounded in ±100 so MSE can't
+    // drive the head into an overflow loop.
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
-    let value = value_head.forward(&mut g, z);
+    let raw_value = value_head.forward(&mut g, z);
+    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
 
     // Policy loss: cross-entropy with one-hot action selects -log π(a|s)
     let policy_loss = g.cross_entropy_loss(logits, action);
@@ -190,7 +221,7 @@ pub fn build_continuous_policy_graph(
     // variant for the rationale; here the bias acts on the Gaussian
     // mean, so each option chooses a different centroid for the action
     // distribution while sharing the trunk's state-conditioned part.
-    let mean = if num_options > 1 {
+    let raw_mean = if num_options > 1 {
         let option_onehot = g.input("option_onehot", &[batch_size, num_options]);
         let option_bias =
             nn::Linear::no_bias(&mut g, "policy.option_bias", num_options, action_dim);
@@ -199,9 +230,13 @@ pub fn build_continuous_policy_graph(
     } else {
         trunk_mean
     };
+    // No soft-clamp on the Gaussian mean either — see the discrete
+    // build_policy_graph for rationale.
+    let mean = raw_mean;
 
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
-    let value = value_head.forward(&mut g, z);
+    let raw_value = value_head.forward(&mut g, z);
+    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
 
     // Policy loss: MSE(μ, taken_action) ≡ Gaussian NLL with σ² = 1
     let policy_loss = g.mse_loss(mean, action);

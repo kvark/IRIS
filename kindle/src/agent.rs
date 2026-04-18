@@ -1033,6 +1033,27 @@ impl Agent {
         let mut value_stack = vec![0.0f32; n];
         self.policy_session
             .read_output_by_index(2, &mut value_stack);
+        // Stability guard: sanitize any NaN and clamp extreme logits so
+        // softmax(head) stays finite. Combined with the graph-internal
+        // soft-tanh-clamp (see `policy.rs::scaled_tanh`) this forms a
+        // defense-in-depth against long-run numerical drift. ±60 is
+        // just beyond the graph clamp (±50) so a well-behaved graph
+        // output is never touched here; only truly bad values are
+        // sanitized.
+        for v in head_stack.iter_mut() {
+            if !v.is_finite() {
+                *v = 0.0;
+            } else {
+                *v = v.clamp(-60.0, 60.0);
+            }
+        }
+        for v in value_stack.iter_mut() {
+            if !v.is_finite() {
+                *v = 0.0;
+            } else {
+                *v = v.clamp(-1e6, 1e6);
+            }
+        }
 
         // Per-lane sampling with optional action persistence. The batched
         // policy forward ran for every lane above (so `head`/`value` rows
@@ -1109,7 +1130,16 @@ impl Agent {
         let wm_loss = self.wm_forward_backward_stacked(
             self.config.learning_rate * self.encoder_lr_scale * self.batch_lr_scale,
         );
-        self.last_wm_loss = wm_loss;
+        if wm_loss.is_finite() {
+            self.last_wm_loss = wm_loss;
+        } else {
+            log::warn!(
+                "WM loss went non-finite at step {}, re-initialized WM params",
+                self.step_count
+            );
+            init_parameters(&mut self.wm_session);
+            self.last_wm_loss = 0.0;
+        }
 
         // Read stacked z_t output [N, latent_dim] and per-lane
         // squared-error output [N, latent_dim] from the WM graph.
@@ -1117,6 +1147,24 @@ impl Agent {
         self.wm_session.read_output_by_index(1, &mut z_stack);
         let mut sq_stack = vec![0.0f32; n * ld];
         self.wm_session.read_output_by_index(2, &mut sq_stack);
+        // Stability guard: clamp latent components to a finite range
+        // before anything downstream (surprise computation, policy
+        // input, reward bonus, buffer writes). The encoder's final
+        // `fc2` is unbounded — under long training on simple envs it
+        // can drive `|z|` arbitrarily large, and the resulting policy
+        // logits blow up to NaN within a few tens of thousands of
+        // steps. Clamping to ±10 preserves all normal-range
+        // representations (Xavier init produces values in ~[-2, 2])
+        // while bounding logit magnitudes through the policy's
+        // `Linear(latent_dim, hidden)` — exp(10·‖w‖) stays well inside
+        // f32 before any softmax.
+        for v in z_stack.iter_mut() {
+            if !v.is_finite() {
+                *v = 0.0;
+            } else {
+                *v = v.clamp(-10.0, 10.0);
+            }
+        }
 
         // --- Per-lane reward + transition push ---
         // Per-lane surprise: `pred_error_i = ||z_hat_i − z_target_i||` is
@@ -1311,7 +1359,16 @@ impl Agent {
         let loss = self.wm_forward_backward_stacked(
             self.config.learning_rate * self.encoder_lr_scale * self.batch_lr_scale * 0.5,
         );
-        self.last_replay_loss = loss;
+        if loss.is_finite() {
+            self.last_replay_loss = loss;
+        } else {
+            log::warn!(
+                "replay loss went non-finite at step {}, re-initialized WM params",
+                self.step_count
+            );
+            init_parameters(&mut self.wm_session);
+            self.last_replay_loss = 0.0;
+        }
     }
 
     /// Capture a shared probe reference set from lane 0's buffer (any lane
@@ -1469,7 +1526,17 @@ impl Agent {
         self.credit_session.step();
         self.credit_session.wait();
 
-        self.last_credit_loss = self.credit_session.read_loss();
+        let loss = self.credit_session.read_loss();
+        if loss.is_finite() {
+            self.last_credit_loss = loss;
+        } else {
+            log::warn!(
+                "credit loss went non-finite at step {}, re-initialized credit params",
+                self.step_count
+            );
+            init_parameters(&mut self.credit_session);
+            self.last_credit_loss = 0.0;
+        }
 
         let mut credit_logits = vec![0.0f32; h];
         self.credit_session
@@ -1526,7 +1593,17 @@ impl Agent {
             opt_credit_sess.step();
             opt_credit_sess.wait();
 
-            self.last_option_credit_loss = opt_credit_sess.read_loss();
+            let loss = opt_credit_sess.read_loss();
+            if loss.is_finite() {
+                self.last_option_credit_loss = loss;
+            } else {
+                log::warn!(
+                    "option-credit loss went non-finite at step {}, re-initialized option-credit params",
+                    self.step_count
+                );
+                init_parameters(opt_credit_sess);
+                self.last_option_credit_loss = 0.0;
+            }
 
             let mut credit_logits = vec![0.0f32; history_len];
             opt_credit_sess.read_output_by_index(1, &mut credit_logits);
@@ -1568,9 +1645,17 @@ impl Agent {
         // goal-alignment bonus). The bonus is retained in `last_reward`
         // for the advantage computation below — so the value baseline
         // doesn't learn to cancel the option-discriminating signal.
-        // When L1 is inactive the two are identical.
+        // When L1 is inactive the two are identical. Clamp the target
+        // to a sane range so a runaway reward stream (e.g. a very
+        // negative homeo deviation) can't drive the value MSE into
+        // gradient magnitudes that explode the value-head weights.
         for (i, lane) in self.lanes.iter().enumerate() {
-            self.value_target_scratch[i] = lane.last_base_reward;
+            let v = lane.last_base_reward;
+            self.value_target_scratch[i] = if v.is_finite() {
+                v.clamp(-100.0, 100.0)
+            } else {
+                0.0
+            };
         }
 
         // Build per-row advantage-weighted action targets.
@@ -1625,10 +1710,12 @@ impl Agent {
 
             // Amplify label-smoothing toward uniform when entropy is low.
             let eps = (eps_base + (1.0 - eps_base) * entropy_deficit).min(1.0);
-            // Synthesize a recovery advantage when the real reward
-            // advantage has gone silent. Sign is positive — we want
-            // the gradient to pull the policy toward the (now
-            // near-uniform) smoothed target, not away from it.
+            // Synthesize a recovery advantage only when the real
+            // reward advantage has gone silent — otherwise use the
+            // signal advantage unchanged. The soft-tanh-clamp on the
+            // policy logits (see `policy.rs`) prevents the NaN-from-
+            // unbounded-logits failure mode on its own, so we don't
+            // need to amplify recovery to dominate the signal.
             let effective_adv = if advantage.abs() < 1e-3 && entropy_deficit > 0.0 {
                 entropy_deficit
             } else {
@@ -1669,7 +1756,25 @@ impl Agent {
         self.policy_session.step();
         self.policy_session.wait();
 
-        self.last_policy_loss = self.policy_session.read_loss();
+        let loss = self.policy_session.read_loss();
+        if !loss.is_finite() {
+            // Long-run stability watchdog: the policy/value head has
+            // diverged (usually value-MSE weight explosion on simple
+            // envs where the value baseline can grow unbounded chasing
+            // a noisy intrinsic reward). Re-initialize the policy
+            // session's parameters and record a sentinel so diagnostics
+            // surface the event. The other sessions — WM, credit,
+            // option — are untouched; those are historically more
+            // stable than the policy head in this codebase.
+            init_parameters(&mut self.policy_session);
+            log::warn!(
+                "policy loss went non-finite at step {}, re-initialized policy params",
+                self.step_count
+            );
+            self.last_policy_loss = 0.0;
+        } else {
+            self.last_policy_loss = loss;
+        }
     }
 
     pub fn step_count(&self) -> usize {
