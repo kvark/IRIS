@@ -264,6 +264,12 @@ def main() -> int:
     #   "crash" — terminated with high speed or no legs down
     #   "timeout" — truncated without landing
     ep_outcomes: list[list[str]] = [[] for _ in range(args.lanes)]
+    # Rolling window of outcome tags for "is the agent improving?"
+    # Detection: we want per-window soft-rate, not cumulative, since
+    # cumulative gets averaged down by the poor early episodes.
+    from collections import deque
+    recent_outcomes: deque[str] = deque(maxlen=200)
+    window_log: list[tuple[int, int, int]] = []  # (step, soft_count, window_size)
     total_episodes = 0
     t0 = time.time()
 
@@ -307,6 +313,7 @@ def main() -> int:
                     outcome = "timeout"
                 ep_outcomes[i].append(outcome)
                 ep_returns[i].append(cur_returns[i])
+                recent_outcomes.append(outcome)
                 total_episodes += 1
                 cur_returns[i] = 0.0
                 obs, _info = envs[i].reset()
@@ -350,9 +357,18 @@ def main() -> int:
             gdist /= max(1, args.lanes)
             opt_str = "/".join(str(opt_counts.get(i, 0)) for i in range(max(opt_counts.keys()) + 1)) if opt_counts else "-"
 
+            # Rolling soft-rate over the last N outcomes — this is the
+            # "is the agent improving?" signal. Cumulative rate gets
+            # pulled down by early poor episodes and hides a learning
+            # curve.
+            soft_in_window = sum(1 for o in recent_outcomes if o == "soft")
+            window_size = len(recent_outcomes)
+            soft_pct_window = 100.0 * soft_in_window / max(1, window_size)
+            window_log.append((step, soft_in_window, window_size))
+
             print(
                 f"step={step:>5} eps={total_episodes:>3} "
-                f"avg_ret={avg_return:+7.1f} | "
+                f"avg_ret={avg_return:+7.1f} soft%(last{window_size})={soft_pct_window:4.1f} | "
                 f"wm={wm:.3f} pi={pi:.3f} "
                 f"r={rew:+6.3f} surp={sup:+5.2f} homeo={hom:+6.2f} "
                 f"ent={ent:.2f} opts={opt_str} gdist={gdist:.2f} "

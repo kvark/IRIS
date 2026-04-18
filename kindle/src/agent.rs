@@ -1757,18 +1757,19 @@ impl Agent {
         self.policy_session.wait();
 
         let loss = self.policy_session.read_loss();
-        if !loss.is_finite() {
-            // Long-run stability watchdog: the policy/value head has
-            // diverged (usually value-MSE weight explosion on simple
-            // envs where the value baseline can grow unbounded chasing
-            // a noisy intrinsic reward). Re-initialize the policy
-            // session's parameters and record a sentinel so diagnostics
-            // surface the event. The other sessions — WM, credit,
-            // option — are untouched; those are historically more
-            // stable than the policy head in this codebase.
+        // Watchdog: reset on non-finite OR absolute magnitude > 1000.
+        // The latter catches the "finite but runaway" regime observed
+        // on LunarLander after a brief performance peak — the
+        // cross-entropy loss can plunge into the thousands of
+        // magnitude when `log_softmax` produces values of order -1000
+        // from extreme logit spreads, even though every individual
+        // number is technically finite. Reset restores uniform-ish
+        // softmax and lets the agent re-climb.
+        if !loss.is_finite() || loss.abs() > 1000.0 {
             init_parameters(&mut self.policy_session);
             log::warn!(
-                "policy loss went non-finite at step {}, re-initialized policy params",
+                "policy loss {:.1} unstable at step {}, re-initialized policy params",
+                loss,
                 self.step_count
             );
             self.last_policy_loss = 0.0;
