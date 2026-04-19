@@ -49,12 +49,24 @@ rendering loop (blade-graphics) with meganeura training in the same
 process and wants a single time-aligned `.pftrace` per run. See the
 mega-plays tree for that work.
 
-## Tier 3 — architectural investigations (parked)
+## Tier 3 — architectural investigations
 
 1. **Phase H design doc (L2 hierarchy)**. Write-before-implement.
-2. **Continuous goal-latent instead of fixed option table**.
+2. **Continuous goal-latent instead of fixed option table**. *Active.*
 3. **Why Taxi prefers L0** over L1+credit — one-page investigation.
-4. **Replace shared L0 policy** with per-option MLP heads.
+4. **~~Replace shared L0 policy~~ with per-option MLP heads.** Done
+   2026-04-19 under feature flag `AgentConfig::per_option_heads`
+   (default `true`). Each option now has its own
+   `[hidden_dim → action_dim]` fc2 head, selected per-lane via an
+   `option_onehot`-gated sum — only the active option's head receives
+   gradient. Result on LunarLander at 100k steps / 4 lanes / seed 42:
+   **5.25% cumulative soft-rate, 9.0% peak window**, statistically
+   indistinguishable from the pre-heads baseline (5.38% / 9.5%). The
+   plateau is robust to L0 policy capacity expansion — consistent
+   with the "credit horizon, not capacity" hypothesis. Kept on by
+   default because the extra head capacity is cheap and leaves the
+   Taxi option-differentiation result unchanged. #2 (continuous
+   goal-latent) is now the next lever to try.
 5. **Why GridWorld stays uniform** across 1M steps — bug hunt.
 
 ## Tier 4 — the user-excluded track

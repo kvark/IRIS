@@ -123,6 +123,16 @@ pub struct AgentConfig {
     /// graph shape is identical either way to keep parameter layouts
     /// stable across config changes.
     pub learned_termination: bool,
+    /// Phase G Tier-3: replace the shared L0 `fc2` head with N
+    /// per-option `[hidden_dim → action_dim]` heads gated by
+    /// `option_onehot`. Each option's head only receives gradient
+    /// when that option is active, silo'ing per-option capacity so
+    /// different options can commit to genuinely different action
+    /// distributions without fighting in one shared parameter space.
+    /// Only effective when `num_options >= 2`; ignored otherwise.
+    /// Default `true` — the additive-bias-only behaviour (Phase G v2
+    /// through Tier-1) is kept as the `false` path for A/B.
+    pub per_option_heads: bool,
     pub opt_level: OptLevel,
 }
 
@@ -155,6 +165,7 @@ impl Default for AgentConfig {
             lr_option_credit: 7.5e-5,
             goal_bonus_alpha: 0.1,
             learned_termination: false,
+            per_option_heads: true,
             opt_level: OptLevel::Full,
         }
     }
@@ -656,6 +667,7 @@ impl Agent {
                     config.batch_size,
                     config.entropy_beta,
                     config.num_options,
+                    config.per_option_heads,
                 )
             } else {
                 policy::build_continuous_policy_graph(
@@ -664,6 +676,7 @@ impl Agent {
                     config.hidden_dim,
                     config.batch_size,
                     config.num_options,
+                    config.per_option_heads,
                 )
             };
             let mut s = build_session(&g, config.opt_level);
