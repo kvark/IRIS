@@ -291,6 +291,11 @@ def main() -> int:
                         "centered Σ r_base over the episode. 'terminal_reward' = just the "
                         "last step's r_base; tests whether the terminal homeo profile "
                         "carries landing-quality signal that the sum washes out.")
+    parser.add_argument("--outcome-window", type=int, default=None,
+                        help="M6 v2: window size for the outcome head. 1 (default) = "
+                        "single-frame R̂(z_t) — M6 v1. k >= 2 concatenates the last k "
+                        "latents [z_{t-k+1}, ..., z_t] so the head sees trajectory "
+                        "momentum, not just present state.")
     parser.add_argument(
         "--shaping",
         choices=list(_SHAPING_VARIANTS.keys()),
@@ -354,6 +359,7 @@ def main() -> int:
         lr_outcome=args.outcome_lr,
         outcome_clamp=args.outcome_clamp,
         outcome_target=args.outcome_target,
+        outcome_window=args.outcome_window,
         outcome_max_episode_len=args.outcome_ep_len,
     )
     print("agent ready (compiled graphs once, N lanes)")

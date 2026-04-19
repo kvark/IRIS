@@ -197,6 +197,16 @@ pub struct AgentConfig {
     /// strongly between soft and crash if the reward circuit's
     /// terminal homeo profile already differs.
     pub outcome_target: OutcomeTarget,
+    /// M6 v2: window size for the outcome head's input. `1`
+    /// (default) reduces to single-frame `R̂(z_t)` — the back-compat
+    /// M6 v1 path. `k ≥ 2` concatenates the last `k` encoder
+    /// latents `[z_{t-k+1}, ..., z_t]` so the head can read
+    /// trajectory momentum, not just present-state. The M6 v1
+    /// mechanism check (2026-04-19) showed that single-frame inputs
+    /// can't discriminate soft from crash mid-flight because two
+    /// identical mid-flight z's can precede different outcomes — a
+    /// windowed input gets a richer condition.
+    pub outcome_window: usize,
     /// M6: symmetric clamp applied to the raw outcome-head output
     /// before multiplication by `α`. Caps the worst-case per-step
     /// bonus at `α · outcome_clamp`. Default `5.0`; raise alongside
@@ -262,6 +272,7 @@ impl Default for AgentConfig {
             lr_outcome: None,
             outcome_baseline_ema: 0.05,
             outcome_target: OutcomeTarget::EpisodeSum,
+            outcome_window: 1,
             outcome_clamp: 5.0,
             outcome_max_episode_len: 256,
             goal_ema_rate: 0.02,
@@ -859,6 +870,7 @@ impl Agent {
                 .unwrap_or(config.learning_rate * 0.3);
             Some(outcome::OutcomeHead::new(
                 config.latent_dim,
+                config.outcome_window.max(1),
                 config.hidden_dim,
                 lr,
                 0xA11CE ^ 0xD0C_EFF,
@@ -1437,14 +1449,24 @@ impl Agent {
                             OutcomeTarget::EpisodeSum => lane.outcome_ep_return,
                             OutcomeTarget::TerminalReward => lane.outcome_last_step_reward,
                         };
-                        // First episode: seed the baseline rather than
-                        // centering against 0 (which would overshoot).
                         if !lane.outcome_baseline_seeded {
                             lane.outcome_baseline = target_raw;
                             lane.outcome_baseline_seeded = true;
                         }
                         let centered = target_raw - lane.outcome_baseline;
-                        head.train_batch(&lane.outcome_ep_trajectory, centered);
+                        // Build one windowed input per step of the
+                        // just-ended episode. `build_window` left-pads
+                        // with the first frame for early-episode steps.
+                        let mut windows: Vec<Vec<f32>> =
+                            Vec::with_capacity(lane.outcome_ep_trajectory.len());
+                        for i in 0..lane.outcome_ep_trajectory.len() {
+                            if let Some(w) =
+                                head.build_window(&lane.outcome_ep_trajectory, i)
+                            {
+                                windows.push(w);
+                            }
+                        }
+                        head.train_batch(&windows, centered);
                         // EMA-update the baseline with this episode's
                         // raw target for the *next* centering.
                         lane.outcome_baseline =
@@ -1456,11 +1478,26 @@ impl Agent {
                 lane.outcome_ep_return = 0.0;
             }
 
-            // M6 per-step forward: read `R̂(z_t)` for the reward bonus.
+            // Push z into the current episode's trajectory (cap at
+            // `outcome_max_episode_len` — overflow truncates the tail).
+            // Done *before* the per-step forward so the window ending
+            // at `z_t` is available, including for the first step of a
+            // new episode.
+            if m6_head.is_some() && lane.outcome_ep_trajectory.len() < m6_max_ep {
+                lane.outcome_ep_trajectory.push(z_row.to_vec());
+            }
+
+            // M6 per-step forward: read `R̂(window_ending_at_z_t)` for
+            // the reward bonus.
             let r_hat = if let Some(head) = m6_head.as_ref() {
-                let raw = head.forward(z_row);
-                if raw.is_finite() {
-                    raw.clamp(-m6_clamp, m6_clamp)
+                let end = lane.outcome_ep_trajectory.len().saturating_sub(1);
+                if let Some(win) = head.build_window(&lane.outcome_ep_trajectory, end) {
+                    let raw = head.forward(&win);
+                    if raw.is_finite() {
+                        raw.clamp(-m6_clamp, m6_clamp)
+                    } else {
+                        0.0
+                    }
                 } else {
                     0.0
                 }
@@ -1470,11 +1507,6 @@ impl Agent {
             lane.last_r_hat = r_hat;
             let m6_bonus = m6_alpha * r_hat;
 
-            // Push z into the current episode's trajectory (cap at
-            // `outcome_max_episode_len` — overflow truncates the tail).
-            if m6_head.is_some() && lane.outcome_ep_trajectory.len() < m6_max_ep {
-                lane.outcome_ep_trajectory.push(z_row.to_vec());
-            }
             // Accumulate pre-M6 reward into the episode return — the
             // outcome head trains on this (or on the single-step value
             // when `outcome_target == TerminalReward`, read from
