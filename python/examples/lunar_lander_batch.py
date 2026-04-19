@@ -232,6 +232,13 @@ def main() -> int:
                         help="Lookahead horizon for policy advantage. 1 (default) = "
                         "single-step (r_t − V). N >= 2 trains on a transition from "
                         "N steps ago with a γ-discounted Monte-Carlo return.")
+    parser.add_argument("--outcome-alpha", type=float, default=None,
+                        help="M6 learnable-reward bonus weight α. 0 (default) disables "
+                        "the outcome-value head. ~0.1 is a sane starting point.")
+    parser.add_argument("--outcome-lr", type=float, default=None,
+                        help="LR for the outcome-value head. Defaults to learning_rate × 0.3.")
+    parser.add_argument("--outcome-ep-len", type=int, default=None,
+                        help="Per-episode trajectory cap for the outcome head. Default 256.")
     parser.add_argument(
         "--shaping",
         choices=list(_SHAPING_VARIANTS.keys()),
@@ -291,6 +298,9 @@ def main() -> int:
         history_len=args.history_len,
         gamma=args.gamma,
         n_step=args.n_step,
+        outcome_reward_alpha=args.outcome_alpha,
+        lr_outcome=args.outcome_lr,
+        outcome_max_episode_len=args.outcome_ep_len,
     )
     print("agent ready (compiled graphs once, N lanes)")
 
@@ -404,12 +414,16 @@ def main() -> int:
             soft_pct_window = 100.0 * soft_in_window / max(1, window_size)
             window_log.append((step, soft_in_window, window_size))
 
+            r_hat_mean = sum(_safe(d.get("r_hat", 0.0), 0.0) for d in diags) / args.lanes
+            outcome_base = _safe(diags[0].get("outcome_baseline", 0.0), 0.0)
+            outcome_loss = _safe(diags[0].get("outcome_loss", 0.0), 0.0)
             print(
                 f"step={step:>5} eps={total_episodes:>3} "
                 f"avg_ret={avg_return:+7.1f} soft%(last{window_size})={soft_pct_window:4.1f} | "
                 f"wm={wm:.3f} pi={pi:.3f} "
                 f"r={rew:+6.3f} surp={sup:+5.2f} homeo={hom:+6.2f} "
                 f"ent={ent:.2f} opts={opt_str} gdist={gdist:.2f} "
+                f"m6:r_hat={r_hat_mean:+5.2f} base={outcome_base:+6.1f} loss={outcome_loss:.3f} "
                 f"| {sps:5.1f} env-steps/s"
             )
 

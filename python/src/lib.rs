@@ -413,6 +413,10 @@ impl PyBatchAgent {
         history_len = None,
         gamma = None,
         n_step = None,
+        outcome_reward_alpha = None,
+        lr_outcome = None,
+        outcome_baseline_ema = None,
+        outcome_max_episode_len = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -435,6 +439,10 @@ impl PyBatchAgent {
         history_len: Option<usize>,
         gamma: Option<f32>,
         n_step: Option<usize>,
+        outcome_reward_alpha: Option<f32>,
+        lr_outcome: Option<f32>,
+        outcome_baseline_ema: Option<f32>,
+        outcome_max_episode_len: Option<usize>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -520,6 +528,18 @@ impl PyBatchAgent {
         }
         if let Some(ns) = n_step {
             config.n_step = ns;
+        }
+        if let Some(a) = outcome_reward_alpha {
+            config.outcome_reward_alpha = a;
+        }
+        if let Some(lr) = lr_outcome {
+            config.lr_outcome = Some(lr);
+        }
+        if let Some(ema) = outcome_baseline_ema {
+            config.outcome_baseline_ema = ema;
+        }
+        if let Some(l) = outcome_max_episode_len {
+            config.outcome_max_episode_len = l;
         }
         let agent = Agent::new(config, adapters);
         Ok(Self {
