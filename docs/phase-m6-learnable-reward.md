@@ -371,28 +371,108 @@ needs, in order of scope:
 A. **Action-conditioned R̂(z_t, a_t)** — adds "what the agent is
    doing" to the input. Becomes a Q-function. Large overlap with
    the existing policy/value path; arguable duplication.
-B. **Trajectory-conditioned R̂(z_{t−k:t})** — small causal
-   attention / recurrent head over recent latents. Captures
-   momentum ("this trajectory is slow + upright → likely soft").
-   Distinct from the policy path. Natural kindle fit; requires
-   a GPU graph.
+B. **Trajectory-conditioned R̂(z_{t−k:t})** — small MLP over a
+   concatenated window of recent latents. Captures momentum
+   ("this trajectory is slow + upright → likely soft"). Distinct
+   from the policy path. Natural kindle fit; CPU-side, shares
+   M6 v1 infrastructure.
 C. **Outcome-supervised encoder** — unfreeze the encoder under
    a gradient from M6's outcome loss. The encoder then learns
    representations where z_t itself carries outcome-relevant
    features, even from a single frame. Biggest departure from
    kindle's M1 ignition invariant.
 
-Given the 2026-04-19 evidence, (B) is the honest next step if
-LunarLander remains the target env — it's the minimal change
-that addresses the actual information deficit. (A) collides with
-the policy's job. (C) is a broader rewrite of the kindle design
-and should wait until (B) has been tried and learned from.
+## M6 v2 implementation (2026-04-19): windowed head
 
-### LunarLander status
+Implemented (B): `OutcomeHead` generalized to accept a window of
+`k` concatenated latents, input dim = `k · latent_dim`.
+`window == 1` is byte-identical to M6 v1 (verified on
+l1_diagnostic across 7 envs). `AgentConfig::outcome_window`
+defaults to 1; `BatchAgent(outcome_window=k)` and
+`--outcome-window k` plumb through.
 
-Tier 3 + M6 (including v5 shaping and TerminalReward target)
-have now exhaustively tested the "fix the reward signal" class
-of hypotheses. All null. The remaining classes are
-trajectory-conditioned-input, encoder-unfreeze, or accept. M6
-code stays in — verifiably correct at its stated job — and (B)
-can build on it directly.
+100k / 4 lanes / seed 42 / α=0.1 / clamp=5:
+
+```
+config                                         cum soft   gap
+v5 + EpisodeSum   + window=1   (prior)          4.78%   +0.032
+v3 + EpisodeSum   + window=16                   ~5%     −0.17
+v5 + EpisodeSum   + window=16  (mid-train 30k)  —       +0.144
+v5 + EpisodeSum   + window=16  (full 100k)      4.78%   +0.052
+v3 + TerminalReward + window=16                 5.04%   +0.012
+```
+
+**The windowed head produces the first-ever non-trivial positive
+discrimination gap on v5 + EpisodeSum: +0.144 at 30k training
+steps.** Above random noise, above every prior (v1 + any variant)
+result, and in the correct direction (soft > crash). Sanity test
+on the architectural claim: yes — a windowed input CAN
+discriminate where a single-frame input could not.
+
+### Why the soft-rate still doesn't move
+
+Two compounding issues identified from the 100k + instrumented
+run:
+
+1. **Class imbalance saturation.** The training set is ~20× more
+   crash windows than soft windows. Shared-target-per-episode
+   training collapses the head toward the dominant-class target;
+   the discrimination gap *shrinks* with more training (+0.144 at
+   30k → +0.052 at 100k).
+
+2. **Intra-episode flatness of the predicted bonus.** With one
+   target shared across every step of a given episode, the head
+   fits to the episode-wide mean. Within an episode, `R̂` is
+   essentially constant across early / mid / late windows. A
+   constant shift to per-step reward within an episode is a
+   **policy-gradient-invariant** — the optimal policy doesn't
+   change under a constant reward baseline. So even a
+   discriminating head produces no policy gradient direction
+   when its output is per-step-flat.
+
+The +0.144 gap is a signal about episode class (soft vs. crash)
+but not a signal about *where in the episode to act differently*.
+The policy needs per-state differential, not per-episode
+differential.
+
+### What v2 actually proved
+
+- ✅ Trajectory input fixes the information deficit identified in
+  the v1 mechanism check. Windowed R̂ can discriminate outcomes.
+  Theory confirmed.
+- ✅ The discrimination gap appears only when the target carries
+  the signal (v5, not v3). Both halves of the 2026-04-19 picture
+  are now empirically validated.
+- ❌ Shared-episode targets + class imbalance produce a flat
+  per-episode bias rather than per-step differential. That bias
+  contributes no policy gradient, so cumulative soft-rate
+  doesn't improve.
+
+### What unblocks LunarLander from here
+
+Two architectural moves that address the flatness, in order of
+scope:
+
+1. **Per-step reward-to-go target.** At step `t` of a completed
+   episode, target = `Σ_{k=t}^T r_k` (undiscounted or γ-discounted
+   remainder). Gives each step its own target; within a soft
+   episode, early windows have a large "future landing bonus
+   coming up" target while late windows have just the terminal
+   bonus — per-step differentiation restored. This is literally
+   a separately-trained value head; the dupe with the policy's
+   V(s_t) is real but justifiable because the policy's V is
+   trained online with joint-LR (instability risk) while this
+   one is post-hoc per-episode MC.
+
+2. **Potential-based shaping from R̂.** Use `ΔR̂ = R̂(window_t) −
+   R̂(window_{t−1})` as the bonus rather than `α · R̂` directly.
+   Guaranteed policy-invariant up to a constant (Ng et al.);
+   converts a state-value estimate into a per-step signal
+   automatically. Doesn't require changing the training target.
+
+(1) is the more decisive test — if even per-step RTG targets
+with a windowed head don't break the plateau, the structural
+limit is real. (2) is the cheaper-first experiment.
+
+M6 v2 code stays in; both (1) and (2) are additional targets /
+bonus-shapes that compose on top of it.

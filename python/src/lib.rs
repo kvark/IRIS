@@ -418,6 +418,7 @@ impl PyBatchAgent {
         outcome_baseline_ema = None,
         outcome_clamp = None,
         outcome_target = None,
+        outcome_window = None,
         outcome_max_episode_len = None,
     ))]
     #[allow(clippy::too_many_arguments)]
@@ -446,6 +447,7 @@ impl PyBatchAgent {
         outcome_baseline_ema: Option<f32>,
         outcome_clamp: Option<f32>,
         outcome_target: Option<String>,
+        outcome_window: Option<usize>,
         outcome_max_episode_len: Option<usize>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
@@ -557,6 +559,9 @@ impl PyBatchAgent {
                     )));
                 }
             };
+        }
+        if let Some(w) = outcome_window {
+            config.outcome_window = w.max(1);
         }
         if let Some(l) = outcome_max_episode_len {
             config.outcome_max_episode_len = l;
