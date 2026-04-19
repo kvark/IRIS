@@ -53,17 +53,39 @@ use rand::Rng;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutcomeTarget {
     /// Train `R̂` against the centered *sum* of per-step `r_base`
-    /// over the just-ended episode. The original design; empirically
-    /// converges on an episode-length correlate in the LunarLander
-    /// regime because soft/crash returns are near-identical.
+    /// over the just-ended episode. Every step of the episode
+    /// shares one target. The original design; M6 v2 showed this
+    /// converges on an episode-wide mean (intra-episode-flat `R̂`).
     EpisodeSum,
     /// Train `R̂` against the *last step's* `r_base` before episode
-    /// boundary. Gives the head a target that depends on terminal
-    /// state quality (e.g. a soft-landing terminal has
-    /// near-zero homeo; a crash terminal has a large negative
-    /// homeo spike), provided the reward circuit's terminal profile
-    /// differentiates between outcomes.
+    /// boundary. Same shared-target-per-episode shape as
+    /// `EpisodeSum` but aimed at the terminal state's homeo
+    /// profile.
     TerminalReward,
+    /// Train `R̂` against a *per-step* reward-to-go target:
+    /// `target(t) = Σ_{k=t}^{T} r_base_k`. Each step in a
+    /// completed episode now carries its own supervision signal,
+    /// which defeats the M6 v2 "intra-episode-flat" failure mode —
+    /// early windows of a soft-landing episode get a higher
+    /// expected-future-reward target than early windows of a crash
+    /// episode, so `R̂` learns per-step differentiation instead of
+    /// a single per-episode bias.
+    RewardToGo,
+}
+
+/// How M6 injects its output into the agent-facing reward.
+///
+/// `Raw` is the default — simply add `α · clamp(R̂)` to the step
+/// reward. `PotentialDelta` adds `α · (R̂_t − R̂_{t-1})` instead,
+/// i.e. the per-step *change* in the state-value estimate rather
+/// than its absolute value. Classical potential-based shaping (Ng
+/// et al. 1999) — guaranteed policy-invariant up to a constant,
+/// converts a state-value head into a per-step signal
+/// automatically.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutcomeBonus {
+    Raw,
+    PotentialDelta,
 }
 
 /// Agent configuration.
@@ -197,6 +219,10 @@ pub struct AgentConfig {
     /// strongly between soft and crash if the reward circuit's
     /// terminal homeo profile already differs.
     pub outcome_target: OutcomeTarget,
+    /// M6: how the head's output enters the per-step reward. See
+    /// `OutcomeBonus`. `Raw` is the default; `PotentialDelta` is
+    /// the Ng-et-al potential-based-shaping variant.
+    pub outcome_bonus: OutcomeBonus,
     /// M6 v2: window size for the outcome head's input. `1`
     /// (default) reduces to single-frame `R̂(z_t)` — the back-compat
     /// M6 v1 path. `k ≥ 2` concatenates the last `k` encoder
@@ -272,6 +298,7 @@ impl Default for AgentConfig {
             lr_outcome: None,
             outcome_baseline_ema: 0.05,
             outcome_target: OutcomeTarget::EpisodeSum,
+            outcome_bonus: OutcomeBonus::Raw,
             outcome_window: 1,
             outcome_clamp: 5.0,
             outcome_max_episode_len: 256,
@@ -553,6 +580,17 @@ struct Lane {
     /// carries `env_boundary=true`. Used by
     /// `OutcomeTarget::TerminalReward`.
     outcome_last_step_reward: f32,
+    /// Per-step `r_base` history within the current episode — the
+    /// raw material for `OutcomeTarget::RewardToGo`, which
+    /// back-accumulates these into per-step targets at episode end.
+    /// Cleared alongside `outcome_ep_trajectory` on boundary. Same
+    /// cap so we match it row-by-row.
+    outcome_ep_step_rewards: Vec<f32>,
+    /// Previous step's `R̂` value (post-clamp). Used by
+    /// `OutcomeBonus::PotentialDelta` to emit `α · (R̂_t − R̂_{t-1})`
+    /// as the per-step bonus instead of `α · R̂_t`. Reset to 0 at
+    /// `env_boundary`.
+    prev_r_hat: f32,
     /// EMA of completed-episode returns for variance reduction.
     outcome_baseline: f32,
     /// Last `R̂(z_t)` forward read; used for the per-step reward bonus
@@ -939,6 +977,8 @@ impl Agent {
                 outcome_ep_trajectory: Vec::new(),
                 outcome_ep_return: 0.0,
                 outcome_last_step_reward: 0.0,
+                outcome_ep_step_rewards: Vec::new(),
+                prev_r_hat: 0.0,
                 outcome_baseline: 0.0,
                 last_r_hat: 0.0,
                 outcome_baseline_seeded: false,
@@ -1398,6 +1438,7 @@ impl Agent {
         let m6_clamp = self.config.outcome_clamp.max(0.0);
         let m6_max_ep = self.config.outcome_max_episode_len;
         let m6_target = self.config.outcome_target;
+        let m6_bonus_mode = self.config.outcome_bonus;
         let mut m6_head = self.outcome_head.take();
         let mut m6_baseline_diag = self.last_outcome_baseline;
         for (i, lane) in self.lanes.iter_mut().enumerate() {
@@ -1445,18 +1486,7 @@ impl Agent {
             if env_boundary {
                 if let Some(head) = m6_head.as_mut() {
                     if !lane.outcome_ep_trajectory.is_empty() {
-                        let target_raw = match m6_target {
-                            OutcomeTarget::EpisodeSum => lane.outcome_ep_return,
-                            OutcomeTarget::TerminalReward => lane.outcome_last_step_reward,
-                        };
-                        if !lane.outcome_baseline_seeded {
-                            lane.outcome_baseline = target_raw;
-                            lane.outcome_baseline_seeded = true;
-                        }
-                        let centered = target_raw - lane.outcome_baseline;
-                        // Build one windowed input per step of the
-                        // just-ended episode. `build_window` left-pads
-                        // with the first frame for early-episode steps.
+                        // Build one windowed input per step.
                         let mut windows: Vec<Vec<f32>> =
                             Vec::with_capacity(lane.outcome_ep_trajectory.len());
                         for i in 0..lane.outcome_ep_trajectory.len() {
@@ -1466,16 +1496,71 @@ impl Agent {
                                 windows.push(w);
                             }
                         }
-                        head.train_batch(&windows, centered);
-                        // EMA-update the baseline with this episode's
-                        // raw target for the *next* centering.
-                        lane.outcome_baseline =
-                            (1.0 - m6_ema) * lane.outcome_baseline + m6_ema * target_raw;
-                        m6_baseline_diag = lane.outcome_baseline;
+                        match m6_target {
+                            OutcomeTarget::EpisodeSum | OutcomeTarget::TerminalReward => {
+                                let target_raw = match m6_target {
+                                    OutcomeTarget::EpisodeSum => lane.outcome_ep_return,
+                                    OutcomeTarget::TerminalReward => {
+                                        lane.outcome_last_step_reward
+                                    }
+                                    OutcomeTarget::RewardToGo => unreachable!(),
+                                };
+                                if !lane.outcome_baseline_seeded {
+                                    lane.outcome_baseline = target_raw;
+                                    lane.outcome_baseline_seeded = true;
+                                }
+                                let centered = target_raw - lane.outcome_baseline;
+                                head.train_batch(&windows, centered);
+                                lane.outcome_baseline = (1.0 - m6_ema)
+                                    * lane.outcome_baseline
+                                    + m6_ema * target_raw;
+                                m6_baseline_diag = lane.outcome_baseline;
+                            }
+                            OutcomeTarget::RewardToGo => {
+                                // Back-accumulate per-step RTG targets.
+                                let l = lane.outcome_ep_step_rewards.len();
+                                let mut targets = vec![0.0f32; l];
+                                let mut running = 0.0f32;
+                                for i in (0..l).rev() {
+                                    running += lane.outcome_ep_step_rewards[i];
+                                    targets[i] = running;
+                                }
+                                // Baseline = EMA of RTG[0] = full
+                                // episode return, so early-step targets
+                                // are centered like EpisodeSum would
+                                // be. Late-step targets retain their
+                                // raw magnitude (smaller by
+                                // construction) because they reference
+                                // the same baseline, giving per-step
+                                // differentiation.
+                                let ep_ret = targets.first().copied().unwrap_or(0.0);
+                                if !lane.outcome_baseline_seeded {
+                                    lane.outcome_baseline = ep_ret;
+                                    lane.outcome_baseline_seeded = true;
+                                }
+                                for t in targets.iter_mut() {
+                                    *t -= lane.outcome_baseline;
+                                }
+                                // Align lengths in case of a truncated
+                                // trajectory cap: train on the shorter
+                                // of the two.
+                                let n_train = windows.len().min(targets.len());
+                                head.train_batch_variable(
+                                    &windows[..n_train],
+                                    &targets[..n_train],
+                                );
+                                lane.outcome_baseline = (1.0 - m6_ema)
+                                    * lane.outcome_baseline
+                                    + m6_ema * ep_ret;
+                                m6_baseline_diag = lane.outcome_baseline;
+                            }
+                        }
                     }
                 }
                 lane.outcome_ep_trajectory.clear();
                 lane.outcome_ep_return = 0.0;
+                lane.outcome_ep_step_rewards.clear();
+                lane.prev_r_hat = 0.0;
             }
 
             // Push z into the current episode's trajectory (cap at
@@ -1504,8 +1589,21 @@ impl Agent {
             } else {
                 0.0
             };
+            let m6_bonus = match m6_bonus_mode {
+                OutcomeBonus::Raw => m6_alpha * r_hat,
+                OutcomeBonus::PotentialDelta => {
+                    // α · (R̂_t − R̂_{t-1}). At episode boundary
+                    // `prev_r_hat` is reset to 0, so the bonus on the
+                    // first step of a new episode is `α · r_hat`
+                    // (no previous reference). Ng-et-al shaping is
+                    // well-defined here: treating the pre-episode
+                    // potential as 0 is equivalent to re-setting the
+                    // shaping at each episode boundary.
+                    m6_alpha * (r_hat - lane.prev_r_hat)
+                }
+            };
+            lane.prev_r_hat = r_hat;
             lane.last_r_hat = r_hat;
-            let m6_bonus = m6_alpha * r_hat;
 
             // Accumulate pre-M6 reward into the episode return — the
             // outcome head trains on this (or on the single-step value
@@ -1514,6 +1612,9 @@ impl Agent {
             // own output (stability guarantee from the design doc).
             lane.outcome_ep_return += reward_pre_m6;
             lane.outcome_last_step_reward = reward_pre_m6;
+            if m6_head.is_some() && lane.outcome_ep_step_rewards.len() < m6_max_ep {
+                lane.outcome_ep_step_rewards.push(reward_pre_m6);
+            }
 
             let reward = reward_pre_m6 + m6_bonus;
 

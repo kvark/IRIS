@@ -448,31 +448,117 @@ differential.
   contributes no policy gradient, so cumulative soft-rate
   doesn't improve.
 
-### What unblocks LunarLander from here
+### M6 v3 implementation (2026-04-19): RTG × PotentialDelta
 
-Two architectural moves that address the flatness, in order of
-scope:
+Implemented both:
 
-1. **Per-step reward-to-go target.** At step `t` of a completed
-   episode, target = `Σ_{k=t}^T r_k` (undiscounted or γ-discounted
-   remainder). Gives each step its own target; within a soft
-   episode, early windows have a large "future landing bonus
-   coming up" target while late windows have just the terminal
-   bonus — per-step differentiation restored. This is literally
-   a separately-trained value head; the dupe with the policy's
-   V(s_t) is real but justifiable because the policy's V is
-   trained online with joint-LR (instability risk) while this
-   one is post-hoc per-episode MC.
+1. **`OutcomeTarget::RewardToGo`** — back-accumulate per-step RTG
+   targets at episode end, train the head with a variable
+   per-sample target (`train_batch_variable` in outcome.rs).
+   Each step in a completed episode gets its own supervision
+   signal = `Σ_{k≥t} r_base_k − baseline`.
+2. **`OutcomeBonus::PotentialDelta`** — swap the per-step bonus
+   from `α · R̂_t` to `α · (R̂_t − R̂_{t-1})`. Classical Ng-et-al
+   potential-based shaping, policy-invariant up to a constant.
+   `prev_r_hat` cached on `Lane`, reset to 0 at `env_boundary`.
 
-2. **Potential-based shaping from R̂.** Use `ΔR̂ = R̂(window_t) −
-   R̂(window_{t−1})` as the bonus rather than `α · R̂` directly.
-   Guaranteed policy-invariant up to a constant (Ng et al.);
-   converts a state-value estimate into a per-step signal
-   automatically. Doesn't require changing the training target.
+Both plumbed to `BatchAgent` and `lunar_lander_batch.py` as
+string-keyed args. Clippy / unit tests clean (24 pass + 5
+outcome-specific).
 
-(1) is the more decisive test — if even per-step RTG targets
-with a windowed head don't break the plateau, the structural
-limit is real. (2) is the cheaper-first experiment.
+### Results (100k / 4 lanes / seed 42 / v5 shaping / window=16)
 
-M6 v2 code stays in; both (1) and (2) are additional targets /
-bonus-shapes that compose on top of it.
+```
+config                                          α    clamp   cum     gap     verdict
+EpSum     + Raw            (M6 v2)              0.1    5    4.78%  +0.052   weak
+EpSum     + PotentialDelta                      0.1    5    5.18%  +0.018   late +0.106
+RTG       + Raw                                 0.1    5    4.96%  −0.158   clamp-saturated
+RTG       + PotentialDelta                      0.1    5    5.18%  +0.322   ★ first pass
+RTG       + PotentialDelta                      0.02  50    5.18%  +3.22    strong discrim
+RTG       + Raw                                 0.02  50    5.41%  −1.05    policy-feedback flip
+RTG       + PotentialDelta                      0.5   50    4.68%  +0.22    loud → policy-flip
+```
+
+### What v3 proved
+
+✅ **Per-step RTG targets + PotentialDelta + windowed head IS the
+architecture that discriminates.** `+3.22` gap is 22× the
+original M6 v1 result and the first config to pass the verdict
+threshold consistently. The theory ladder is now fully validated:
+windowed input + per-step target + difference-based bonus
+together produce a clean per-state quality signal.
+
+❌ **Soft-rate plateau holds.** Every config lands in 4.68–5.41%,
+indistinguishable from the 5.38% pre-M6 baseline at 4-lane /
+100k / seed 42. The head discriminates; the policy doesn't
+improve.
+
+### Why discrimination doesn't translate
+
+Observed in the logs:
+
+- Under PotentialDelta, `r_hat` is approximately *constant within
+  an episode* even under RTG training (soft 42.69 early → 41.73
+  late, variation of 1.0 over 90 steps). The windowed inputs
+  differ across the episode, and the per-step targets differ
+  substantially, but the head learns to emit a roughly
+  episode-constant output because MSE on wildly-scaled targets
+  (0 → +500 within one episode) pulls the fit toward a single
+  mean output per episode class.
+- PotentialDelta of a near-constant sequence is near-zero per-step.
+  The bonus DIFFERENCE between soft-state and crash-state
+  trajectories is present in the cumulative sum (telescoping), but
+  the per-step gradient signal to the policy is tiny.
+- Raw bonus at magnitudes loud enough to drive the policy
+  (`α=0.02 × clamp=50 → ±1/step`) causes a **policy feedback
+  loop**: the bonus changes the trajectory distribution, the new
+  trajectories retrain the head with different r_hat correlations,
+  and within a few thousand steps the head's prediction *inverts*
+  (crashes get higher r_hat because the bonus-modified policy
+  actively pursues M6-predicted-valuable states that happen to be
+  long-running pre-crash states).
+
+### Revised revised revised diagnosis
+
+At this point we've exhausted every combination in the M6-shape
+design space:
+
+- Frozen primitives → loud terminal shaping → episode-MC → terminal
+  target → windowed input → per-step RTG targets → delta-based
+  bonus. All composed, all tested.
+
+The cumulative soft-rate is invariant to all of it at this budget.
+Even the architecturally-strongest config (`RTG + PotentialDelta +
+clamp=50 + α=0.02`, +3.22 discrimination gap) gives 5.18% cum, the
+same as baseline.
+
+**The plateau is not a discrimination problem anymore.** It's
+something downstream: either the policy's optimization budget is
+too small to convert a discrimination signal into improved
+behavior, or the kindle-intrinsic policy-space genuinely has no
+trajectory that reliably lands in ≤100k 4-lane steps.
+
+### Honest stopping point
+
+M6 v3 (RTG × PotentialDelta) is the architectural end of the
+"learnable reward circuit" line. Code stays in — it's verifiably
+correct, the mechanism is validated, and it's a clean platform
+for future work. But the LunarLander soft-rate does not move.
+
+The remaining hypothesis classes that could explain the plateau
+are **outside the reward circuit**:
+
+- **Policy optimization.** Maybe the policy-gradient + credit
+  assigner can't convert small per-step advantages into large
+  behavior changes at this budget.
+- **Action space coverage.** Maybe the policy at any moment has
+  ≤5% chance of the sequence that lands, regardless of reward
+  signal.
+- **Encoder representation bottleneck.** Maybe z_t can't support
+  a reliable landing-controller policy because the encoder's WM
+  loss doesn't carry the right representation.
+
+None of these are M6-shaped problems. If the user wants to keep
+pushing LunarLander, the next track is **outside reward**.
+Otherwise, pivoting the success bar to the other 6 envs is the
+right call.

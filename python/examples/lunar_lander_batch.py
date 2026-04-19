@@ -285,12 +285,18 @@ def main() -> int:
     parser.add_argument("--outcome-clamp", type=float, default=None,
                         help="Symmetric cap on R̂ before the α multiply. Default 5.0. "
                         "Raise alongside α when probing whether M6 is correct-but-quiet.")
-    parser.add_argument("--outcome-target", choices=["episode_sum", "terminal_reward"],
+    parser.add_argument("--outcome-target",
+                        choices=["episode_sum", "terminal_reward", "reward_to_go"],
                         default=None,
                         help="What the outcome head trains on. 'episode_sum' (default) = "
-                        "centered Σ r_base over the episode. 'terminal_reward' = just the "
-                        "last step's r_base; tests whether the terminal homeo profile "
-                        "carries landing-quality signal that the sum washes out.")
+                        "centered Σ r_base over the episode (shared-per-episode target, M6 v1). "
+                        "'terminal_reward' = last-step r_base. 'reward_to_go' = per-step "
+                        "target Σ_{k>=t} r_k, gives differentiated intra-episode supervision.")
+    parser.add_argument("--outcome-bonus", choices=["raw", "potential_delta"],
+                        default=None,
+                        help="How R̂ enters the reward. 'raw' (default) = α · R̂. "
+                        "'potential_delta' = α · (R̂_t − R̂_{t-1}), the Ng-et-al shaping that "
+                        "converts a state-value estimate into a per-step signal.")
     parser.add_argument("--outcome-window", type=int, default=None,
                         help="M6 v2: window size for the outcome head. 1 (default) = "
                         "single-frame R̂(z_t) — M6 v1. k >= 2 concatenates the last k "
@@ -359,6 +365,7 @@ def main() -> int:
         lr_outcome=args.outcome_lr,
         outcome_clamp=args.outcome_clamp,
         outcome_target=args.outcome_target,
+        outcome_bonus=args.outcome_bonus,
         outcome_window=args.outcome_window,
         outcome_max_episode_len=args.outcome_ep_len,
     )

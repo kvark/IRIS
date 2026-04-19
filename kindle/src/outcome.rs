@@ -75,10 +75,24 @@ impl OutcomeHead {
     }
 
     /// Train on a batch of pre-flattened windows against a shared
-    /// scalar target. Each `inputs[i]` must be length
-    /// `window * latent_dim`. Returns the mean squared loss.
-    #[allow(clippy::needless_range_loop)]
+    /// scalar target. Thin wrapper over `train_batch_variable` that
+    /// broadcasts the single target across every input.
     pub fn train_batch(&mut self, inputs: &[Vec<f32>], target: f32) -> f32 {
+        if inputs.is_empty() {
+            return 0.0;
+        }
+        let targets = vec![target; inputs.len()];
+        self.train_batch_variable(inputs, &targets)
+    }
+
+    /// Train on a batch of pre-flattened windows with a per-sample
+    /// target. Supports `OutcomeTarget::RewardToGo`, where each step
+    /// of a completed episode gets its own target = Σ r_{k≥t}, so
+    /// intra-episode windows carry differentiated supervision
+    /// instead of the uniform episode-sum target. Returns mean loss.
+    #[allow(clippy::needless_range_loop)]
+    pub fn train_batch_variable(&mut self, inputs: &[Vec<f32>], targets: &[f32]) -> f32 {
+        debug_assert_eq!(inputs.len(), targets.len());
         if inputs.is_empty() {
             return 0.0;
         }
@@ -94,7 +108,7 @@ impl OutcomeHead {
         let mut h = vec![0.0f32; self.hidden_dim];
         let mut mask = vec![false; self.hidden_dim];
 
-        for x in inputs {
+        for (x, &target) in inputs.iter().zip(targets.iter()) {
             debug_assert_eq!(x.len(), self.input_dim);
             for j in 0..self.hidden_dim {
                 let mut acc = self.b1[j];

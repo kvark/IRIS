@@ -16,7 +16,7 @@ use kindle::adapter::{GenericAdapter, OBS_TOKEN_DIM};
 use kindle::env::{
     Action, Environment, HomeostaticProvider, HomeostaticVariable, Observation, StepResult,
 };
-use kindle::{Agent, AgentConfig, agent::OutcomeTarget};
+use kindle::{Agent, AgentConfig, agent::{OutcomeBonus, OutcomeTarget}};
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
@@ -418,6 +418,7 @@ impl PyBatchAgent {
         outcome_baseline_ema = None,
         outcome_clamp = None,
         outcome_target = None,
+        outcome_bonus = None,
         outcome_window = None,
         outcome_max_episode_len = None,
     ))]
@@ -447,6 +448,7 @@ impl PyBatchAgent {
         outcome_baseline_ema: Option<f32>,
         outcome_clamp: Option<f32>,
         outcome_target: Option<String>,
+        outcome_bonus: Option<String>,
         outcome_window: Option<usize>,
         outcome_max_episode_len: Option<usize>,
     ) -> PyResult<Self> {
@@ -553,9 +555,22 @@ impl PyBatchAgent {
                 "terminal_reward" | "terminal-reward" | "terminal" => {
                     OutcomeTarget::TerminalReward
                 }
+                "reward_to_go" | "reward-to-go" | "rtg" => OutcomeTarget::RewardToGo,
                 other => {
                     return Err(PyValueError::new_err(format!(
-                        "outcome_target must be 'episode_sum' or 'terminal_reward', got {other:?}"
+                        "outcome_target must be 'episode_sum', 'terminal_reward' or \
+                         'reward_to_go', got {other:?}"
+                    )));
+                }
+            };
+        }
+        if let Some(b) = outcome_bonus {
+            config.outcome_bonus = match b.as_str() {
+                "raw" => OutcomeBonus::Raw,
+                "potential_delta" | "potential-delta" | "delta" => OutcomeBonus::PotentialDelta,
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "outcome_bonus must be 'raw' or 'potential_delta', got {other:?}"
                     )));
                 }
             };
