@@ -39,6 +39,7 @@ use crate::credit;
 use crate::encoder::Encoder;
 use crate::env::{Action, ActionKind, Environment, Observation};
 use crate::option;
+use crate::outcome;
 use crate::policy;
 use crate::reward::{RewardCircuit, RewardWeights};
 use crate::world_model::WorldModel;
@@ -152,6 +153,28 @@ pub struct AgentConfig {
     /// 8f291e5). 4–8 is a reasonable range for LunarLander-scale
     /// episodes (100–300 env steps).
     pub n_step: usize,
+    /// M6 learnable reward (see `docs/phase-m6-learnable-reward.md`):
+    /// weight α on the outcome-value head's prediction when it's added
+    /// as a fifth reward primitive — `r_t = r_base + α · R̂(z_t)`.
+    /// `0.0` (default) disables M6; behaviour is byte-identical to the
+    /// pre-M6 agent.
+    pub outcome_reward_alpha: f32,
+    /// M6: learning rate for the outcome-value head. `None` (default)
+    /// resolves to `learning_rate × 0.3` — same scale as the credit head.
+    pub lr_outcome: Option<f32>,
+    /// M6: EMA rate for the running baseline used to center episode-
+    /// return targets fed to the outcome head. Lower = smoother
+    /// baseline, higher variance reduction but slower drift. Default
+    /// `0.05`.
+    pub outcome_baseline_ema: f32,
+    /// M6: hard cap on the number of trajectory latents kept per
+    /// episode for the batched end-of-episode backward pass. Must be
+    /// large enough to contain a typical episode for the target env;
+    /// episodes longer than this get their tail truncated (a warn is
+    /// emitted). Default `256` — covers LunarLander episodes (100–300
+    /// steps). Also used as the outcome-head's compiled batch size, so
+    /// changing this recompiles the graph.
+    pub outcome_max_episode_len: usize,
     /// Phase G Tier-3: EMA rate for the continuous goal-latent
     /// update. At every option termination, the terminated option's
     /// goal vector is pulled toward the observed end-state latent:
@@ -199,6 +222,10 @@ impl Default for AgentConfig {
             per_option_heads: true,
             gamma: 0.95,
             n_step: 1,
+            outcome_reward_alpha: 0.0,
+            lr_outcome: None,
+            outcome_baseline_ema: 0.05,
+            outcome_max_episode_len: 256,
             goal_ema_rate: 0.02,
             opt_level: OptLevel::Full,
         }
@@ -241,6 +268,20 @@ pub struct Diagnostics {
     /// a single point (mode collapse — a sign the EMA rate is too
     /// aggressive relative to L0's per-option differentiation).
     pub goal_diversity: f32,
+    /// M6 outcome-value head prediction at this lane's latest latent.
+    /// Signed (centered by the lane's baseline EMA), clamped to
+    /// `[-5, +5]`. Zero when `outcome_reward_alpha == 0`. Rising magnitude
+    /// over training means the head is discriminating between
+    /// high-return and low-return trajectories.
+    pub r_hat: f32,
+    /// M6 running EMA baseline — mean episode return across all
+    /// completed episodes observed so far (per-lane baselines; this
+    /// diagnostic reports the last updated value across all lanes).
+    /// Drifts toward the agent's asymptotic per-episode return.
+    pub outcome_baseline: f32,
+    /// M6 most recent training loss on a completed episode. Zero
+    /// until the first episode boundary fires.
+    pub outcome_loss: f32,
 }
 
 /// Per-lane state. One per concurrent batch slot. Every slot owns its own
@@ -449,6 +490,24 @@ struct Lane {
     /// distinguishes options would collapse. When L1 is inactive this
     /// equals `last_reward`.
     last_base_reward: f32,
+
+    // --- M6 learnable reward (outcome-value head) ---
+    /// Sequence of encoder latents since this lane's last episode
+    /// boundary. Capped at `outcome_max_episode_len`; the tail is
+    /// truncated if the episode overflows (warn-logged). Cleared on
+    /// episode reset.
+    outcome_ep_trajectory: Vec<Vec<f32>>,
+    /// Running sum of `r_base` over the current episode.
+    outcome_ep_return: f32,
+    /// EMA of completed-episode returns for variance reduction.
+    outcome_baseline: f32,
+    /// Last `R̂(z_t)` forward read; used for the per-step reward bonus
+    /// and diagnostics.
+    last_r_hat: f32,
+    /// True once this lane has seen at least one completed episode,
+    /// so the baseline has meaningful value (before that, `baseline = 0`
+    /// and we treat the first episode's return as the baseline seed).
+    outcome_baseline_seeded: bool,
 }
 
 /// The kindle agent.
@@ -525,6 +584,14 @@ pub struct Agent {
     /// maps to a pre-set orthogonal direction in latent space. L1 learns
     /// which option to pick; the goal vectors themselves are constants.
     goal_table: Vec<f32>,
+
+    /// M6 outcome-value head (CPU). `None` when
+    /// `outcome_reward_alpha == 0.0` (default) — no compute cost.
+    outcome_head: Option<outcome::OutcomeHead>,
+    /// M6: last episode return observed across any lane, smoothed by
+    /// the baseline EMA. Diagnostic only — each lane keeps its own
+    /// baseline for the actual centering.
+    last_outcome_baseline: f32,
 }
 
 /// Cosine similarity between two equal-length vectors. Returns 0 when
@@ -740,6 +807,23 @@ impl Agent {
             None
         };
 
+        // M6 outcome-value head (CPU MLP). Constructed only when the
+        // user has asked for a non-zero bonus weight. Its LR derives
+        // from `lr_outcome` or falls back to `learning_rate × 0.3`.
+        let outcome_head = if config.outcome_reward_alpha > 0.0 {
+            let lr = config
+                .lr_outcome
+                .unwrap_or(config.learning_rate * 0.3);
+            Some(outcome::OutcomeHead::new(
+                config.latent_dim,
+                config.hidden_dim,
+                lr,
+                0xA11CE ^ 0xD0C_EFF,
+            ))
+        } else {
+            None
+        };
+
         // L1 option-policy session — only built when num_options >= 2.
         let option_session = if l1_active {
             let g = option::build_option_graph(
@@ -797,6 +881,11 @@ impl Agent {
                 last_order: 0.0,
                 last_reward: 0.0,
                 last_base_reward: 0.0,
+                outcome_ep_trajectory: Vec::new(),
+                outcome_ep_return: 0.0,
+                outcome_baseline: 0.0,
+                last_r_hat: 0.0,
+                outcome_baseline_seeded: false,
             })
             .collect();
 
@@ -833,6 +922,8 @@ impl Agent {
             option_return_scratch: vec![0.0; n],
             termination_target_scratch: vec![0.0; n],
             goal_table: option::build_goal_table(config.num_options, option_dim),
+            outcome_head,
+            last_outcome_baseline: 0.0,
             config,
         }
     }
@@ -1242,6 +1333,15 @@ impl Agent {
         // sqrt of the sum of that row's squared-errors. Replaces the old
         // Phase E.v1 mean-loss surrogate, which blurred rare-event signal
         // across all N lanes at large batch sizes.
+        //
+        // M6: capture the outcome-head knobs + handle in one split so the
+        // inner loop can both train (episode boundary) and forward (every
+        // step) without fighting the borrow checker against `self.lanes`.
+        let m6_alpha = self.config.outcome_reward_alpha;
+        let m6_ema = self.config.outcome_baseline_ema;
+        let m6_max_ep = self.config.outcome_max_episode_len;
+        let mut m6_head = self.outcome_head.take();
+        let mut m6_baseline_diag = self.last_outcome_baseline;
         for (i, lane) in self.lanes.iter_mut().enumerate() {
             let z_row = &z_stack[i * ld..(i + 1) * ld];
             let obs_row = &self.obs_token_scratch[i * OBS_TOKEN_DIM..(i + 1) * OBS_TOKEN_DIM];
@@ -1271,10 +1371,66 @@ impl Agent {
                 let cos = unit_cosine(z_row, &lane.option_goal);
                 bonus = self.config.goal_bonus_alpha * cos;
             }
-            let reward = base_reward + bonus;
+            // `reward_pre_m6` is what trains the outcome head; what the
+            // rest of the agent sees also folds in the M6 bonus below.
+            let reward_pre_m6 = base_reward + bonus;
 
             let env_boundary = lane.pending_boundary;
             lane.pending_boundary = false;
+
+            // M6 episode-boundary training: when this step is the first
+            // after a reset, the PREVIOUS episode's trajectory + return
+            // are complete and ready to train the outcome head on. We do
+            // this BEFORE the per-step M6 forward so the bonus uses the
+            // just-updated head (marginally better signal).
+            if env_boundary {
+                if let Some(head) = m6_head.as_mut() {
+                    if !lane.outcome_ep_trajectory.is_empty() {
+                        let r_ep = lane.outcome_ep_return;
+                        // First episode: seed the baseline rather than
+                        // centering against 0 (which would overshoot).
+                        if !lane.outcome_baseline_seeded {
+                            lane.outcome_baseline = r_ep;
+                            lane.outcome_baseline_seeded = true;
+                        }
+                        let centered = r_ep - lane.outcome_baseline;
+                        head.train_batch(&lane.outcome_ep_trajectory, centered);
+                        // EMA-update the baseline with this episode's return.
+                        lane.outcome_baseline =
+                            (1.0 - m6_ema) * lane.outcome_baseline + m6_ema * r_ep;
+                        m6_baseline_diag = lane.outcome_baseline;
+                    }
+                }
+                lane.outcome_ep_trajectory.clear();
+                lane.outcome_ep_return = 0.0;
+            }
+
+            // M6 per-step forward: read `R̂(z_t)` for the reward bonus.
+            let r_hat = if let Some(head) = m6_head.as_ref() {
+                let raw = head.forward(z_row);
+                if raw.is_finite() {
+                    raw.clamp(-5.0, 5.0)
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+            lane.last_r_hat = r_hat;
+            let m6_bonus = m6_alpha * r_hat;
+
+            // Push z into the current episode's trajectory (cap at
+            // `outcome_max_episode_len` — overflow truncates the tail).
+            if m6_head.is_some() && lane.outcome_ep_trajectory.len() < m6_max_ep {
+                lane.outcome_ep_trajectory.push(z_row.to_vec());
+            }
+            // Accumulate pre-M6 reward into the episode return — the
+            // outcome head trains on this so it can't chase its own
+            // output (stability guarantee from the design doc).
+            lane.outcome_ep_return += reward_pre_m6;
+
+            let reward = reward_pre_m6 + m6_bonus;
+
             lane.buffer.push(Transition {
                 observation: obs_row.to_vec(),
                 latent: z_row.to_vec(),
@@ -1302,6 +1458,9 @@ impl Agent {
             lane.option_steps_left = lane.option_steps_left.saturating_sub(1);
             lane.option_elapsed = lane.option_elapsed.saturating_add(1);
         }
+        // Restore the outcome head after the loop finishes.
+        self.outcome_head = m6_head;
+        self.last_outcome_baseline = m6_baseline_diag;
 
         // --- Credit assignment (per-lane, sequential CPU-light dispatches) ---
         for i in 0..n {
@@ -2091,6 +2250,13 @@ impl Agent {
                     goal_distance,
                     h_eff_l1: self.last_h_eff_l1,
                     goal_diversity,
+                    r_hat: lane.last_r_hat,
+                    outcome_baseline: lane.outcome_baseline,
+                    outcome_loss: self
+                        .outcome_head
+                        .as_ref()
+                        .map(|h| h.last_loss)
+                        .unwrap_or(0.0),
                 }
             })
             .collect()
