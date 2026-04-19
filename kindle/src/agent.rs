@@ -133,6 +133,25 @@ pub struct AgentConfig {
     /// Default `true` — the additive-bias-only behaviour (Phase G v2
     /// through Tier-1) is kept as the `false` path for A/B.
     pub per_option_heads: bool,
+    /// Sequence-level credit: discount factor for the n-step return
+    /// used as the policy advantage baseline target. `0.0 ≤ γ < 1`.
+    /// Only consulted when `n_step >= 2`. Default `0.95`.
+    pub gamma: f32,
+    /// Sequence-level credit: lookahead horizon for the policy
+    /// advantage. `1` (default) preserves the pre-GAE single-step
+    /// advantage (`r_t − V(s_t)`). `n ≥ 2` delays the policy update
+    /// by `n−1` steps so it can fold in the next `n` rewards as a
+    /// Monte-Carlo return:
+    ///   R_t = Σ_{k=0}^{n-1} γ^k · r_{t+k}   (truncated at
+    ///         `env_boundary`), normalized by Σ γ^k so the magnitude
+    ///         stays comparable to a single-step reward.
+    ///   advantage_t = clamp(R_t − V(s_t), -1, 1).
+    /// The value head still trains on the single-step reward target
+    /// (`lane.last_base_reward`) to avoid the bootstrap-instability
+    /// failure mode that killed the earlier GAE attempt (commit
+    /// 8f291e5). 4–8 is a reasonable range for LunarLander-scale
+    /// episodes (100–300 env steps).
+    pub n_step: usize,
     /// Phase G Tier-3: EMA rate for the continuous goal-latent
     /// update. At every option termination, the terminated option's
     /// goal vector is pulled toward the observed end-state latent:
@@ -178,6 +197,8 @@ impl Default for AgentConfig {
             goal_bonus_alpha: 0.1,
             learned_termination: false,
             per_option_heads: true,
+            gamma: 0.95,
+            n_step: 1,
             goal_ema_rate: 0.02,
             opt_level: OptLevel::Full,
         }
@@ -1261,6 +1282,8 @@ impl Agent {
                 reward,
                 credit: 0.0,
                 pred_error,
+                value: lane.last_value,
+                option_idx: lane.current_option,
                 env_id: lane.adapter.id(),
                 env_boundary,
             });
@@ -1690,6 +1713,14 @@ impl Agent {
     /// and the continuous MSE graph uniformly (both use `"action"` as
     /// their target).
     fn policy_step_batched(&mut self, z_stack: &[f32]) {
+        let n_step = self.config.n_step.max(1);
+        // When the user opts into n-step lookahead, defer to the
+        // dedicated path that trains on old (z, action, value) with
+        // an n-step Monte-Carlo return as the advantage.
+        if n_step >= 2 {
+            self.policy_step_n_step(n_step);
+            return;
+        }
         // Build stacked value targets: use the *base* reward (no L1
         // goal-alignment bonus). The bonus is retained in `last_reward`
         // for the advantage computation below — so the value baseline
@@ -1818,6 +1849,155 @@ impl Agent {
             init_parameters(&mut self.policy_session);
             log::warn!(
                 "policy loss {:.1} unstable at step {}, re-initialized policy params",
+                loss,
+                self.step_count
+            );
+            self.last_policy_loss = 0.0;
+        } else {
+            self.last_policy_loss = loss;
+        }
+    }
+
+    /// N-step advantage variant of `policy_step_batched`.
+    ///
+    /// Trains the policy on the transition at buffer offset
+    /// `len - n_step` — the step at which the lane took an action
+    /// whose `n_step`-lookahead reward window is now fully observed.
+    /// The advantage is `R_t − V(s_t)` where `R_t` is the γ-discounted
+    /// and effective-horizon-normalized sum over the next `n_step`
+    /// rewards, truncated at any `env_boundary` flag (so rewards from
+    /// after an episode reset don't bleed into the prior option's
+    /// credit).
+    ///
+    /// Value head still trains on the single-step base reward at the
+    /// old state, preserving the value-head stability that the
+    /// previous discounted-return attempt (commit 8f291e5) lost.
+    fn policy_step_n_step(&mut self, n_step: usize) {
+        let n = self.lanes.len();
+        let gamma = self.config.gamma;
+        let eps_base = self.config.label_smoothing;
+        let floor = self.config.entropy_floor;
+        let k_actions = MAX_ACTION_DIM as f32;
+
+        // Effective horizon normalizer Σ γ^k, so the n-step return
+        // stays in the same magnitude range as a single-step reward.
+        let mut horizon_norm = 0.0f32;
+        let mut gk = 1.0f32;
+        for _ in 0..n_step {
+            horizon_norm += gk;
+            gk *= gamma;
+        }
+        if horizon_norm < 1e-6 {
+            return;
+        }
+
+        self.policy_action_scratch.fill(0.0);
+        self.value_target_scratch.fill(0.0);
+
+        // Build old-state z stack and per-row targets. Lanes with a
+        // too-short buffer contribute zeros (no gradient).
+        let ld = self.latent_dim;
+        let mut old_z_stack = vec![0.0f32; n * ld];
+        let num_options = self.config.num_options;
+        let has_options = self.option_session.is_some();
+        if has_options {
+            self.option_onehot_scratch.fill(0.0);
+        }
+
+        let mut any_active = false;
+
+        for (i, lane) in self.lanes.iter().enumerate() {
+            let buf_len = lane.buffer.len();
+            if buf_len < n_step {
+                continue;
+            }
+            let ripe_idx = buf_len - n_step;
+            let ripe = lane.buffer.get(ripe_idx);
+
+            // Accumulate n-step discounted return from the ripe index,
+            // stopping at any env_boundary flag on subsequent transitions.
+            let mut ret = 0.0f32;
+            let mut gk = 1.0f32;
+            for k in 0..n_step {
+                let idx = ripe_idx + k;
+                let tr = lane.buffer.get(idx);
+                if k > 0 && tr.env_boundary {
+                    break;
+                }
+                ret += gk * tr.reward;
+                gk *= gamma;
+            }
+            let r_mean = ret / horizon_norm;
+            let advantage = (r_mean - ripe.value).clamp(-1.0, 1.0);
+
+            // Value-head target tracks the *old* single-step reward at
+            // s_old, clamped. Keeps the value head on its stable
+            // single-step objective.
+            let v_t = if ripe.reward.is_finite() {
+                ripe.reward.clamp(-100.0, 100.0)
+            } else {
+                0.0
+            };
+            self.value_target_scratch[i] = v_t;
+
+            let entropy_deficit = if floor > 0.0 {
+                ((floor - lane.last_entropy) / floor).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            if advantage.abs() < 1e-8 && entropy_deficit < 1e-6 {
+                continue;
+            }
+            any_active = true;
+
+            let eps = (eps_base + (1.0 - eps_base) * entropy_deficit).min(1.0);
+            let effective_adv = if advantage.abs() < 1e-3 && entropy_deficit > 0.0 {
+                entropy_deficit
+            } else {
+                advantage
+            };
+
+            old_z_stack[i * ld..(i + 1) * ld].copy_from_slice(&ripe.latent);
+
+            let act_src = &ripe.action;
+            let act_dst =
+                &mut self.policy_action_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+            for (dst, &src) in act_dst.iter_mut().zip(act_src.iter()) {
+                let smoothed = (1.0 - eps) * src + eps / k_actions;
+                *dst = effective_adv * smoothed;
+            }
+
+            if has_options {
+                let row = &mut self.option_onehot_scratch
+                    [i * num_options..(i + 1) * num_options];
+                let oi = (ripe.option_idx as usize).min(num_options.saturating_sub(1));
+                row[oi] = 1.0;
+            }
+        }
+
+        if !any_active {
+            return;
+        }
+
+        self.policy_session.set_input("z", &old_z_stack);
+        if has_options {
+            self.policy_session
+                .set_input("option_onehot", &self.option_onehot_scratch);
+        }
+        self.policy_session
+            .set_input("action", &self.policy_action_scratch);
+        self.policy_session
+            .set_input("value_target", &self.value_target_scratch);
+        self.policy_session
+            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale);
+        self.policy_session.step();
+        self.policy_session.wait();
+
+        let loss = self.policy_session.read_loss();
+        if !loss.is_finite() || loss.abs() > 1000.0 {
+            init_parameters(&mut self.policy_session);
+            log::warn!(
+                "policy loss {:.1} unstable at step {} (n-step), re-initialized policy params",
                 loss,
                 self.step_count
             );

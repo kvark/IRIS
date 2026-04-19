@@ -225,6 +225,13 @@ def main() -> int:
     parser.add_argument("--history-len", type=int, default=None,
                         help="L0 causal-attention credit window. Default 16. Widen to "
                         "attribute long-horizon reward (e.g. 64 for LunarLander descent).")
+    parser.add_argument("--gamma", type=float, default=None,
+                        help="Discount factor for n-step returns. Default 0.95. "
+                        "Only consulted when --n-step >= 2.")
+    parser.add_argument("--n-step", type=int, default=None,
+                        help="Lookahead horizon for policy advantage. 1 (default) = "
+                        "single-step (r_t − V). N >= 2 trains on a transition from "
+                        "N steps ago with a γ-discounted Monte-Carlo return.")
     parser.add_argument(
         "--shaping",
         choices=list(_SHAPING_VARIANTS.keys()),
@@ -282,6 +289,8 @@ def main() -> int:
         num_options=args.num_options,
         option_horizon=args.option_horizon,
         history_len=args.history_len,
+        gamma=args.gamma,
+        n_step=args.n_step,
     )
     print("agent ready (compiled graphs once, N lanes)")
 

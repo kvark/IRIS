@@ -92,6 +92,16 @@ pub struct Transition {
     pub reward: f32,
     pub credit: f32,
     pub pred_error: f32,
+    /// Value baseline V(s_t) at this step, cached from the act-time
+    /// policy forward. Used by the n-step advantage path (see
+    /// `AgentConfig::n_step`) to compute `R − V(s_old)` without a
+    /// second forward on old state.
+    pub value: f32,
+    /// L1 option index active at this step. Mirrors `lane.current_option`
+    /// at push time; needed so the n-step training forward can feed the
+    /// option_onehot that matches the old state (options can change
+    /// within the n-step lookahead window at short horizons).
+    pub option_idx: u32,
     /// Environment id (from the adapter active when this step was recorded).
     /// Used to stratify sampling and mark env-boundary resets.
     pub env_id: u32,

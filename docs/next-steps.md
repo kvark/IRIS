@@ -77,24 +77,54 @@ mega-plays tree for that work.
 
 ### Tier 3 verdict on LunarLander
 
-Both "capacity" levers (#4) and "goal anchoring" (#2) land cleanly
-architecturally but neither moves the needle on the ~5% soft-rate.
-The ceiling is deeper than L0 capacity or goal representation —
-consistent with the remaining Tier 1 hypothesis: **credit-horizon
-insufficiency**. The per-step advantage still can't reward the
-specific multi-step sequence that makes a landing succeed.
+All three Tier 3 architectural levers fail to move the ~5%
+cumulative / ~9% peak-window soft-rate:
 
-The remaining Tier 3 items (#1 L2 hierarchy, #3 Taxi, #5 GridWorld)
-are either not LunarLander-targeted (#3, #5) or a much larger
-architectural investment (#1). The honest next step is to either:
+| lever (100k / 4 lanes / seed 42) | cum | peak |
+|---|---|---|
+| pre-Tier-3 baseline | 5.38% | 9.5% |
+| #4 per-option heads | 5.25% | 9.0% |
+| #2 continuous goals (EMA) | 5.57% | 8.0% |
+| sequence credit: n_step=32, γ=0.99 | 5.57% | 8.0% |
 
-- Pursue **sequence-level credit** (GAE / n-step returns over a
-  wider window, or a learned-discount eligibility trace) — a
-  targeted attack on the credit-horizon hypothesis, smaller scope
-  than full L2.
-- Commit to **Phase H L2 hierarchy** as the architectural solution.
-- Accept the ceiling and move to CartPole / Taxi / multi-env
-  competence as the primary milestone instead of LunarLander.
+The sequence-credit path is implemented behind
+`AgentConfig::n_step` (≥ 2 activates) and `AgentConfig::gamma` so
+the knobs remain available, but the 100k eval confirms the ceiling
+is not about credit horizon either. All three hypotheses under
+Tier 3 are now falsified: L0 capacity (#4), goal representation
+(#2), and credit horizon (sequence credit) each show the same
+plateau.
+
+### Interpretation
+
+The plateau is **structural**: kindle's intrinsic reward circuit
+(surprise + novelty + homeostatic deviation + order) produces a
+reward signal that at LunarLander-scale doesn't contain the
+actionable gradient for landing-competence. The shaping variants
+(v1–v4 in `lunar_lander_batch.py`) all mostly emit negative
+penalties with no reliable positive spike at successful landing —
+only a discrete `not_safely_landed` flip at terminal. Architectural
+changes that redistribute an existing signal can't synthesize a
+signal that isn't there.
+
+### Honest next moves
+
+Ordered by scope × likely impact:
+
+1. **Accept the LunarLander ceiling** at ~5% / ~9% peak as the
+   kindle-intrinsic-reward limit on this env at N=4. Pivot the
+   success bar to the 6 simpler envs where option differentiation
+   is already visible (Taxi 3 distinct modal actions, Acrobot 3,
+   MountainCar → Acrobot transfer in l1_diagnostic).
+2. **Reward-regime change (explicitly parked)** — revisit M6
+   learnable reward circuit (Tier 4) so the agent can *learn* a
+   reward shape that contains a landing gradient, rather than
+   relying on the hand-crafted homeo terms. Deferred per user
+   direction; noted here because the Tier 3 verdict strengthens
+   the case for it.
+3. **Phase H L2 hierarchy** still available if a later pass wants
+   to attack hierarchical credit directly. Lower priority given
+   (1)/(2).
 
 ## Tier 4 — the user-excluded track
 

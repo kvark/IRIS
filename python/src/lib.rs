@@ -411,6 +411,8 @@ impl PyBatchAgent {
         num_options = None,
         option_horizon = None,
         history_len = None,
+        gamma = None,
+        n_step = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -431,6 +433,8 @@ impl PyBatchAgent {
         num_options: Option<usize>,
         option_horizon: Option<usize>,
         history_len: Option<usize>,
+        gamma: Option<f32>,
+        n_step: Option<usize>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -510,6 +514,12 @@ impl PyBatchAgent {
         }
         if let Some(h) = history_len {
             config.history_len = h;
+        }
+        if let Some(g) = gamma {
+            config.gamma = g;
+        }
+        if let Some(ns) = n_step {
+            config.n_step = ns;
         }
         let agent = Agent::new(config, adapters);
         Ok(Self {
