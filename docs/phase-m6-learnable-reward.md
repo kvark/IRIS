@@ -659,3 +659,122 @@ The default `advantage_clamp=1.0` is still a reasonable value for
 those envs — raising it uniformly would destabilize training
 elsewhere. Keeping the knob configurable lets LunarLander-like
 envs ablate it without affecting anything else.
+
+## PPO ceiling test (2026-04-19): the reward really is the problem
+
+Following the "is kindle's reward landing-compatible at all?"
+question raised after the ablation sweep, ran stable-baselines3
+PPO against a gym wrapper that substitutes kindle's homeo reward
+for the native env reward. Same 8-dim obs, 4 discrete actions.
+Code in `python/examples/lunar_lander_ppo.py`.
+
+100k steps / seed 42, comparing last-third soft-rate (= landing
+rate of the converged policy):
+
+| reward | last-third soft-rate | note |
+|---|---|---|
+| v3 kindle homeo | **2.15%** | PPO converges AWAY from landing (random was 5.57%) |
+| v5 kindle homeo (×50 terminal) | 6.28% | stuck at random |
+| v6 tuned (no-altitude, crash×50) | **1.02%** | PPO hovers high to avoid ground |
+| v3 + ±100 terminal bonus | 2.13% | terminal signal drowned by −1000 per-step sum |
+| v3 + +5000 soft bonus | 3.04% | rare-event × rare-rate = low expected value |
+| **native gym reward** | **31.52%** | **climbing, classic PPO-LunarLander behavior** |
+
+### Interpretation
+
+**PPO is not the bottleneck.** Given native LunarLander reward
+(+approaching pad, +leg contact, +100/−100 terminal), sb3's PPO
+reaches 31% last-third and is still improving at 100k. Classic
+benchmark behavior.
+
+**Given kindle's homeo reward, PPO converges on non-landing
+policies** — sometimes hover (v3), sometimes crash-fast (v5),
+sometimes high-altitude glide (v6). Each is the local optimum
+of the corresponding reward. None is landing.
+
+**Terminal bonuses don't bridge the gap**, at least not at
+reasonable magnitudes. A +100 terminal bonus is drowned by 100
+steps of −10 homeo. A +5000 bonus is theoretically dominant but
+its *expected value under exploration* is 5000 × 5% (random
+soft-rate) = +250 per rollout, still smaller than the −1000
+cumulative homeo per episode. The policy rationally avoids the
+risky trajectory that might land.
+
+### What distinguishes landing-compatible rewards
+
+Native gym reward has continuous **approach shaping**: each step
+it's closer to the pad with good velocity, it earns positive
+reward; each step it's further, negative. The gradient of the
+reward function points AT the landing pose at every state along
+any trajectory. Local policy gradient can follow this gradient
+home.
+
+Kindle's homeo primitives can only PENALIZE deviations from
+target. They can't emit *positive* reward for "approaching
+target from far away" — the homeo function is
+`max(0, |val−target|−tol)`, which is zero at target and positive
+everywhere else. There's no mechanism in kindle's homeo formula
+that says "this is less bad than the last state, here's a
+bonus" — only "this is still out of range, cost accumulates".
+
+The surprise and novelty primitives *can* be positive but are
+misaligned on LunarLander: chaos rewards higher surprise, random
+trajectories reward higher novelty. Only the `order` primitive
+aligns with controlled behavior, and it's weighted at 0.5 vs
+homeo's 2.0 by default.
+
+### Final root-cause diagnosis
+
+**Kindle's reward class — weighted sum of per-state homeo
+deviations + surprise + novelty + order — cannot express
+approach-shaped rewards that local policy gradient needs for
+event-ordered tasks like LunarLander.** This is structural, not a
+tuning issue:
+
+- No subset of homeo variable weights produces a reward whose
+  gradient points at landing, because no such weights exist
+  within the function class (homeo can only penalize, not reward
+  approach).
+- Adding terminal bonuses (±100, ±5000) isn't enough because
+  rare-event bonuses have low expected value during exploration
+  relative to dense per-step cost.
+- Fixing kindle's optimizer stack (as the ablation sweep showed
+  we can) doesn't help because PPO — a much better optimizer —
+  can't land under kindle's reward either.
+
+The plateau was two things compounded:
+
+1. **Advantage clamp blocked kindle from learning at all** on
+   LunarLander. Fixable, single-knob change. Value remains at
+   1.0 as default for the 6 other envs where it's fine.
+2. **The reward landscape itself has no landing optimum
+   reachable by local policy gradient.** This is the one that
+   needs a structural change — add approach-shaping as a first-
+   class kindle primitive, or concede that event-ordered tasks
+   like LunarLander are outside the reward class kindle's design
+   can express without external signals.
+
+### Implication for the project
+
+Kindle's ideological claim "homeostasis defines good" is valid
+for the class of tasks where success is a steady-state condition
+on the agent's own observables — CartPole (stay upright), Taxi
+(reach delivery state), MountainCar (reach flag), GridWorld
+(forage), Pendulum (hold angle). It is NOT valid for tasks where
+success is a specific terminal EVENT that requires
+approach-rewarded navigation — LunarLander (land softly at a
+specific pose), any pixel-based task with a goal object.
+
+The six working envs are not a pragmatic fallback; they are
+**exactly the class the design was always going to succeed on**.
+LunarLander is the first clean demonstration of the design's
+structural limit. That's a valuable result — the project now
+has a sharp characterization of what its principle covers.
+
+Extending kindle to cover LunarLander-class tasks requires
+introducing an approach-reward primitive, which means either (a)
+a hand-crafted distance-to-goal homeo (external knowledge about
+what "goal" means), (b) a learned approach-reward via
+goal-discovery (significant new research), or (c) accepting
+external supervision for these tasks. None of these fit in M6;
+all are project-scope decisions.
