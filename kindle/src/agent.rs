@@ -32,7 +32,6 @@
 //! - Representation drift monitor
 //! - Entropy floor
 
-use crate::OptLevel;
 use crate::adapter::{EnvAdapter, MAX_ACTION_DIM, OBS_TOKEN_DIM, TASK_DIM};
 use crate::approach;
 use crate::buffer::{ExperienceBuffer, Transition};
@@ -44,9 +43,10 @@ use crate::outcome;
 use crate::policy;
 use crate::reward::{RewardCircuit, RewardWeights};
 use crate::world_model::WorldModel;
+use crate::OptLevel;
 use hashbrown::HashMap;
-use meganeura::Session;
 use meganeura::graph::Graph;
+use meganeura::Session;
 use rand::Rng;
 
 /// What target the M6 outcome-value head trains against at
@@ -265,6 +265,25 @@ pub struct AgentConfig {
     /// M7 symmetric distance clamp (pre-α multiplication) to bound
     /// worst-case per-step bonus magnitude.
     pub approach_distance_clamp: f32,
+    /// M7 confidence saturation: number of completed episodes
+    /// required for the prototype to reach full confidence
+    /// (`c = 1`). Confidence ramps linearly from `0` at
+    /// `approach_warmup_episodes` up to `1` at
+    /// `warmup + saturation` episodes. When ramping is active, the
+    /// per-step approach bonus is scaled by `c` and the homeo
+    /// reward is tapered by `homeo_confidence_taper · c`. `0`
+    /// (default) disables ramping — `c = 1` always, behaviour
+    /// identical to the non-confidence-aware M7 v1.
+    pub approach_confidence_saturation: usize,
+    /// M7↔homeo integration: fraction of the homeo reward to
+    /// remove once `c = 1`. `homeo_effective = homeo_raw · (1 − τ · c)`.
+    /// `0` (default) keeps homeo at full weight even when M7 is
+    /// fully confident (M7 is purely additive). `0.5` halves the
+    /// homeo contribution at full confidence so M7 can lead
+    /// without homeo's misaligned basin dominating. `1.0` turns
+    /// homeo off entirely at full confidence — M7 becomes the sole
+    /// reward signal.
+    pub homeo_confidence_taper: f32,
     /// M6 v2: window size for the outcome head's input. `1`
     /// (default) reduces to single-frame `R̂(z_t)` — the back-compat
     /// M6 v1 path. `k ≥ 2` concatenates the last `k` encoder
@@ -349,6 +368,8 @@ impl Default for AgentConfig {
             approach_update_interval: 10,
             approach_warmup_episodes: 20,
             approach_distance_clamp: 10.0,
+            approach_confidence_saturation: 0,
+            homeo_confidence_taper: 0.0,
             outcome_window: 1,
             outcome_clamp: 5.0,
             outcome_max_episode_len: 256,
@@ -422,6 +443,12 @@ pub struct Diagnostics {
     /// M7 centroid age in episodes since last recompute. Caps at
     /// `approach_update_interval`.
     pub approach_centroid_age: usize,
+    /// M7 current confidence `c ∈ [0, 1]`. Zero before warmup;
+    /// ramps linearly from 0 → 1 over
+    /// `approach_confidence_saturation` episodes once warmup is
+    /// met. Used to scale the approach bonus and (optionally)
+    /// taper the homeo reward. Always 0 when M7 is disabled.
+    pub approach_confidence: f32,
 }
 
 /// Per-lane state. One per concurrent batch slot. Every slot owns its own
@@ -1525,7 +1552,28 @@ impl Agent {
         let m6_bonus_mode = self.config.outcome_bonus;
         let m7_alpha = self.config.approach_reward_alpha;
         let m7_clamp = self.config.approach_distance_clamp;
+        let m7_saturation = self.config.approach_confidence_saturation;
+        let m7_warmup = self.config.approach_warmup_episodes;
+        let m7_homeo_taper = self.config.homeo_confidence_taper.clamp(0.0, 1.0);
         let mut m7_state = self.approach_state.take();
+        // Confidence for this step. Zero before warmup; linear ramp
+        // from 0 → 1 over `saturation` episodes once warmup is met;
+        // clamped to [0, 1]. `saturation = 0` disables ramping
+        // (c = 1 once warmup is satisfied, matching M7 v1 byte-parity
+        // for an M7-enabled config).
+        let m7_confidence = match m7_state.as_ref() {
+            None => 0.0,
+            Some(state) => {
+                if state.episodes_seen < m7_warmup {
+                    0.0
+                } else if m7_saturation == 0 {
+                    1.0
+                } else {
+                    let past_warmup = (state.episodes_seen - m7_warmup) as f32;
+                    (past_warmup / m7_saturation as f32).clamp(0.0, 1.0)
+                }
+            }
+        };
         let mut m6_head = self.outcome_head.take();
         let mut m6_baseline_diag = self.last_outcome_baseline;
         for (i, lane) in self.lanes.iter_mut().enumerate() {
@@ -1543,7 +1591,13 @@ impl Agent {
 
             let visit_count = lane.buffer.visit_count(z_row);
             let novelty = RewardCircuit::novelty(visit_count);
-            let homeo = RewardCircuit::homeostatic(envs[i].homeostatic_variables());
+            let homeo_raw = RewardCircuit::homeostatic(envs[i].homeostatic_variables());
+            // M7↔homeo confidence taper: once M7 has confidence,
+            // reduce the homeo contribution so M7's approach signal
+            // isn't dominated by homeo's (potentially misaligned)
+            // basin. `τ = 0` (default) preserves pre-confidence M7
+            // behaviour.
+            let homeo = homeo_raw * (1.0 - m7_homeo_taper * m7_confidence);
             let order = lane.reward_circuit.observe_order(obs_row);
             let base_reward = lane.reward_circuit.compute(surprise, novelty, homeo, order);
 
@@ -1703,8 +1757,12 @@ impl Agent {
             // Zero until the prototype has been seeded (warmup
             // episodes across all lanes satisfied, see
             // `approach::ApproachState::reward`).
+            // Scale the M7 bonus by confidence — starts at 0 during
+            // warmup, ramps to 1 over `approach_confidence_saturation`
+            // episodes. When saturation is 0, confidence is 1 once
+            // warmup is satisfied (v1 behaviour).
             let m7_reward = if let Some(state) = m7_state.as_ref() {
-                state.reward(z_row, m7_alpha, m7_clamp)
+                m7_confidence * state.reward(z_row, m7_alpha, m7_clamp)
             } else {
                 0.0
             };
@@ -2482,6 +2540,26 @@ impl Agent {
         self.lanes.iter().map(|l| l.last_r_hat).collect()
     }
 
+    /// Current M7 confidence ∈ [0, 1]. Zero until warmup is met;
+    /// ramps linearly to 1 over `approach_confidence_saturation`
+    /// episodes. 1 once warmup is met if saturation = 0. Always 0
+    /// when M7 is disabled.
+    pub fn approach_confidence(&self) -> f32 {
+        let Some(state) = self.approach_state.as_ref() else {
+            return 0.0;
+        };
+        let warmup = self.config.approach_warmup_episodes;
+        if state.episodes_seen < warmup {
+            return 0.0;
+        }
+        let saturation = self.config.approach_confidence_saturation;
+        if saturation == 0 {
+            return 1.0;
+        }
+        let past_warmup = (state.episodes_seen - warmup) as f32;
+        (past_warmup / saturation as f32).clamp(0.0, 1.0)
+    }
+
     /// Per-lane diagnostics, one entry per lane in lane order.
     ///
     /// Global (batch-shared) signals — `loss_world_model`, `loss_credit`,
@@ -2517,7 +2595,11 @@ impl Agent {
                                 pairs += 1;
                             }
                         }
-                        if pairs == 0 { 0.0 } else { sum / pairs as f32 }
+                        if pairs == 0 {
+                            0.0
+                        } else {
+                            sum / pairs as f32
+                        }
                     } else {
                         0.0
                     };
@@ -2586,6 +2668,7 @@ impl Agent {
                         .as_ref()
                         .map(|s| s.centroid_age)
                         .unwrap_or(0),
+                    approach_confidence: self.approach_confidence(),
                 }
             })
             .collect()

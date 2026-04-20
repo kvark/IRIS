@@ -146,6 +146,26 @@ fn make_runs() -> Vec<EnvRun> {
 }
 
 fn agent_config(num_options: usize) -> AgentConfig {
+    // Env-var knobs for M7 confidence-weighted runs:
+    //   KINDLE_M7_ALPHA=1.0 KINDLE_M7_SATURATION=100 KINDLE_M7_TAPER=0.7
+    //   KINDLE_ADV_CLAMP=20
+    // All empty/unset → defaults, byte-parity with the M7-off diagnostic.
+    let m7_alpha = std::env::var("KINDLE_M7_ALPHA")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(0.0);
+    let m7_saturation = std::env::var("KINDLE_M7_SATURATION")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let m7_taper = std::env::var("KINDLE_M7_TAPER")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(0.0);
+    let adv_clamp = std::env::var("KINDLE_ADV_CLAMP")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(1.0);
     AgentConfig {
         latent_dim: 8,
         hidden_dim: 32,
@@ -156,6 +176,11 @@ fn agent_config(num_options: usize) -> AgentConfig {
         warmup_steps: 200,
         num_options,
         option_horizon: 10,
+        approach_reward_alpha: m7_alpha,
+        approach_confidence_saturation: m7_saturation,
+        homeo_confidence_taper: m7_taper,
+        approach_distance_clamp: 20.0,
+        advantage_clamp: adv_clamp,
         ..AgentConfig::default()
     }
 }

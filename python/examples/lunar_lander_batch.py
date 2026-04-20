@@ -327,6 +327,17 @@ def main() -> int:
                         "first computed. Default 20.")
     parser.add_argument("--approach-update-interval", type=int, default=None,
                         help="M7 episodes between centroid recomputes. Default 10.")
+    parser.add_argument("--approach-distance-clamp", type=float, default=None,
+                        help="M7 symmetric distance clamp. Default 10. Raise when using "
+                        "loud α so the per-step bonus doesn't saturate.")
+    parser.add_argument("--approach-confidence-saturation", type=int, default=None,
+                        help="Episodes past warmup until M7 reaches full confidence. "
+                        "When >0, the M7 bonus scales by c = min(1, (ep − warmup) / "
+                        "saturation). 0 (default) = c = 1 as soon as warmup ends.")
+    parser.add_argument("--homeo-taper", type=float, default=None,
+                        help="Fraction of the homeo reward to remove at M7 full "
+                        "confidence. homeo_eff = homeo · (1 − τ · c). 0 (default) = no "
+                        "taper; 0.5 = half homeo at full M7 confidence; 1.0 = homeo off.")
     parser.add_argument(
         "--shaping",
         choices=list(_SHAPING_VARIANTS.keys()),
@@ -400,6 +411,9 @@ def main() -> int:
         approach_top_frac=args.approach_top_frac,
         approach_warmup_episodes=args.approach_warmup,
         approach_update_interval=args.approach_update_interval,
+        approach_distance_clamp=args.approach_distance_clamp,
+        approach_confidence_saturation=args.approach_confidence_saturation,
+        homeo_confidence_taper=args.homeo_taper,
     )
     print("agent ready (compiled graphs once, N lanes)")
 
@@ -562,13 +576,14 @@ def main() -> int:
             )
             appr_fill = int(_safe(diags[0].get("approach_buffer_fill", 0), 0))
             appr_drift = _safe(diags[0].get("approach_centroid_drift", 0.0), 0.0)
+            appr_conf = _safe(diags[0].get("approach_confidence", 0.0), 0.0)
             print(
                 f"step={step:>5} eps={total_episodes:>3} "
                 f"avg_ret={avg_return:+7.1f} soft%(last{window_size})={soft_pct_window:4.1f} | "
                 f"wm={wm:.3f} pi={pi:.3f} "
                 f"r={rew:+6.3f} surp={sup:+5.2f} homeo={hom:+6.2f} "
                 f"ent={ent:.2f} opts={opt_str} gdist={gdist:.2f} "
-                f"m7:d={appr_d:5.2f} fill={appr_fill} drift={appr_drift:.2f} "
+                f"m7:d={appr_d:5.2f} c={appr_conf:.2f} fill={appr_fill} drift={appr_drift:.2f} "
                 f"| {sps:5.1f} env-steps/s"
             )
 

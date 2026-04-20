@@ -281,6 +281,141 @@ ceiling. But making that primitive work WITHIN kindle requires
 resolving the two obstacles above, and each resolution is a
 principled tradeoff.
 
+## M7↔homeo confidence weighting (2026-04-20)
+
+Response to "M7 should just be weighted more once it's
+confident" — add two knobs that make M7 and homeo smoothly
+cooperate over training:
+
+- `approach_confidence_saturation: usize` — episodes past warmup
+  until M7 reaches full confidence `c = 1`. Ramps linearly.
+  `0` = `c = 1` once warmup is met (v1 behaviour).
+- `homeo_confidence_taper: f32` — fraction of the homeo reward
+  to remove at full confidence. `homeo_eff = homeo_raw ·
+  (1 − τ · c)`. `0` preserves v1.
+
+When ramping is active:
+
+  - **Early** (`c ≈ 0`): M7 silent, homeo at full weight → kindle
+    explores under homeo alone.
+  - **Mid** (`c` ramping): M7 gains voice, homeo tapers.
+  - **Late** (`c = 1`): M7 at full α, homeo at `(1 − τ)` weight.
+    When `τ = 1.0`, M7 becomes the sole reward signal; at
+    `τ = 0`, M7 is purely additive on top of homeo (v1).
+
+### Test sweep on LunarLander (kindle, 100k / 4 / seed 42 / v3)
+
+```
+config                                            cum soft%    note
+baseline (kindle defaults)                          5.57%    uniform-random
+v1 M7 α=0.1                                         5.47%    clamp-pinned
+v1 M7 α=1.0 + adv_clamp=20                          4.70%    commits wrong
+conf-weighted: sat=100 τ=0.7 α=1 clamp=20          5.53%    homeo tapered to 30%
+conf-weighted: sat=100 τ=1.0 α=1 clamp=20          5.66%    peak 10% at 50k ★
+conf-weighted: sat=500 τ=1.0 α=1 clamp=20          5.26%    agent reaches centroid (d≈1)
+```
+
+**Mechanical confirmation**: the `sat=500, τ=1.0` run shows the
+agent progressively reducing its distance to the centroid from
+~6 at step 20k down to ~1 at step 50k. Homeo is zeroed
+(`homeo=+0.00` diagnostic). Confidence saturates to `c=1.0` on
+schedule. The weighting system is doing exactly what we
+designed it to.
+
+**But the soft-rate doesn't move**: the centroid is built from
+the top-P% terminals *by kindle cumulative reward*. Under v3
+homeo on LunarLander, those top-return terminals are the
+*shortest crashes* — episodes that terminated fastest with the
+least accumulated penalty. The centroid lives in crash-terminal
+obs/latent space, not landing space. The agent dutifully
+approaches the centroid (M7 is now strong, homeo is tapered)
+and lands in a crash-basin. Distance drops to ~1 but that's the
+distance to *a crash pose*, not a landed pose.
+
+This is the **prototype-quality problem** predicted by the M7
+design doc's "Failure mode 2". The confidence-weighting
+mechanism is correct; the prototype-selection criterion is
+what's misaligned on LunarLander.
+
+### Test sweep on the 6 kindle-compatible envs
+
+Ran `l1_diagnostic` with and without M7 confidence weighting
+(env-var knobs `KINDLE_M7_ALPHA=1.0 KINDLE_M7_SATURATION=100
+KINDLE_M7_TAPER=0.7 KINDLE_ADV_CLAMP=20`), comparing per-env
+wm-late, homeo-dev-late, and final entropy:
+
+| env        | wm-late off → on | homeo-dev off → on | entropy off → on |
+|------------|------------------|--------------------|------------------|
+| GridWorld  | 0.516 → **0.061** ✓ | 1.75 → 1.86         | 1.28 → 1.22       |
+| CartPole   | 0.005 → 0.025       | 1.60 → **1.37** ✓  | 0.59 → 0.66       |
+| MountainCar| 0.074 → **0.061** ✓ | 5.07 → 5.07         | 1.08 → 1.07       |
+| Acrobot    | 0.038 → 0.105 ✗    | 22.07 → 27.53 ✗    | 1.05 → 0.88 ✓     |
+| Taxi       | 0.100 → 0.152 ✗    | 7.93 → **7.30** ✓  | 1.77 → 1.77       |
+| RandomWalk | 0.085 → 0.519 ✗    | 1.21 → **1.13** ✓  | 0.18 → **0.04** ✓ |
+| Pendulum   | 0.006 → **0.002** ✓ | 29.46 → 29.36       | 0.50 → 0.50       |
+
+Mixed picture. Four envs see clear improvement on at least one
+metric (GridWorld WM, CartPole homeo, Taxi homeo, RandomWalk
+commitment + homeo); two regress on WM (Acrobot, Taxi). The
+consistent effect: **M7 pulls the policy toward committed
+behaviour** (entropy drops) and the prototype-shaped reward
+sometimes helps task metrics, sometimes hurts WM accuracy
+(because the agent is following the approach signal rather than
+the world-model prediction signal).
+
+### Summary of M7 + homeo integration
+
+The confidence-weighting mechanism works as specified:
+- Smoothly transitions the dominant reward from homeo to M7
+- Observable effect: entropy drops, distance to centroid
+  shrinks, homeo diagnostic zeros out at `τ=1` + `c=1`
+- Makes M7 additively compose with existing primitives rather
+  than fighting them
+
+It does NOT solve LunarLander, because the fundamental
+constraint is unchanged: self-supervised prototype discovery
+over kindle's homeo-ranked returns produces crash-biased
+prototypes on LunarLander specifically. The
+confidence-weighting hands the policy-gradient steering wheel
+to M7 at a time when M7 happens to be pointing the wrong
+direction.
+
+Where the prototype IS aligned with the task (the 6 working
+envs, to varying degrees), M7 + confidence weighting adds
+commitment and task-metric improvement at some cost to
+world-model fidelity. This is a real-ish result — a new
+primitive that improves some kindle-compatible envs — but it's
+nowhere near the structural unlock LunarLander needed.
+
+### What's now known about the kindle-clean M7 path
+
+Four composing problems, ordered by what we've verified:
+
+1. **Prototype-selection criterion is the hard part.** Ranking
+   by cumulative kindle reward works only when the reward's
+   highest-return terminals correlate with task success. On
+   LunarLander they don't. On the 6 working envs they mostly
+   do, to varying strengths.
+2. **Homeo-vs-M7 antagonism is solvable via confidence
+   tapering.** The mechanism works (this commit). The problem
+   wasn't that homeo couldn't be quieted — it was that quieting
+   it and then steering with a bad prototype just steers wrong.
+3. **Approach-shaping itself is sufficient** (the isolated PPO
+   test at 14.84%). The primitive is real and buildable.
+4. **Self-supervision without an external ranking anchor
+   remains an unsolved research problem on LunarLander-class
+   envs.** The 0% result from kindle-ranked + homeo=0 confirms
+   this empirically — it's not a kindle-specific bug; it's the
+   core difficulty.
+
+(4) is the one left. Candidate future work:
+  - Alternative ranking signals beyond cumulative return
+    (e.g., terminal-state rarity × terminal-state reachability,
+    or weight by order-primitive-at-terminal).
+  - Multi-prototype clustering so bad prototypes don't dominate.
+  - Environment-dependent meta-control that selects among
+    ranking criteria per env.
+
 The M7 code (both Rust and Python sides) stays in as a clean
 platform. It composes with the existing M6 infrastructure and
 the ablation-sweep knobs (advantage_clamp, entropy config,

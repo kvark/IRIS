@@ -430,6 +430,8 @@ impl PyBatchAgent {
         approach_update_interval = None,
         approach_warmup_episodes = None,
         approach_distance_clamp = None,
+        approach_confidence_saturation = None,
+        homeo_confidence_taper = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -469,6 +471,8 @@ impl PyBatchAgent {
         approach_update_interval: Option<usize>,
         approach_warmup_episodes: Option<usize>,
         approach_distance_clamp: Option<f32>,
+        approach_confidence_saturation: Option<usize>,
+        homeo_confidence_taper: Option<f32>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -625,6 +629,12 @@ impl PyBatchAgent {
         }
         if let Some(dc) = approach_distance_clamp {
             config.approach_distance_clamp = dc;
+        }
+        if let Some(cs) = approach_confidence_saturation {
+            config.approach_confidence_saturation = cs;
+        }
+        if let Some(ht) = homeo_confidence_taper {
+            config.homeo_confidence_taper = ht;
         }
         let agent = Agent::new(config, adapters);
         Ok(Self {
