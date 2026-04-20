@@ -36,7 +36,7 @@ use crate::adapter::{EnvAdapter, MAX_ACTION_DIM, OBS_TOKEN_DIM, TASK_DIM};
 use crate::approach;
 use crate::buffer::{ExperienceBuffer, Transition};
 use crate::credit;
-use crate::encoder::Encoder;
+use crate::encoder::{CnnEncoder, Encoder};
 use crate::env::{Action, ActionKind, Environment, Observation};
 use crate::option;
 use crate::outcome;
@@ -46,8 +46,47 @@ use crate::world_model::WorldModel;
 use crate::OptLevel;
 use hashbrown::HashMap;
 use meganeura::graph::Graph;
+use meganeura::nn;
 use meganeura::Session;
 use rand::Rng;
+
+/// What encoder kindle builds as the WM graph's backbone.
+///
+/// `Mlp` (default) is kindle's original dense encoder — flat
+/// obs-token vector → hidden → latent. Suits structured
+/// low-dim obs (CartPole, LunarLander, Taxi, etc.).
+///
+/// `Cnn { channels, height, width }` builds a small conv-net
+/// encoder on raw NCHW pixel/grid input. Intended for visual
+/// tasks (ARC-AGI-3's 64×64 colour grid, Atari-like frames).
+/// When this variant is selected, `Agent::set_visual_obs` must
+/// be called every step before `observe` with a flat
+/// `[batch_size · channels · height · width]` input; the obs
+/// token path still flows to the reward circuit in parallel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncoderKind {
+    Mlp,
+    Cnn {
+        channels: u32,
+        height: u32,
+        width: u32,
+    },
+}
+
+impl EncoderKind {
+    /// Flat element count for visual obs: `0` for Mlp,
+    /// `channels · height · width` for Cnn.
+    pub fn visual_dim(&self) -> usize {
+        match *self {
+            EncoderKind::Mlp => 0,
+            EncoderKind::Cnn {
+                channels,
+                height,
+                width,
+            } => (channels as usize) * (height as usize) * (width as usize),
+        }
+    }
+}
 
 /// Criterion for ranking terminal entries into the M7 prototype
 /// buffer's top-P% fraction. See `AgentConfig::approach_rank_by`.
@@ -317,6 +356,11 @@ pub struct AgentConfig {
     /// it would hurt (timeout-success is common, so novelty
     /// demotes it).
     pub approach_rank_by: ApproachRankBy,
+    /// WM encoder backbone. `Mlp` (default) = kindle's original
+    /// obs-token encoder; `Cnn { channels, height, width }` =
+    /// conv-net encoder for visual/grid inputs (ARC-AGI-3 etc.).
+    /// See `EncoderKind` doc for the protocol.
+    pub encoder_kind: EncoderKind,
     /// M6 v2: window size for the outcome head's input. `1`
     /// (default) reduces to single-frame `R̂(z_t)` — the back-compat
     /// M6 v1 path. `k ≥ 2` concatenates the last `k` encoder
@@ -404,6 +448,7 @@ impl Default for AgentConfig {
             approach_confidence_saturation: 0,
             homeo_confidence_taper: 0.0,
             approach_rank_by: ApproachRankBy::Return,
+            encoder_kind: EncoderKind::Mlp,
             outcome_window: 1,
             outcome_clamp: 5.0,
             outcome_max_episode_len: 256,
@@ -773,6 +818,11 @@ pub struct Agent {
     batch_lr_scale: f32,
     /// Scratch buffers, sized [N × per-lane-dim], reused each step.
     obs_token_scratch: Vec<f32>,
+    /// Visual-encoder input buffer; sized `batch × channels × h × w`
+    /// when `encoder_kind` is `Cnn`, empty otherwise. Populated via
+    /// `Agent::set_visual_obs` by the harness before each
+    /// `observe()` call.
+    visual_obs_scratch: Vec<f32>,
     action_token_scratch: Vec<f32>,
     z_target_scratch: Vec<f32>,
     task_scratch: Vec<f32>,
@@ -882,7 +932,6 @@ impl Agent {
         // task) into per-env latents.
         let wm_session = {
             let mut g = Graph::new();
-            let obs = g.input("obs", &[config.batch_size, OBS_TOKEN_DIM]);
             let action = g.input("action", &[config.batch_size, MAX_ACTION_DIM]);
             let z_target = g.input("z_target", &[config.batch_size, config.latent_dim]);
             // Task embedding is fed as a graph **input**, not a parameter.
@@ -895,14 +944,54 @@ impl Agent {
             // env-specific latents.
             let task = g.input("task", &[config.batch_size, TASK_DIM]);
 
-            let enc = Encoder::new(
-                &mut g,
-                OBS_TOKEN_DIM,
-                TASK_DIM,
-                config.latent_dim,
-                config.hidden_dim,
-            );
-            let z_t = enc.forward(&mut g, obs, task);
+            // Encoder backbone: default MLP on an obs-token vector, or
+            // a small CNN on raw visual input when configured.
+            let z_t = match config.encoder_kind {
+                EncoderKind::Mlp => {
+                    let obs = g.input("obs", &[config.batch_size, OBS_TOKEN_DIM]);
+                    let enc = Encoder::new(
+                        &mut g,
+                        OBS_TOKEN_DIM,
+                        TASK_DIM,
+                        config.latent_dim,
+                        config.hidden_dim,
+                    );
+                    enc.forward(&mut g, obs, task)
+                }
+                EncoderKind::Cnn {
+                    channels,
+                    height,
+                    width,
+                } => {
+                    // Flat NCHW visual input.
+                    let flat_dim = (channels as usize)
+                        * (height as usize)
+                        * (width as usize)
+                        * config.batch_size;
+                    let visual = g.input("visual_obs", &[flat_dim]);
+                    let cnn = CnnEncoder::new(
+                        &mut g,
+                        channels,
+                        height,
+                        width,
+                        config.latent_dim,
+                        config.batch_size as u32,
+                    );
+                    let z_cnn = cnn.forward(&mut g, visual);
+                    // Fold the task embedding in post-CNN via a tiny
+                    // projection so the visual encoder still gets
+                    // per-env conditioning without rebuilding the whole
+                    // graph around task concat.
+                    let task_proj = nn::Linear::no_bias(
+                        &mut g,
+                        "encoder.task_proj_cnn",
+                        TASK_DIM,
+                        config.latent_dim,
+                    );
+                    let task_h = task_proj.forward(&mut g, task);
+                    g.add(z_cnn, task_h)
+                }
+            };
             let wm = WorldModel::new(&mut g, config.latent_dim, MAX_ACTION_DIM, config.hidden_dim);
             let z_hat = wm.forward(&mut g, z_t, action);
             let loss = WorldModel::loss(&mut g, z_hat, z_target);
@@ -1155,6 +1244,7 @@ impl Agent {
             encoder_lr_scale: 1.0,
             batch_lr_scale: (config.batch_size as f32).sqrt(),
             obs_token_scratch: vec![0.0; n * OBS_TOKEN_DIM],
+            visual_obs_scratch: vec![0.0; n * config.encoder_kind.visual_dim()],
             action_token_scratch: vec![0.0; n * MAX_ACTION_DIM],
             z_target_scratch: vec![0.0; n * config.latent_dim],
             task_scratch: vec![0.0; n * TASK_DIM],
@@ -1913,7 +2003,18 @@ impl Agent {
     /// `obs_token_scratch` / `action_token_scratch` / `z_target_scratch` /
     /// `task_scratch` inputs. Returns the scalar batch-mean loss.
     fn wm_forward_backward_stacked(&mut self, lr: f32) -> f32 {
-        self.wm_session.set_input("obs", &self.obs_token_scratch);
+        // Encoder-dependent: MLP uses the obs-token buffer; CNN uses
+        // the raw visual_obs buffer (populated by `set_visual_obs`
+        // before this method runs).
+        match self.config.encoder_kind {
+            EncoderKind::Mlp => {
+                self.wm_session.set_input("obs", &self.obs_token_scratch);
+            }
+            EncoderKind::Cnn { .. } => {
+                self.wm_session
+                    .set_input("visual_obs", &self.visual_obs_scratch);
+            }
+        }
         self.wm_session
             .set_input("action", &self.action_token_scratch);
         self.wm_session
@@ -1925,6 +2026,25 @@ impl Agent {
         self.wm_session.read_loss()
     }
 
+    /// Populate the visual-obs buffer for the next `observe()`. Must
+    /// be called by the harness when `encoder_kind = Cnn` and the
+    /// input shape is flat NCHW of size `batch × channels × h × w`.
+    /// No-op when the agent's encoder is `Mlp`.
+    pub fn set_visual_obs(&mut self, visual_obs: &[f32]) {
+        if self.visual_obs_scratch.is_empty() {
+            return;
+        }
+        let n = self.visual_obs_scratch.len();
+        assert_eq!(
+            visual_obs.len(),
+            n,
+            "set_visual_obs: expected {} floats (batch · channels · h · w), got {}",
+            n,
+            visual_obs.len()
+        );
+        self.visual_obs_scratch.copy_from_slice(visual_obs);
+    }
+
     /// Sample one replay transition per lane and run a single batched WM
     /// forward+backward over the stacked rows. Each lane retries up to 8
     /// random indices to find a non-boundary pair in its own buffer; if
@@ -1932,6 +2052,13 @@ impl Agent {
     /// fall back to the most recent valid donor lane's sample so every
     /// batch row carries signal instead of zeros.
     fn replay_step<R: Rng>(&mut self, rng: &mut R) {
+        // Replay in CNN-encoder mode would need visual frames
+        // stored per-transition, which they aren't (buffer holds
+        // the 64-dim token). Skip replay in that case; the online
+        // WM gradient still flows every step.
+        if matches!(self.config.encoder_kind, EncoderKind::Cnn { .. }) {
+            return;
+        }
         let ld = self.latent_dim;
         let n = self.lanes.len();
 
@@ -2042,6 +2169,12 @@ impl Agent {
     /// batched WM graph. The probe set isn't necessarily a multiple of N;
     /// we pad the remaining rows with zeros and ignore their outputs.
     fn measure_drift(&mut self) {
+        // Drift probes are 64-dim obs tokens captured at warmup;
+        // they're not visual frames, so a CNN encoder can't consume
+        // them. Leave `last_drift = 0` for CNN-mode agents.
+        if matches!(self.config.encoder_kind, EncoderKind::Cnn { .. }) {
+            return;
+        }
         let (probes, references) = match (self.probe_obs.as_ref(), self.probe_reference.as_ref()) {
             (Some(p), Some(r)) => (p.clone(), r.clone()),
             _ => return,

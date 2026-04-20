@@ -16,7 +16,10 @@ use kindle::adapter::{GenericAdapter, OBS_TOKEN_DIM};
 use kindle::env::{
     Action, Environment, HomeostaticProvider, HomeostaticVariable, Observation, StepResult,
 };
-use kindle::{Agent, AgentConfig, agent::{ApproachRankBy, OutcomeBonus, OutcomeTarget}};
+use kindle::{
+    Agent, AgentConfig,
+    agent::{ApproachRankBy, EncoderKind, OutcomeBonus, OutcomeTarget},
+};
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
@@ -433,6 +436,10 @@ impl PyBatchAgent {
         approach_confidence_saturation = None,
         homeo_confidence_taper = None,
         approach_rank_by = None,
+        encoder_kind = None,
+        encoder_channels = None,
+        encoder_height = None,
+        encoder_width = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -475,6 +482,10 @@ impl PyBatchAgent {
         approach_confidence_saturation: Option<usize>,
         homeo_confidence_taper: Option<f32>,
         approach_rank_by: Option<String>,
+        encoder_kind: Option<String>,
+        encoder_channels: Option<u32>,
+        encoder_height: Option<u32>,
+        encoder_width: Option<u32>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -649,6 +660,38 @@ impl PyBatchAgent {
                 }
             };
         }
+        if let Some(ek) = encoder_kind {
+            config.encoder_kind = match ek.as_str() {
+                "mlp" => EncoderKind::Mlp,
+                "cnn" => {
+                    let channels = encoder_channels.ok_or_else(|| {
+                        PyValueError::new_err(
+                            "encoder_kind='cnn' requires encoder_channels",
+                        )
+                    })?;
+                    let height = encoder_height.ok_or_else(|| {
+                        PyValueError::new_err(
+                            "encoder_kind='cnn' requires encoder_height",
+                        )
+                    })?;
+                    let width = encoder_width.ok_or_else(|| {
+                        PyValueError::new_err(
+                            "encoder_kind='cnn' requires encoder_width",
+                        )
+                    })?;
+                    EncoderKind::Cnn {
+                        channels,
+                        height,
+                        width,
+                    }
+                }
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "encoder_kind must be 'mlp' or 'cnn', got {other:?}"
+                    )));
+                }
+            };
+        }
         let agent = Agent::new(config, adapters);
         Ok(Self {
             agent,
@@ -784,6 +827,15 @@ impl PyBatchAgent {
     /// budget. Returns zeros when M6 is disabled.
     fn r_hats(&self) -> Vec<f32> {
         self.agent.r_hats()
+    }
+
+    /// Visual-encoder input setter for `encoder_kind='cnn'` agents.
+    /// Accepts a 1-D sequence of length `batch_size · channels · height · width`
+    /// laid out as flat NCHW. Must be called before each
+    /// `observe()` when the agent's encoder is CNN; no-op for MLP
+    /// agents.
+    fn set_visual_obs(&mut self, visual: Vec<f32>) {
+        self.agent.set_visual_obs(&visual);
     }
 }
 

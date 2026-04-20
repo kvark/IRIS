@@ -65,6 +65,9 @@ def main() -> int:
     parser.add_argument("--watchdog-threshold", type=float, default=1e6)
     parser.add_argument("--levels-reward-scale", type=float, default=10.0,
                         help="Homeo spike magnitude per level completed.")
+    parser.add_argument("--encoder", choices=["mlp", "cnn"], default="mlp",
+                        help="'mlp' (default) = pre-pooled 64-dim token → MLP encoder. "
+                        "'cnn' = raw 64×64 grid → conv encoder (spatial info preserved).")
     args = parser.parse_args()
 
     # --- Set up the local ARC-AGI-3 env ---
@@ -99,11 +102,17 @@ def main() -> int:
     num_actions = min(6, len(available_actions))
 
     def preprocess(frame_ndarray: np.ndarray) -> list[float]:
-        """64×64 int → 8×8 mean-pooled → flat 64-dim float in [0, 1]."""
+        """64×64 int → 8×8 mean-pooled → flat 64-dim float in [0, 1].
+        The pooled token still feeds kindle's reward circuit (order
+        digest) and is stored on Transition for replay."""
         arr = frame_ndarray.astype(np.float32) / 15.0  # ARC colours 0..15
-        # Mean pool to 8×8 (64 = 8 × 8 blocks, each 8×8).
         pooled = arr.reshape(8, 8, 8, 8).mean(axis=(1, 3))
         return pooled.flatten().tolist()
+
+    def preprocess_visual(frame_ndarray: np.ndarray) -> list[float]:
+        """64×64 int → flat 4096-dim float in [0, 1]. Fed to the CNN
+        encoder directly when `--encoder cnn`."""
+        return (frame_ndarray.astype(np.float32) / 15.0).flatten().tolist()
 
     # Pre-build a value→member map; `GameAction(value)` is broken
     # on this enum type in the installed arcengine build.
@@ -128,8 +137,8 @@ def main() -> int:
 
     # --- Kindle agent (one lane) ---
     if args.agent == "kindle":
-        obs_dim = 64
-        agent = kindle.BatchAgent(
+        obs_dim = 64  # token dim for reward circuit (always 64)
+        agent_kwargs = dict(
             obs_dim=obs_dim,
             num_actions=num_actions,
             batch_size=1,
@@ -142,6 +151,14 @@ def main() -> int:
             advantage_clamp=args.advantage_clamp,
             policy_loss_watchdog_threshold=args.watchdog_threshold,
         )
+        if args.encoder == "cnn":
+            agent_kwargs.update(
+                encoder_kind="cnn",
+                encoder_channels=1,
+                encoder_height=64,
+                encoder_width=64,
+            )
+        agent = kindle.BatchAgent(**agent_kwargs)
     else:
         agent = None  # random baseline
 
@@ -201,6 +218,8 @@ def main() -> int:
 
         # Choose action
         if agent is not None:
+            if args.encoder == "cnn":
+                agent.set_visual_obs(preprocess_visual(frame))
             actions = agent.act([current_obs])
             kindle_action = int(actions[0])
         else:
@@ -222,6 +241,8 @@ def main() -> int:
 
         # Feed observation back to kindle
         if agent is not None:
+            if args.encoder == "cnn":
+                agent.set_visual_obs(preprocess_visual(frame))
             homeos = [homeo_for(frame, delta_levels)]
             agent.observe([new_obs], [kindle_action], homeostatic=homeos)
 
