@@ -68,6 +68,24 @@ def main() -> int:
     parser.add_argument("--encoder", choices=["mlp", "cnn"], default="mlp",
                         help="'mlp' (default) = pre-pooled 64-dim token → MLP encoder. "
                         "'cnn' = raw 64×64 grid → conv encoder (spatial info preserved).")
+    parser.add_argument("--reward-surprise", type=float, default=None,
+                        help="Weight on the world-model surprise primitive. Default 1.0 "
+                        "from kindle. For ARC, try 5-10 (homeo is meaningless here, so "
+                        "surprise becomes the primary exploration signal).")
+    parser.add_argument("--reward-novelty", type=float, default=None,
+                        help="Weight on the latent-visit-count novelty primitive. "
+                        "Default 0.5.")
+    parser.add_argument("--reward-homeostatic", type=float, default=None,
+                        help="Weight on the homeostatic primitive. Default 2.0 from "
+                        "kindle. For ARC, try 0.1 — the only 'homeo' signal we have "
+                        "here is the levels-completed delta, which is sparse.")
+    parser.add_argument("--reward-order", type=float, default=None,
+                        help="Weight on the order primitive. Default 0.5. Reduced for "
+                        "CNN mode where the order-digest may be less meaningful.")
+    parser.add_argument("--grid-resolution", type=float, default=None,
+                        help="Latent-grid bucket size for the novelty visit counter. "
+                        "Default 0.5. Lower = finer buckets = novelty stays high longer "
+                        "but fewer rare-state matches.")
     args = parser.parse_args()
 
     # --- Set up the local ARC-AGI-3 env ---
@@ -158,6 +176,16 @@ def main() -> int:
                 encoder_height=64,
                 encoder_width=64,
             )
+        if args.reward_surprise is not None:
+            agent_kwargs["reward_surprise"] = args.reward_surprise
+        if args.reward_novelty is not None:
+            agent_kwargs["reward_novelty"] = args.reward_novelty
+        if args.reward_homeostatic is not None:
+            agent_kwargs["reward_homeostatic"] = args.reward_homeostatic
+        if args.reward_order is not None:
+            agent_kwargs["reward_order"] = args.reward_order
+        if args.grid_resolution is not None:
+            agent_kwargs["grid_resolution"] = args.grid_resolution
         agent = kindle.BatchAgent(**agent_kwargs)
     else:
         agent = None  # random baseline
@@ -259,7 +287,11 @@ def main() -> int:
                 last_ent = (
                     f"| wm={float(d['loss_world_model']):.3f} "
                     f"pi={float(d['loss_policy']):.3f} "
-                    f"ent={float(d['policy_entropy']):.2f}"
+                    f"ent={float(d['policy_entropy']):.2f} "
+                    f"surp={float(d['reward_surprise']):+5.2f} "
+                    f"nov={float(d['reward_novelty']):+4.2f} "
+                    f"hom={float(d['reward_homeo']):+5.2f} "
+                    f"ord={float(d['reward_order']):+4.2f}"
                 )
             print(
                 f"step={step:>5} eps={ep_count:>3} lvl_events={levels_events:>3} "
