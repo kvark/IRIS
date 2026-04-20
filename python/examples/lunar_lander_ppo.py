@@ -176,6 +176,14 @@ class KindleRewardWrapper(gym.Wrapper):
     harness + sb3 PPO does land LunarLander when given the canonical
     reward (since kindle-reward shapes seem to universally fail,
     this is our ground-truth that PPO works).
+
+    M7 approach-reward: when `approach_alpha > 0`, the wrapper
+    maintains a rolling buffer of `(terminal_obs, ep_return)` pairs
+    and emits a `−α · ‖obs − centroid‖` bonus at every step, where
+    the centroid is the mean of the top-`approach_top_frac` fraction
+    of recent terminals by return. This is the Python-side port of
+    `kindle::approach` but operating on the obs vector directly
+    (PPO has no encoder, so there's no z-space to cluster in).
     """
 
     def __init__(
@@ -185,13 +193,38 @@ class KindleRewardWrapper(gym.Wrapper):
         homeo_weight: float = 2.0,
         terminal_soft_bonus: float = 0.0,
         terminal_crash_penalty: float = 0.0,
+        approach_alpha: float = 0.0,
+        approach_buffer_size: int = 100,
+        approach_top_frac: float = 0.2,
+        approach_update_interval: int = 10,
+        approach_warmup_episodes: int = 20,
+        approach_distance_clamp: float = 10.0,
+        approach_rank_by: str = "kindle",
+        approach_bonus: str = "raw",
     ):
         super().__init__(env)
+        self.approach_bonus = approach_bonus
         self.shaping = shaping
         self.shaping_fn = _SHAPINGS[shaping] if shaping != "native" else None
         self.homeo_weight = homeo_weight
         self.terminal_soft_bonus = terminal_soft_bonus
         self.terminal_crash_penalty = terminal_crash_penalty
+
+        # M7 state.
+        self.approach_alpha = approach_alpha
+        self.approach_buffer_size = approach_buffer_size
+        self.approach_top_frac = approach_top_frac
+        self.approach_update_interval = approach_update_interval
+        self.approach_warmup_episodes = approach_warmup_episodes
+        self.approach_distance_clamp = approach_distance_clamp
+        self._approach_buffer: list[tuple[np.ndarray, float]] = []
+        self._approach_centroid: np.ndarray | None = None
+        self._approach_ep_return = 0.0
+        self._approach_episodes_seen = 0
+        self._approach_episodes_since_update = 0
+        self.approach_rank_by = approach_rank_by
+        self._approach_native_ep_return = 0.0
+        self._approach_prev_distance: float | None = None
         # Override observation space to the normalized form.
         self.observation_space = gym.spaces.Box(
             low=-5.0, high=5.0, shape=(8,), dtype=np.float32
@@ -206,7 +239,58 @@ class KindleRewardWrapper(gym.Wrapper):
         self._last_raw = raw_obs
         self._ep_len = 0
         self._ep_return = 0.0
+        self._approach_ep_return = 0.0
+        self._approach_native_ep_return = 0.0
+        self._approach_prev_distance = None
         return normalize_obs(raw_obs), info
+
+    def _approach_reward(self, obs_norm: np.ndarray) -> float:
+        if self.approach_alpha <= 0.0 or self._approach_centroid is None:
+            self._approach_prev_distance = None
+            return 0.0
+        d = float(np.linalg.norm(obs_norm - self._approach_centroid))
+        d_clamped = min(d, max(0.0, self.approach_distance_clamp))
+        if self.approach_bonus == "potential":
+            # Potential-based shaping: F = Φ(s) − Φ(s'). With
+            # Φ = −distance, F = d_prev − d_curr. Positive when
+            # agent moves closer to centroid, negative when it moves
+            # away. Sum over an episode telescopes to d_initial −
+            # d_final — gives a "landing-endpoint bonus" without
+            # penalizing episode length.
+            prev = self._approach_prev_distance
+            self._approach_prev_distance = d_clamped
+            if prev is None:
+                return 0.0
+            return self.approach_alpha * (prev - d_clamped)
+        else:
+            # Raw: r = −α · distance. Additive static penalty.
+            self._approach_prev_distance = d_clamped
+            return -self.approach_alpha * d_clamped
+
+    def _approach_recompute_centroid(self):
+        if not self._approach_buffer:
+            return
+        # Sort by return descending.
+        sorted_buf = sorted(
+            self._approach_buffer, key=lambda x: x[1], reverse=True
+        )
+        n = len(sorted_buf)
+        take = max(1, min(n, math.ceil(n * self.approach_top_frac)))
+        top = [entry[0] for entry in sorted_buf[:take]]
+        self._approach_centroid = np.mean(top, axis=0).astype(np.float32)
+
+    def _approach_push_terminal(self, terminal_obs_norm: np.ndarray, r_ep: float):
+        if len(self._approach_buffer) >= self.approach_buffer_size:
+            self._approach_buffer.pop(0)
+        self._approach_buffer.append((terminal_obs_norm.copy(), r_ep))
+        self._approach_episodes_seen += 1
+        self._approach_episodes_since_update += 1
+        if (
+            self._approach_episodes_seen >= self.approach_warmup_episodes
+            and self._approach_episodes_since_update >= self.approach_update_interval
+        ):
+            self._approach_recompute_centroid()
+            self._approach_episodes_since_update = 0
 
     def step(self, action):
         raw_next, env_reward, terminated, truncated, info = self.env.step(action)
@@ -215,6 +299,15 @@ class KindleRewardWrapper(gym.Wrapper):
         else:
             entries = self.shaping_fn(raw_next, action)
             r = kindle_homeo_penalty(entries, self.homeo_weight)
+
+        # Accumulate the pre-approach-bonus return so the M7
+        # prototype-updater doesn't chase its own output.
+        self._approach_ep_return += r
+        self._approach_native_ep_return += float(env_reward)
+
+        obs_norm = normalize_obs(raw_next)
+        r_approach = self._approach_reward(obs_norm)
+        r += r_approach
 
         done = terminated or truncated
         if done:
@@ -230,6 +323,24 @@ class KindleRewardWrapper(gym.Wrapper):
             else:
                 outcome = "timeout"
 
+            # Record terminal into M7 buffer. Which quantity ranks
+            # "good" depends on `approach_rank_by`:
+            #   'kindle' — rank by kindle homeo cumulative return
+            #              (this is what the Rust-side M7 does, and
+            #              the kindle-principles-clean version).
+            #   'native' — rank by env's native reward. Uses external
+            #              supervision to pick which terminals count
+            #              as "good". Diagnostic only — tests whether
+            #              M7's selection or its approach-signaling is
+            #              the failure when kindle-homeo is used.
+            if self.approach_alpha > 0.0:
+                rank_score = (
+                    self._approach_ep_return
+                    if self.approach_rank_by == "kindle"
+                    else self._approach_native_ep_return
+                )
+                self._approach_push_terminal(obs_norm, rank_score)
+
         self._ep_len += 1
         self._ep_return += r
 
@@ -238,9 +349,11 @@ class KindleRewardWrapper(gym.Wrapper):
             info["ll_outcome"] = outcome
             info["ll_ep_len"] = self._ep_len
             info["ll_ep_kindle_return"] = self._ep_return
+            info["ll_approach_ep_return"] = self._approach_ep_return
+            info["ll_approach_buffer_fill"] = len(self._approach_buffer)
 
         self._last_raw = raw_next
-        return normalize_obs(raw_next), float(r), bool(terminated), bool(truncated), info
+        return obs_norm, float(r), bool(terminated), bool(truncated), info
 
 
 class OutcomeTrackingCallback(BaseCallback):
@@ -308,6 +421,25 @@ def main() -> int:
                         help="Once-only reward added at a soft-landing terminal.")
     parser.add_argument("--terminal-crash-penalty", type=float, default=0.0,
                         help="Once-only penalty subtracted at a crash terminal.")
+    parser.add_argument("--approach-alpha", type=float, default=0.0,
+                        help="M7 approach-reward weight. 0 disables.")
+    parser.add_argument("--approach-top-frac", type=float, default=0.2)
+    parser.add_argument("--approach-warmup", type=int, default=20)
+    parser.add_argument("--approach-update-interval", type=int, default=10)
+    parser.add_argument("--approach-distance-clamp", type=float, default=10.0)
+    parser.add_argument("--approach-rank-by", choices=["kindle", "native"],
+                        default="kindle",
+                        help="Which return to rank episodes by when selecting "
+                        "top-P%% terminals for the prototype. 'kindle' is the "
+                        "kindle-principles-clean version; 'native' uses gym's "
+                        "native reward (extrinsic supervision) as a diagnostic to "
+                        "isolate whether selection or signaling fails.")
+    parser.add_argument("--approach-bonus", choices=["raw", "potential"],
+                        default="raw",
+                        help="How the approach-reward enters the step reward. "
+                        "'raw' = −α·distance (additive penalty). 'potential' = "
+                        "α·(d_prev − d_curr), Ng-et-al potential-based shaping; "
+                        "telescopes across an episode to a landing-endpoint bonus.")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--n-steps", type=int, default=2048,
                         help="PPO rollout length per env per update")
@@ -330,6 +462,13 @@ def main() -> int:
         homeo_weight=args.homeo_weight,
         terminal_soft_bonus=args.terminal_soft_bonus,
         terminal_crash_penalty=args.terminal_crash_penalty,
+        approach_alpha=args.approach_alpha,
+        approach_top_frac=args.approach_top_frac,
+        approach_warmup_episodes=args.approach_warmup,
+        approach_update_interval=args.approach_update_interval,
+        approach_distance_clamp=args.approach_distance_clamp,
+        approach_rank_by=args.approach_rank_by,
+        approach_bonus=args.approach_bonus,
     )
 
     hidden = [int(x) for x in args.policy_arch.split(",")]

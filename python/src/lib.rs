@@ -424,6 +424,12 @@ impl PyBatchAgent {
         outcome_bonus = None,
         outcome_window = None,
         outcome_max_episode_len = None,
+        approach_reward_alpha = None,
+        approach_buffer_size = None,
+        approach_top_frac = None,
+        approach_update_interval = None,
+        approach_warmup_episodes = None,
+        approach_distance_clamp = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -457,6 +463,12 @@ impl PyBatchAgent {
         outcome_bonus: Option<String>,
         outcome_window: Option<usize>,
         outcome_max_episode_len: Option<usize>,
+        approach_reward_alpha: Option<f32>,
+        approach_buffer_size: Option<usize>,
+        approach_top_frac: Option<f32>,
+        approach_update_interval: Option<usize>,
+        approach_warmup_episodes: Option<usize>,
+        approach_distance_clamp: Option<f32>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -595,6 +607,24 @@ impl PyBatchAgent {
         }
         if let Some(l) = outcome_max_episode_len {
             config.outcome_max_episode_len = l;
+        }
+        if let Some(a) = approach_reward_alpha {
+            config.approach_reward_alpha = a;
+        }
+        if let Some(s) = approach_buffer_size {
+            config.approach_buffer_size = s;
+        }
+        if let Some(tf) = approach_top_frac {
+            config.approach_top_frac = tf;
+        }
+        if let Some(ui) = approach_update_interval {
+            config.approach_update_interval = ui;
+        }
+        if let Some(we) = approach_warmup_episodes {
+            config.approach_warmup_episodes = we;
+        }
+        if let Some(dc) = approach_distance_clamp {
+            config.approach_distance_clamp = dc;
         }
         let agent = Agent::new(config, adapters);
         Ok(Self {

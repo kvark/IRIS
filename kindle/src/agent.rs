@@ -34,6 +34,7 @@
 
 use crate::OptLevel;
 use crate::adapter::{EnvAdapter, MAX_ACTION_DIM, OBS_TOKEN_DIM, TASK_DIM};
+use crate::approach;
 use crate::buffer::{ExperienceBuffer, Transition};
 use crate::credit;
 use crate::encoder::Encoder;
@@ -239,6 +240,31 @@ pub struct AgentConfig {
     /// to a very large value to effectively disable the watchdog
     /// when ablating whether its resets are preventing convergence.
     pub policy_loss_watchdog_threshold: f32,
+    /// M7 approach-reward weight. When `> 0`, kindle maintains a
+    /// single prototype centroid in latent space (the mean of the
+    /// top-`approach_top_frac` fraction of recent terminal latents
+    /// by episode return) and adds `−α · ‖z_t − centroid‖` to the
+    /// per-step reward. Gives the reward a continuous
+    /// approach-shaping signal that the homeo primitives cannot
+    /// express. Zero (default) disables M7; byte-identical pre-M7.
+    /// See `docs/phase-m7-approach-reward.md`.
+    pub approach_reward_alpha: f32,
+    /// M7 rolling buffer of (terminal_latent, episode_return) pairs.
+    pub approach_buffer_size: usize,
+    /// M7 fraction of highest-return terminals to average into the
+    /// prototype. 0.2 = the top-20%.
+    pub approach_top_frac: f32,
+    /// M7 episodes between centroid recomputes. Lower = prototype
+    /// tracks recent experience faster but jitters more; higher =
+    /// stable but stale.
+    pub approach_update_interval: usize,
+    /// M7 warmup: no approach reward until this many completed
+    /// episodes have been observed (so the prototype is built from
+    /// a non-trivial distribution).
+    pub approach_warmup_episodes: usize,
+    /// M7 symmetric distance clamp (pre-α multiplication) to bound
+    /// worst-case per-step bonus magnitude.
+    pub approach_distance_clamp: f32,
     /// M6 v2: window size for the outcome head's input. `1`
     /// (default) reduces to single-frame `R̂(z_t)` — the back-compat
     /// M6 v1 path. `k ≥ 2` concatenates the last `k` encoder
@@ -317,6 +343,12 @@ impl Default for AgentConfig {
             outcome_bonus: OutcomeBonus::Raw,
             advantage_clamp: 1.0,
             policy_loss_watchdog_threshold: 1000.0,
+            approach_reward_alpha: 0.0,
+            approach_buffer_size: 100,
+            approach_top_frac: 0.2,
+            approach_update_interval: 10,
+            approach_warmup_episodes: 20,
+            approach_distance_clamp: 10.0,
             outcome_window: 1,
             outcome_clamp: 5.0,
             outcome_max_episode_len: 256,
@@ -376,6 +408,20 @@ pub struct Diagnostics {
     /// M6 most recent training loss on a completed episode. Zero
     /// until the first episode boundary fires.
     pub outcome_loss: f32,
+    /// M7 L2 distance from this lane's current latent to the
+    /// prototype centroid. Zero when M7 is disabled or the
+    /// prototype hasn't seeded yet.
+    pub approach_distance: f32,
+    /// M7 number of completed episodes in the prototype buffer.
+    /// Rises until it caps at `approach_buffer_size`.
+    pub approach_buffer_fill: usize,
+    /// M7 centroid drift at the last recompute — L2 distance from
+    /// the previous centroid. High = prototype unstable; zero =
+    /// not yet recomputed twice.
+    pub approach_centroid_drift: f32,
+    /// M7 centroid age in episodes since last recompute. Caps at
+    /// `approach_update_interval`.
+    pub approach_centroid_age: usize,
 }
 
 /// Per-lane state. One per concurrent batch slot. Every slot owns its own
@@ -702,6 +748,17 @@ pub struct Agent {
     /// the baseline EMA. Diagnostic only — each lane keeps its own
     /// baseline for the actual centering.
     last_outcome_baseline: f32,
+
+    /// M7 approach-reward state. `None` when
+    /// `approach_reward_alpha == 0.0` (default) — zero CPU cost.
+    approach_state: Option<approach::ApproachState>,
+    /// M7 per-lane episode-return accumulator (in kindle's
+    /// intrinsic reward). Used so the prototype-updater sees the
+    /// same `r_ep` that trained the policy, not a separate
+    /// quantity.
+    approach_ep_returns: Vec<f32>,
+    /// M7 latest approach-distance per lane, for diagnostics.
+    approach_distances: Vec<f32>,
 }
 
 /// Cosine similarity between two equal-length vectors. Returns 0 when
@@ -917,13 +974,25 @@ impl Agent {
             None
         };
 
+        // M7 approach-reward state. Constructed only when
+        // `approach_reward_alpha > 0`. Cheap CPU data structure.
+        let approach_state = if config.approach_reward_alpha > 0.0 {
+            Some(approach::ApproachState::new(
+                config.latent_dim,
+                config.approach_buffer_size,
+                config.approach_top_frac,
+                config.approach_update_interval,
+                config.approach_warmup_episodes,
+            ))
+        } else {
+            None
+        };
+
         // M6 outcome-value head (CPU MLP). Constructed only when the
         // user has asked for a non-zero bonus weight. Its LR derives
         // from `lr_outcome` or falls back to `learning_rate × 0.3`.
         let outcome_head = if config.outcome_reward_alpha > 0.0 {
-            let lr = config
-                .lr_outcome
-                .unwrap_or(config.learning_rate * 0.3);
+            let lr = config.lr_outcome.unwrap_or(config.learning_rate * 0.3);
             Some(outcome::OutcomeHead::new(
                 config.latent_dim,
                 config.outcome_window.max(1),
@@ -1038,6 +1107,9 @@ impl Agent {
             goal_table: option::build_goal_table(config.num_options, option_dim),
             outcome_head,
             last_outcome_baseline: 0.0,
+            approach_state,
+            approach_ep_returns: vec![0.0; n],
+            approach_distances: vec![0.0; n],
             config,
         }
     }
@@ -1155,9 +1227,8 @@ impl Agent {
             let mut lanes_to_terminate: Vec<usize> = Vec::with_capacity(n);
             for (i, lane) in self.lanes.iter().enumerate() {
                 let horizon_expired = lane.option_steps_left == 0;
-                let learned_fire = learned_term
-                    && warmup_done
-                    && rng.random_range(0.0..1.0) < term_probs[i];
+                let learned_fire =
+                    learned_term && warmup_done && rng.random_range(0.0..1.0) < term_probs[i];
                 if horizon_expired || learned_fire {
                     lanes_to_terminate.push(i);
                 }
@@ -1173,14 +1244,13 @@ impl Agent {
                 let mut any_train = false;
                 for &i in &lanes_to_terminate {
                     let lane = &self.lanes[i];
-                    let advantage =
-                        (lane.option_return - lane.option_start_value).clamp(-1.0, 1.0);
+                    let advantage = (lane.option_return - lane.option_start_value).clamp(-1.0, 1.0);
                     if advantage.abs() < 1e-8 {
                         continue;
                     }
                     any_train = true;
-                    let row = &mut self.option_taken_scratch
-                        [i * num_options..(i + 1) * num_options];
+                    let row =
+                        &mut self.option_taken_scratch[i * num_options..(i + 1) * num_options];
                     row[lane.current_option as usize] = advantage;
                     self.option_return_scratch[i] = lane.option_return;
                     // Termination target at the step where the option
@@ -1198,19 +1268,15 @@ impl Agent {
                     // rises when states with consistently-negative
                     // option returns accumulate training signal.
                     let deadband = 0.3f32;
-                    self.termination_target_scratch[i] = if advantage < -deadband {
-                        1.0
-                    } else {
-                        0.0
-                    };
+                    self.termination_target_scratch[i] =
+                        if advantage < -deadband { 1.0 } else { 0.0 };
                 }
 
                 if any_train && warmup_done {
                     opt_sess.set_input("z", &z_stack);
                     opt_sess.set_input("option_taken", &self.option_taken_scratch);
                     opt_sess.set_input("option_return", &self.option_return_scratch);
-                    opt_sess
-                        .set_input("termination_target", &self.termination_target_scratch);
+                    opt_sess.set_input("termination_target", &self.termination_target_scratch);
                     opt_sess.set_learning_rate(self.config.lr_option * self.batch_lr_scale);
                     opt_sess.step();
                     opt_sess.wait();
@@ -1457,6 +1523,9 @@ impl Agent {
         let m6_max_ep = self.config.outcome_max_episode_len;
         let m6_target = self.config.outcome_target;
         let m6_bonus_mode = self.config.outcome_bonus;
+        let m7_alpha = self.config.approach_reward_alpha;
+        let m7_clamp = self.config.approach_distance_clamp;
+        let mut m7_state = self.approach_state.take();
         let mut m6_head = self.outcome_head.take();
         let mut m6_baseline_diag = self.last_outcome_baseline;
         for (i, lane) in self.lanes.iter_mut().enumerate() {
@@ -1495,6 +1564,22 @@ impl Agent {
             let env_boundary = lane.pending_boundary;
             lane.pending_boundary = false;
 
+            // M7 episode-boundary update: when this step is the first
+            // of a new episode, the previous episode's terminal
+            // `z_end` is still at `lane.buffer.last()` (current step
+            // hasn't been pushed yet) and `approach_ep_returns[i]`
+            // holds the previous episode's intrinsic-reward total.
+            // Push that pair so the prototype-updater can re-compute.
+            if env_boundary {
+                if let Some(state) = m7_state.as_mut() {
+                    if let Some(prev) = lane.buffer.last() {
+                        let r_ep = self.approach_ep_returns[i];
+                        state.push_terminal(&prev.latent, r_ep);
+                    }
+                }
+                self.approach_ep_returns[i] = 0.0;
+            }
+
             // M6 episode-boundary training: when this step is the first
             // after a reset, the PREVIOUS episode's trajectory and
             // summary stats are complete and ready to train the outcome
@@ -1508,9 +1593,7 @@ impl Agent {
                         let mut windows: Vec<Vec<f32>> =
                             Vec::with_capacity(lane.outcome_ep_trajectory.len());
                         for i in 0..lane.outcome_ep_trajectory.len() {
-                            if let Some(w) =
-                                head.build_window(&lane.outcome_ep_trajectory, i)
-                            {
+                            if let Some(w) = head.build_window(&lane.outcome_ep_trajectory, i) {
                                 windows.push(w);
                             }
                         }
@@ -1518,9 +1601,7 @@ impl Agent {
                             OutcomeTarget::EpisodeSum | OutcomeTarget::TerminalReward => {
                                 let target_raw = match m6_target {
                                     OutcomeTarget::EpisodeSum => lane.outcome_ep_return,
-                                    OutcomeTarget::TerminalReward => {
-                                        lane.outcome_last_step_reward
-                                    }
+                                    OutcomeTarget::TerminalReward => lane.outcome_last_step_reward,
                                     OutcomeTarget::RewardToGo => unreachable!(),
                                 };
                                 if !lane.outcome_baseline_seeded {
@@ -1529,9 +1610,8 @@ impl Agent {
                                 }
                                 let centered = target_raw - lane.outcome_baseline;
                                 head.train_batch(&windows, centered);
-                                lane.outcome_baseline = (1.0 - m6_ema)
-                                    * lane.outcome_baseline
-                                    + m6_ema * target_raw;
+                                lane.outcome_baseline =
+                                    (1.0 - m6_ema) * lane.outcome_baseline + m6_ema * target_raw;
                                 m6_baseline_diag = lane.outcome_baseline;
                             }
                             OutcomeTarget::RewardToGo => {
@@ -1563,13 +1643,9 @@ impl Agent {
                                 // trajectory cap: train on the shorter
                                 // of the two.
                                 let n_train = windows.len().min(targets.len());
-                                head.train_batch_variable(
-                                    &windows[..n_train],
-                                    &targets[..n_train],
-                                );
-                                lane.outcome_baseline = (1.0 - m6_ema)
-                                    * lane.outcome_baseline
-                                    + m6_ema * ep_ret;
+                                head.train_batch_variable(&windows[..n_train], &targets[..n_train]);
+                                lane.outcome_baseline =
+                                    (1.0 - m6_ema) * lane.outcome_baseline + m6_ema * ep_ret;
                                 m6_baseline_diag = lane.outcome_baseline;
                             }
                         }
@@ -1623,6 +1699,22 @@ impl Agent {
             lane.prev_r_hat = r_hat;
             lane.last_r_hat = r_hat;
 
+            // M7 approach bonus: `-α · ‖z_t − centroid‖` (clamped).
+            // Zero until the prototype has been seeded (warmup
+            // episodes across all lanes satisfied, see
+            // `approach::ApproachState::reward`).
+            let m7_reward = if let Some(state) = m7_state.as_ref() {
+                state.reward(z_row, m7_alpha, m7_clamp)
+            } else {
+                0.0
+            };
+            // Cache raw distance for diagnostics.
+            self.approach_distances[i] = if let Some(state) = m7_state.as_ref() {
+                state.distance(z_row)
+            } else {
+                0.0
+            };
+
             // Accumulate pre-M6 reward into the episode return — the
             // outcome head trains on this (or on the single-step value
             // when `outcome_target == TerminalReward`, read from
@@ -1634,7 +1726,12 @@ impl Agent {
                 lane.outcome_ep_step_rewards.push(reward_pre_m6);
             }
 
-            let reward = reward_pre_m6 + m6_bonus;
+            // M7 episode-return accumulator: uses `reward_pre_m6`,
+            // NOT the post-bonus reward. Prevents the prototype
+            // from being built out of the M7 bonus's own echo.
+            self.approach_ep_returns[i] += reward_pre_m6;
+
+            let reward = reward_pre_m6 + m6_bonus + m7_reward;
 
             lane.buffer.push(Transition {
                 observation: obs_row.to_vec(),
@@ -1666,6 +1763,8 @@ impl Agent {
         // Restore the outcome head after the loop finishes.
         self.outcome_head = m6_head;
         self.last_outcome_baseline = m6_baseline_diag;
+        // Restore the M7 state.
+        self.approach_state = m7_state;
 
         // --- Credit assignment (per-lane, sequential CPU-light dispatches) ---
         for i in 0..n {
@@ -2333,8 +2432,7 @@ impl Agent {
             }
 
             if has_options {
-                let row = &mut self.option_onehot_scratch
-                    [i * num_options..(i + 1) * num_options];
+                let row = &mut self.option_onehot_scratch[i * num_options..(i + 1) * num_options];
                 let oi = (ripe.option_idx as usize).min(num_options.saturating_sub(1));
                 row[oi] = 1.0;
             }
@@ -2393,7 +2491,8 @@ impl Agent {
     pub fn diagnostics(&self) -> Vec<Diagnostics> {
         self.lanes
             .iter()
-            .map(|lane| {
+            .enumerate()
+            .map(|(lane_idx, lane)| {
                 let recent = lane.buffer.recent_window(self.config.history_len);
                 let credit_weights: Vec<f32> = recent.iter().map(|t| t.credit).collect();
                 let h_eff = if credit_weights.is_empty() {
@@ -2402,30 +2501,26 @@ impl Agent {
                     credit::effective_scope(&credit_weights)
                 };
 
-                let goal_diversity = if self.option_session.is_some()
-                    && self.config.num_options >= 2
-                {
-                    let n_opt = self.config.num_options;
-                    let od = self.goal_table.len() / n_opt.max(1);
-                    let mut sum = 0.0f32;
-                    let mut pairs = 0usize;
-                    for a in 0..n_opt {
-                        for b in (a + 1)..n_opt {
-                            let ga = &self.goal_table[a * od..(a + 1) * od];
-                            let gb = &self.goal_table[b * od..(b + 1) * od];
-                            let d2: f32 = ga
-                                .iter()
-                                .zip(gb.iter())
-                                .map(|(x, y)| (x - y).powi(2))
-                                .sum();
-                            sum += d2.sqrt();
-                            pairs += 1;
+                let goal_diversity =
+                    if self.option_session.is_some() && self.config.num_options >= 2 {
+                        let n_opt = self.config.num_options;
+                        let od = self.goal_table.len() / n_opt.max(1);
+                        let mut sum = 0.0f32;
+                        let mut pairs = 0usize;
+                        for a in 0..n_opt {
+                            for b in (a + 1)..n_opt {
+                                let ga = &self.goal_table[a * od..(a + 1) * od];
+                                let gb = &self.goal_table[b * od..(b + 1) * od];
+                                let d2: f32 =
+                                    ga.iter().zip(gb.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+                                sum += d2.sqrt();
+                                pairs += 1;
+                            }
                         }
-                    }
-                    if pairs == 0 { 0.0 } else { sum / pairs as f32 }
-                } else {
-                    0.0
-                };
+                        if pairs == 0 { 0.0 } else { sum / pairs as f32 }
+                    } else {
+                        0.0
+                    };
 
                 // L1 goal distance: ‖last_latent − goal‖.
                 let goal_distance = if self.option_session.is_some() {
@@ -2471,6 +2566,26 @@ impl Agent {
                         .as_ref()
                         .map(|h| h.last_loss)
                         .unwrap_or(0.0),
+                    approach_distance: self
+                        .approach_distances
+                        .get(lane_idx)
+                        .copied()
+                        .unwrap_or(0.0),
+                    approach_buffer_fill: self
+                        .approach_state
+                        .as_ref()
+                        .map(|s| s.buffer.len())
+                        .unwrap_or(0),
+                    approach_centroid_drift: self
+                        .approach_state
+                        .as_ref()
+                        .map(|s| s.last_centroid_drift)
+                        .unwrap_or(0.0),
+                    approach_centroid_age: self
+                        .approach_state
+                        .as_ref()
+                        .map(|s| s.centroid_age)
+                        .unwrap_or(0),
                 }
             })
             .collect()
