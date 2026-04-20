@@ -315,6 +315,18 @@ def main() -> int:
                         help="Magnitude threshold for the policy-loss watchdog that "
                         "re-inits params when CE explodes. Default 1000. Set very "
                         "high (e.g. 1e9) to effectively disable.")
+    parser.add_argument("--approach-alpha", type=float, default=None,
+                        help="M7 approach-reward weight α. 0 (default) disables. "
+                        "r_approach = −α · ‖z_t − centroid‖ where centroid is mean "
+                        "of top-P%% highest-return recent terminal latents.")
+    parser.add_argument("--approach-top-frac", type=float, default=None,
+                        help="M7 top fraction of terminals averaged into the "
+                        "prototype. Default 0.2.")
+    parser.add_argument("--approach-warmup", type=int, default=None,
+                        help="M7 warmup in completed episodes before a centroid is "
+                        "first computed. Default 20.")
+    parser.add_argument("--approach-update-interval", type=int, default=None,
+                        help="M7 episodes between centroid recomputes. Default 10.")
     parser.add_argument(
         "--shaping",
         choices=list(_SHAPING_VARIANTS.keys()),
@@ -384,6 +396,10 @@ def main() -> int:
         outcome_bonus=args.outcome_bonus,
         outcome_window=args.outcome_window,
         outcome_max_episode_len=args.outcome_ep_len,
+        approach_reward_alpha=args.approach_alpha,
+        approach_top_frac=args.approach_top_frac,
+        approach_warmup_episodes=args.approach_warmup,
+        approach_update_interval=args.approach_update_interval,
     )
     print("agent ready (compiled graphs once, N lanes)")
 
@@ -540,13 +556,19 @@ def main() -> int:
             outcome_base = _safe(diags[0].get("outcome_baseline", 0.0), 0.0)
             outcome_loss = _safe(diags[0].get("outcome_loss", 0.0), 0.0)
             entropy_trajectory.append((step, ent))
+            appr_d = (
+                sum(_safe(d.get("approach_distance", 0.0), 0.0) for d in diags)
+                / args.lanes
+            )
+            appr_fill = int(_safe(diags[0].get("approach_buffer_fill", 0), 0))
+            appr_drift = _safe(diags[0].get("approach_centroid_drift", 0.0), 0.0)
             print(
                 f"step={step:>5} eps={total_episodes:>3} "
                 f"avg_ret={avg_return:+7.1f} soft%(last{window_size})={soft_pct_window:4.1f} | "
                 f"wm={wm:.3f} pi={pi:.3f} "
                 f"r={rew:+6.3f} surp={sup:+5.2f} homeo={hom:+6.2f} "
                 f"ent={ent:.2f} opts={opt_str} gdist={gdist:.2f} "
-                f"m6:r_hat={r_hat_mean:+5.2f} base={outcome_base:+6.1f} loss={outcome_loss:.3f} "
+                f"m7:d={appr_d:5.2f} fill={appr_fill} drift={appr_drift:.2f} "
                 f"| {sps:5.1f} env-steps/s"
             )
 

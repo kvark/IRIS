@@ -23,6 +23,7 @@
 
 pub mod adapter;
 pub mod agent;
+pub mod approach;
 pub mod buffer;
 pub mod credit;
 pub mod encoder;
