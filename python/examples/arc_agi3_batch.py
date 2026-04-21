@@ -107,6 +107,22 @@ def main() -> int:
                         help="Gaussian exploration noise for coord head. Default 0.3.")
     parser.add_argument("--coord-lr", type=float, default=None,
                         help="Coord head LR. Default = learning_rate × 0.3.")
+    parser.add_argument("--delta-goal-alpha", type=float, default=None,
+                        help="M8 delta-goal reward weight. 0 (default) disables. "
+                        "Try 0.1-1.0 on envs where state-change events are rare "
+                        "but reaching them is the goal. Self-supervised — no "
+                        "task-specific signal.")
+    parser.add_argument("--delta-goal-threshold", type=float, default=None,
+                        help="Min per-step latent-delta to register a new M8 goal. "
+                        "Default 0.5.")
+    parser.add_argument("--delta-goal-merge-radius", type=float, default=None,
+                        help="M8 goals within this L2 distance of an existing goal "
+                        "are dropped as duplicates. Default 0.1.")
+    parser.add_argument("--delta-goal-bank-size", type=int, default=None,
+                        help="M8 max goal-bank size (oldest evicted). Default 64.")
+    parser.add_argument("--delta-goal-distance-clamp", type=float, default=None,
+                        help="M8 symmetric distance clamp to bound per-step bonus "
+                        "magnitude (pre-alpha). Default 5.0.")
     args = parser.parse_args()
 
     # --- Set up the local ARC-AGI-3 env ---
@@ -239,6 +255,16 @@ def main() -> int:
             agent_kwargs["coord_sigma"] = args.coord_sigma
         if args.coord_lr is not None:
             agent_kwargs["coord_lr"] = args.coord_lr
+        if args.delta_goal_alpha is not None:
+            agent_kwargs["delta_goal_alpha"] = args.delta_goal_alpha
+        if args.delta_goal_threshold is not None:
+            agent_kwargs["delta_goal_threshold"] = args.delta_goal_threshold
+        if args.delta_goal_merge_radius is not None:
+            agent_kwargs["delta_goal_merge_radius"] = args.delta_goal_merge_radius
+        if args.delta_goal_bank_size is not None:
+            agent_kwargs["delta_goal_bank_size"] = args.delta_goal_bank_size
+        if args.delta_goal_distance_clamp is not None:
+            agent_kwargs["delta_goal_distance_clamp"] = args.delta_goal_distance_clamp
         agent = kindle.BatchAgent(**agent_kwargs)
     else:
         agent = None  # random baseline
@@ -364,6 +390,7 @@ def main() -> int:
             if agent is not None:
                 diags = agent.diagnostics()
                 d = diags[0]
+                dg_bank = agent.delta_goal_bank_size()
                 last_ent = (
                     f"| wm={float(d['loss_world_model']):.3f} "
                     f"pi={float(d['loss_policy']):.3f} "
@@ -372,7 +399,8 @@ def main() -> int:
                     f"nov={float(d['reward_novelty']):+4.2f} "
                     f"hom={float(d['reward_homeo']):+5.2f} "
                     f"ord={float(d['reward_order']):+4.2f} "
-                    f"rnd={float(d.get('rnd_mse', 0.0)):+5.2f}"
+                    f"rnd={float(d.get('rnd_mse', 0.0)):+5.2f} "
+                    f"dg={dg_bank:>3}"
                 )
             print(
                 f"step={step:>5} eps={ep_count:>3} lvl_events={levels_events:>3} "

@@ -453,6 +453,11 @@ impl PyBatchAgent {
         coord_hidden_dim = None,
         coord_sigma = None,
         coord_lr = None,
+        delta_goal_alpha = None,
+        delta_goal_threshold = None,
+        delta_goal_merge_radius = None,
+        delta_goal_bank_size = None,
+        delta_goal_distance_clamp = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -512,6 +517,11 @@ impl PyBatchAgent {
         coord_hidden_dim: Option<usize>,
         coord_sigma: Option<f32>,
         coord_lr: Option<f32>,
+        delta_goal_alpha: Option<f32>,
+        delta_goal_threshold: Option<f32>,
+        delta_goal_merge_radius: Option<f32>,
+        delta_goal_bank_size: Option<usize>,
+        delta_goal_distance_clamp: Option<f32>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -723,6 +733,21 @@ impl PyBatchAgent {
         if let Some(v) = coord_lr {
             config.coord_lr = Some(v);
         }
+        if let Some(v) = delta_goal_alpha {
+            config.delta_goal_alpha = v;
+        }
+        if let Some(v) = delta_goal_threshold {
+            config.delta_goal_threshold = v;
+        }
+        if let Some(v) = delta_goal_merge_radius {
+            config.delta_goal_merge_radius = v;
+        }
+        if let Some(v) = delta_goal_bank_size {
+            config.delta_goal_bank_size = v;
+        }
+        if let Some(v) = delta_goal_distance_clamp {
+            config.delta_goal_distance_clamp = v;
+        }
         if let Some(ek) = encoder_kind {
             config.encoder_kind = match ek.as_str() {
                 "mlp" => EncoderKind::Mlp,
@@ -919,6 +944,19 @@ impl PyBatchAgent {
     /// advantages. No-op when the coord head is disabled.
     fn train_coord_head(&mut self) {
         self.agent.train_coord_head();
+    }
+
+    /// Current size of the M8 delta-goal bank. Returns 0 when
+    /// M8 is disabled.
+    fn delta_goal_bank_size(&self) -> usize {
+        self.agent.delta_goal_bank_size()
+    }
+
+    /// Number of M8 goal-events recorded during the most recent
+    /// `observe()` call, summed across lanes. Returns 0 when M8
+    /// is disabled.
+    fn last_delta_goal_events(&self) -> usize {
+        self.agent.last_delta_goal_events()
     }
 }
 
