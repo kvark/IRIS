@@ -464,3 +464,39 @@ Each is genuine research-scale work:
 The current infrastructure supports any of these — we have
 clean slots for additional primitives, a working vision
 encoder, and a functional RND+coord stack to build on.
+
+### M8 v1 — delta-goal bank (state-delta-triggered), 2026-04-20
+
+First try at the "self-supervised sub-goal discovery" direction:
+`DeltaGoalBank` in `kindle/src/delta_goals.rs`. Every per-step
+obs-token delta above `delta_goal_threshold` writes `obs_cur` into
+a rolling bank (size `delta_goal_bank_size`); `merge_radius` drops
+near-duplicates. Reward each step is `-α · min_i ‖obs − g_i‖`
+(clamped), pulling the policy toward the nearest bank entry.
+
+Note: like RND, M8 reads the 64-dim obs TOKEN, not the post-encoder
+latent. First run with the latent had `dg=0` across 2000 steps on
+cd82 — the CNN latent clusters tight enough that near-zero per-step
+deltas wash out the threshold. The obs token carries the raw
+per-frame variation.
+
+**A/B on cd82 (10k steps each, seed 42, full CNN+RND+coord stack):**
+
+| config           | eps | levels (mean/end) | lvl_events | dg bank |
+| ---------------- | --- | ----------------- | ---------- | ------- |
+| no M8 (baseline) | 99  | 0.99 / 1          | 1          | 0       |
+| M8 α=0.3 th=0.3  | 99  | 0.99 / 1          | 1          | 64 full |
+
+**Task-level outcome identical.** Bank fills to capacity within
+~500 steps, then saturates.
+
+**Mechanism**: the bank represents the agent's routine trajectory
+points, not genuinely goal-worthy states. Because the agent already
+visits these states, the nearest-distance reward is ~uniformly
+small everywhere it goes — no gradient toward new behavior.
+
+**Next iteration (M8 v2)**: gate recording on world-model
+prediction error, not raw obs-delta. "Record `obs_cur` as a goal
+only when the WM failed to predict the transition that led here."
+This banks surprising transitions, not routine ones. Still
+self-supervised — no task-specific priors.

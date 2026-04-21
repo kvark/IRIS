@@ -38,6 +38,7 @@ use crate::approach;
 use crate::buffer::{ExperienceBuffer, Transition};
 use crate::coord;
 use crate::credit;
+use crate::delta_goals;
 use crate::encoder::{CnnEncoder, Encoder};
 use crate::env::{Action, ActionKind, Environment, Observation};
 use crate::option;
@@ -395,6 +396,27 @@ pub struct AgentConfig {
     /// LR for the coord head's REINFORCE update. `None` →
     /// `learning_rate × 0.3`.
     pub coord_lr: Option<f32>,
+    /// M8 delta-goal reward. When `> 0`, kindle maintains a bank of
+    /// latent positions where a significant state change was just
+    /// observed (`‖z_cur − z_prev‖ ≥ delta_goal_threshold`) and
+    /// rewards the policy with `−α · min_i ‖z − g_i‖` (clamped by
+    /// `delta_goal_distance_clamp`). Self-supervised: no task labels.
+    /// Goal-bank stays diverse because candidates within
+    /// `delta_goal_merge_radius` of an existing goal are dropped.
+    /// Zero (default) disables M8 and skips construction.
+    pub delta_goal_alpha: f32,
+    /// M8 minimum per-step latent-delta to trigger a new goal entry.
+    /// Below this, a step's `z_cur` is not recorded even if it lands
+    /// in a novel region. Calibrate alongside `latent_dim`.
+    pub delta_goal_threshold: f32,
+    /// M8 merge radius: a candidate goal within this L2 distance of
+    /// any existing bank entry is considered a duplicate and dropped.
+    pub delta_goal_merge_radius: f32,
+    /// M8 maximum bank size. Oldest entries are evicted first.
+    pub delta_goal_bank_size: usize,
+    /// M8 symmetric distance clamp (pre-α) to bound worst-case
+    /// per-step reward magnitude.
+    pub delta_goal_distance_clamp: f32,
     /// WM encoder backbone. `Mlp` (default) = kindle's original
     /// obs-token encoder; `Cnn { channels, height, width }` =
     /// conv-net encoder for visual/grid inputs (ARC-AGI-3 etc.).
@@ -495,6 +517,11 @@ impl Default for AgentConfig {
             coord_hidden_dim: 32,
             coord_sigma: 0.3,
             coord_lr: None,
+            delta_goal_alpha: 0.0,
+            delta_goal_threshold: 0.5,
+            delta_goal_merge_radius: 0.1,
+            delta_goal_bank_size: 64,
+            delta_goal_distance_clamp: 5.0,
             encoder_kind: EncoderKind::Mlp,
             outcome_window: 1,
             outcome_clamp: 5.0,
@@ -940,6 +967,15 @@ pub struct Agent {
     approach_ep_returns: Vec<f32>,
     /// M7 latest approach-distance per lane, for diagnostics.
     approach_distances: Vec<f32>,
+    /// M8 delta-goal bank (shared across lanes). `None` when
+    /// `delta_goal_alpha == 0.0`.
+    delta_goal_bank: Option<delta_goals::DeltaGoalBank>,
+    /// M8 per-lane previous latent, cleared at episode boundaries
+    /// so the cross-episode jump never triggers a spurious goal.
+    delta_goal_prev_latent: Vec<Option<Vec<f32>>>,
+    /// M8 number of goal-events recorded during the most recent
+    /// `observe()` call, summed across lanes. Diagnostic only.
+    last_delta_goal_events: usize,
 }
 
 /// Cosine similarity between two equal-length vectors. Returns 0 when
@@ -1242,6 +1278,26 @@ impl Agent {
             None
         };
 
+        // M8 delta-goal bank. Shared across lanes so all of them
+        // benefit from discoveries by any one lane. Feature vector
+        // is the obs TOKEN (OBS_TOKEN_DIM), NOT the post-encoder
+        // latent: a well-trained encoder compresses state into a
+        // narrow region where per-step latent-deltas fall below
+        // any useful threshold (the same saturation RND hit, see
+        // `rnd_reward_alpha` doc). The obs token carries the raw
+        // per-frame variation that "something just changed in the
+        // world" should key off.
+        let delta_goal_bank = if config.delta_goal_alpha > 0.0 {
+            Some(delta_goals::DeltaGoalBank::new(
+                OBS_TOKEN_DIM,
+                config.delta_goal_bank_size,
+                config.delta_goal_threshold,
+                config.delta_goal_merge_radius,
+            ))
+        } else {
+            None
+        };
+
         // M6 outcome-value head (CPU MLP). Constructed only when the
         // user has asked for a non-zero bonus weight. Its LR derives
         // from `lr_outcome` or falls back to `learning_rate × 0.3`.
@@ -1370,6 +1426,9 @@ impl Agent {
             coord_head,
             coord_last_reward: vec![0.0; n],
             coord_reward_baseline: 0.0,
+            delta_goal_bank,
+            delta_goal_prev_latent: (0..n).map(|_| None).collect(),
+            last_delta_goal_events: 0,
             config,
         }
     }
@@ -1791,6 +1850,10 @@ impl Agent {
         let mut rnd_state = self.rnd_state.take();
         let mut rnd_mse_sum = 0.0f32;
         let mut rnd_mse_count = 0usize;
+        let dg_alpha = self.config.delta_goal_alpha;
+        let dg_clamp = self.config.delta_goal_distance_clamp;
+        let mut dg_bank = self.delta_goal_bank.take();
+        let mut dg_events_this_step: usize = 0;
         let m7_warmup = self.config.approach_warmup_episodes;
         let m7_homeo_taper = self.config.homeo_confidence_taper.clamp(0.0, 1.0);
         let mut m7_state = self.approach_state.take();
@@ -2065,7 +2128,27 @@ impl Agent {
                 0.0
             };
 
-            let reward = reward_pre_m6 + m6_bonus + m7_reward + rnd_reward;
+            // M8 delta-goal reward. First, consider recording a new
+            // goal from the (prev, cur) OBS pair; then score the
+            // current obs against the (possibly just-updated) bank.
+            // `prev_obs` is cleared on episode boundaries below so
+            // cross-episode jumps never register. See bank
+            // construction for the rationale for obs over latent.
+            let dg_reward = if let Some(bank) = dg_bank.as_mut() {
+                if env_boundary {
+                    self.delta_goal_prev_latent[i] = None;
+                }
+                let prev = self.delta_goal_prev_latent[i].as_deref();
+                if bank.observe_delta(prev, obs_row) {
+                    dg_events_this_step += 1;
+                }
+                self.delta_goal_prev_latent[i] = Some(obs_row.to_vec());
+                bank.reward(obs_row, dg_alpha, dg_clamp)
+            } else {
+                0.0
+            };
+
+            let reward = reward_pre_m6 + m6_bonus + m7_reward + rnd_reward + dg_reward;
 
             // Cache per-lane reward for the coord head's next
             // REINFORCE update; the head uses this step's reward
@@ -2114,6 +2197,8 @@ impl Agent {
         } else {
             0.0
         };
+        self.delta_goal_bank = dg_bank;
+        self.last_delta_goal_events = dg_events_this_step;
 
         // --- Credit assignment (per-lane, sequential CPU-light dispatches) ---
         for i in 0..n {
@@ -2944,6 +3029,17 @@ impl Agent {
         if let Some(state) = self.rnd_state.as_mut() {
             state.reset_predictor();
         }
+    }
+
+    /// Current size of the M8 delta-goal bank, or 0 when M8 is off.
+    pub fn delta_goal_bank_size(&self) -> usize {
+        self.delta_goal_bank.as_ref().map_or(0, |b| b.len())
+    }
+
+    /// Number of M8 goal-events recorded in the most recent
+    /// `observe()` call, summed across lanes. Zero when M8 is off.
+    pub fn last_delta_goal_events(&self) -> usize {
+        self.last_delta_goal_events
     }
 
     pub fn approach_confidence(&self) -> f32 {
