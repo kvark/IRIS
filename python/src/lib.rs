@@ -459,6 +459,8 @@ impl PyBatchAgent {
         delta_goal_bank_size = None,
         delta_goal_distance_clamp = None,
         delta_goal_surprise_threshold = None,
+        xeps_reward_alpha = None,
+        xeps_grid_resolution = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -524,6 +526,8 @@ impl PyBatchAgent {
         delta_goal_bank_size: Option<usize>,
         delta_goal_distance_clamp: Option<f32>,
         delta_goal_surprise_threshold: Option<f32>,
+        xeps_reward_alpha: Option<f32>,
+        xeps_grid_resolution: Option<f32>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -753,6 +757,12 @@ impl PyBatchAgent {
         if let Some(v) = delta_goal_surprise_threshold {
             config.delta_goal_surprise_threshold = v;
         }
+        if let Some(v) = xeps_reward_alpha {
+            config.xeps_reward_alpha = v;
+        }
+        if let Some(v) = xeps_grid_resolution {
+            config.xeps_grid_resolution = Some(v);
+        }
         if let Some(ek) = encoder_kind {
             config.encoder_kind = match ek.as_str() {
                 "mlp" => EncoderKind::Mlp,
@@ -962,6 +972,12 @@ impl PyBatchAgent {
     /// is disabled.
     fn last_delta_goal_events(&self) -> usize {
         self.agent.last_delta_goal_events()
+    }
+
+    /// Distinct `(quantized_state, action)` pairs tracked by the
+    /// cross-episode memory. Returns 0 when disabled.
+    fn xeps_distinct_pairs(&self) -> usize {
+        self.agent.xeps_distinct_pairs()
     }
 }
 

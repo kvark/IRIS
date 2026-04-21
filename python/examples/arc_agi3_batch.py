@@ -127,6 +127,14 @@ def main() -> int:
                         help="M8 v2: min WM pred_error to enable goal recording "
                         "this step. Default 0.5. Banks surprising transitions "
                         "(WM didn't predict them) rather than routine ones.")
+    parser.add_argument("--xeps-alpha", type=float, default=None,
+                        help="Cross-episode state-action novelty weight. 0 "
+                        "(default) disables. Try 0.5-2.0 on games where the "
+                        "agent reaches a local optimum every episode and "
+                        "retries the same actions there. Self-supervised.")
+    parser.add_argument("--xeps-grid-resolution", type=float, default=None,
+                        help="Grid bucket size for xeps state key. "
+                        "Default = main grid_resolution.")
     args = parser.parse_args()
 
     # --- Set up the local ARC-AGI-3 env ---
@@ -271,6 +279,10 @@ def main() -> int:
             agent_kwargs["delta_goal_distance_clamp"] = args.delta_goal_distance_clamp
         if args.delta_goal_surprise_threshold is not None:
             agent_kwargs["delta_goal_surprise_threshold"] = args.delta_goal_surprise_threshold
+        if args.xeps_alpha is not None:
+            agent_kwargs["xeps_reward_alpha"] = args.xeps_alpha
+        if args.xeps_grid_resolution is not None:
+            agent_kwargs["xeps_grid_resolution"] = args.xeps_grid_resolution
         agent = kindle.BatchAgent(**agent_kwargs)
     else:
         agent = None  # random baseline
@@ -397,6 +409,7 @@ def main() -> int:
                 diags = agent.diagnostics()
                 d = diags[0]
                 dg_bank = agent.delta_goal_bank_size()
+                xeps_pairs = agent.xeps_distinct_pairs()
                 last_ent = (
                     f"| wm={float(d['loss_world_model']):.3f} "
                     f"pi={float(d['loss_policy']):.3f} "
@@ -406,7 +419,7 @@ def main() -> int:
                     f"hom={float(d['reward_homeo']):+5.2f} "
                     f"ord={float(d['reward_order']):+4.2f} "
                     f"rnd={float(d.get('rnd_mse', 0.0)):+5.2f} "
-                    f"dg={dg_bank:>3}"
+                    f"dg={dg_bank:>3} xeps={xeps_pairs:>4}"
                 )
             print(
                 f"step={step:>5} eps={ep_count:>3} lvl_events={levels_events:>3} "

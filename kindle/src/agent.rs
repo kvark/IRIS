@@ -47,6 +47,7 @@ use crate::policy;
 use crate::reward::{RewardCircuit, RewardWeights};
 use crate::rnd;
 use crate::world_model::WorldModel;
+use crate::xeps_memory;
 use hashbrown::HashMap;
 use meganeura::Session;
 use meganeura::graph::Graph;
@@ -427,6 +428,21 @@ pub struct AgentConfig {
     /// didn't predict, i.e. genuinely unexpected events. `0.0`
     /// (treat as "no surprise gate") preserves v1 semantics.
     pub delta_goal_surprise_threshold: f32,
+    /// Cross-episode state-action novelty weight. When `> 0`,
+    /// kindle maintains a persistent `(quantized_state, action)`
+    /// visit counter (shared across lanes, spanning episode
+    /// boundaries) and emits `α / sqrt(1 + count)` as an intrinsic
+    /// per-step reward keyed on the PREVIOUS step's (state, action)
+    /// pair. Unlike the existing state-only novelty primitive,
+    /// this discriminates between actions at the same state —
+    /// targeting the "reach L1 every episode and retry the same
+    /// actions there" failure mode observed on ARC-AGI-3. Zero
+    /// (default) disables the memory and skips construction.
+    pub xeps_reward_alpha: f32,
+    /// Grid resolution for the cross-episode memory's state key.
+    /// `None` → reuse `grid_resolution` (the state-novelty bucket
+    /// size), keeping the two quantization schemes consistent.
+    pub xeps_grid_resolution: Option<f32>,
     /// WM encoder backbone. `Mlp` (default) = kindle's original
     /// obs-token encoder; `Cnn { channels, height, width }` =
     /// conv-net encoder for visual/grid inputs (ARC-AGI-3 etc.).
@@ -533,6 +549,8 @@ impl Default for AgentConfig {
             delta_goal_bank_size: 64,
             delta_goal_distance_clamp: 5.0,
             delta_goal_surprise_threshold: 0.5,
+            xeps_reward_alpha: 0.0,
+            xeps_grid_resolution: None,
             encoder_kind: EncoderKind::Mlp,
             outcome_window: 1,
             outcome_clamp: 5.0,
@@ -987,6 +1005,14 @@ pub struct Agent {
     /// M8 number of goal-events recorded during the most recent
     /// `observe()` call, summed across lanes. Diagnostic only.
     last_delta_goal_events: usize,
+    /// Cross-episode state-action memory (shared across lanes).
+    /// `None` when `xeps_reward_alpha == 0.0`.
+    xeps_memory: Option<xeps_memory::StateActionMemory>,
+    /// Last action sampled for each lane (discrete id), cached so
+    /// the next `observe()` can credit the preceding (state,
+    /// action) pair. `None` before any action has been sampled on
+    /// that lane, or after an episode boundary reset.
+    xeps_prev_action: Vec<Option<u32>>,
 }
 
 /// Cosine similarity between two equal-length vectors. Returns 0 when
@@ -1309,6 +1335,20 @@ impl Agent {
             None
         };
 
+        // Cross-episode state-action memory. Keyed on the encoder
+        // latent (post-encoder), quantized by
+        // `xeps_grid_resolution` (or `grid_resolution` when
+        // unspecified). Shared across lanes — lanes pool
+        // exploration credit.
+        let xeps_memory = if config.xeps_reward_alpha > 0.0 {
+            let res = config
+                .xeps_grid_resolution
+                .unwrap_or(config.grid_resolution);
+            Some(xeps_memory::StateActionMemory::new(res))
+        } else {
+            None
+        };
+
         // M6 outcome-value head (CPU MLP). Constructed only when the
         // user has asked for a non-zero bonus weight. Its LR derives
         // from `lr_outcome` or falls back to `learning_rate × 0.3`.
@@ -1440,6 +1480,8 @@ impl Agent {
             delta_goal_bank,
             delta_goal_prev_latent: (0..n).map(|_| None).collect(),
             last_delta_goal_events: 0,
+            xeps_memory,
+            xeps_prev_action: vec![None; n],
             config,
         }
     }
@@ -1749,6 +1791,13 @@ impl Agent {
                     .clone()
                     .expect("cached_action is Some by branch condition")
             };
+            // Cache the discrete action id for cross-episode memory.
+            // Continuous actions don't key the xeps memory (no natural
+            // discrete index), so they leave `xeps_prev_action` as None.
+            self.xeps_prev_action[i] = match action {
+                Action::Discrete(a) => Some(a as u32),
+                Action::Continuous(_) => None,
+            };
             actions.push(action);
         }
         actions
@@ -1866,6 +1915,8 @@ impl Agent {
         let dg_surprise_gate = self.config.delta_goal_surprise_threshold;
         let mut dg_bank = self.delta_goal_bank.take();
         let mut dg_events_this_step: usize = 0;
+        let xeps_alpha = self.config.xeps_reward_alpha;
+        let mut xeps_memory = self.xeps_memory.take();
         let m7_warmup = self.config.approach_warmup_episodes;
         let m7_homeo_taper = self.config.homeo_confidence_taper.clamp(0.0, 1.0);
         let mut m7_state = self.approach_state.take();
@@ -2167,7 +2218,41 @@ impl Agent {
                 0.0
             };
 
-            let reward = reward_pre_m6 + m6_bonus + m7_reward + rnd_reward + dg_reward;
+            // Cross-episode state-action novelty. Keyed on the
+            // PREVIOUS step's (obs_token, action) — that's the
+            // transition we're rewarding. The obs token is used
+            // (not the post-encoder latent) because a trained
+            // encoder clusters latents tight enough that the
+            // quantized key collapses to 1-2 cells — verified
+            // empirically on cd82 (xeps=6 at default grid, xeps=12
+            // at fine grid) before switching to obs. The obs
+            // token carries the raw per-frame variation that
+            // distinguishes states the agent should care about.
+            let xeps_reward = if let Some(memory) = xeps_memory.as_mut() {
+                if let (Some(prev), Some(prev_a)) = (lane.buffer.last(), self.xeps_prev_action[i]) {
+                    let bonus = if env_boundary {
+                        0.0
+                    } else {
+                        memory.reward(&prev.observation, prev_a, xeps_alpha)
+                    };
+                    memory.observe(&prev.observation, prev_a);
+                    bonus
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+            // Also clear prev_action on the boundary step itself, so
+            // the NEXT step (first full step of the new episode)
+            // sees an empty prev — no spurious credit before a
+            // fresh action has been sampled.
+            if env_boundary {
+                self.xeps_prev_action[i] = None;
+            }
+
+            let reward =
+                reward_pre_m6 + m6_bonus + m7_reward + rnd_reward + dg_reward + xeps_reward;
 
             // Cache per-lane reward for the coord head's next
             // REINFORCE update; the head uses this step's reward
@@ -2218,6 +2303,7 @@ impl Agent {
         };
         self.delta_goal_bank = dg_bank;
         self.last_delta_goal_events = dg_events_this_step;
+        self.xeps_memory = xeps_memory;
 
         // --- Credit assignment (per-lane, sequential CPU-light dispatches) ---
         for i in 0..n {
@@ -3059,6 +3145,12 @@ impl Agent {
     /// `observe()` call, summed across lanes. Zero when M8 is off.
     pub fn last_delta_goal_events(&self) -> usize {
         self.last_delta_goal_events
+    }
+
+    /// Distinct `(quantized_state, action)` pairs in the
+    /// cross-episode memory. 0 when disabled. Diagnostic.
+    pub fn xeps_distinct_pairs(&self) -> usize {
+        self.xeps_memory.as_ref().map_or(0, |m| m.distinct_pairs())
     }
 
     pub fn approach_confidence(&self) -> f32 {

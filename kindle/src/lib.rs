@@ -36,6 +36,7 @@ pub mod policy;
 pub mod reward;
 pub mod rnd;
 pub mod world_model;
+pub mod xeps_memory;
 
 pub use adapter::{EnvAdapter, GenericAdapter, MAX_ACTION_DIM, OBS_TOKEN_DIM};
 pub use agent::{Agent, AgentConfig};

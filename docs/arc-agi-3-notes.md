@@ -547,3 +547,53 @@ within a game, systematic exploration of untried sequences becomes
 possible. This is where "reach L1 every episode but never try
 what's past L1" would become "reach L1 AND carry the memory that
 nothing worked there last time, so try something different now".
+
+### xeps memory — cross-episode state-action novelty, 2026-04-20
+
+Module `kindle/src/xeps_memory.rs`: persistent (quantized_obs, action)
+counter shared across lanes, spanning episodes. Per-step intrinsic
+bonus `α / sqrt(1 + count(prev_obs, prev_action))`. Obs-keyed (not
+latent-keyed) because the CNN-encoded latent saturates to 1-2 grid
+cells on ARC — verified before switching (xeps=6 at default grid,
+xeps=12 at fine grid, vs xeps=2200+ with obs-keying).
+
+**cd82 A/B (10k steps, full stack):**
+
+| config                | xeps pairs | eps | levels/end | lvl_events |
+| --------------------- | ---------- | --- | ---------- | ---------- |
+| no xeps               | 0          | 99  | 0.99 / 1   | 1          |
+| xeps α=0.1 grid=0.05  | 2202       | 99  | 0.99 / 1   | 1          |
+| xeps α=0.3 grid=0.05  | 2322       | 99  | 0.99 / 1   | 1          |
+| xeps α=1.0 grid=0.05  | 2322       | 99  | 0.99 / 1   | 1          |
+
+At α=1.0, entropy held pinned at ln(6)=1.79 — xeps reward dominated
+the advantage signal and the policy stayed fully stochastic. At
+α=0.1, entropy behaved normally but the signal was too weak to
+change task outcomes. No α produced a level event that baseline
+didn't also produce.
+
+**sb26 A/B:** xeps=3 at α=0.3 (obs is near-static — the whole 10k
+trajectory collapses into one obs cell × 3 actions). Same 45/0/0.
+
+**Interpretation.** Cross-episode state-action novelty, at both
+extremes of the saturation spectrum (tight obs → few pairs;
+loose obs → many pairs but α required is too high to commit), does
+not move cd82's L1→L2 gap or sb26's L0→L1 gap. Reward-primitive
+experiments M6, M7, M8 v1/v2, RND, RND-reset, coord-head, and xeps
+have all now been tried; **ALL null on ARC-AGI-3 multi-level
+progression** under 10k-step budgets.
+
+The L1→L2 gap on cd82 needs 8 specific actions in sequence AT L1.
+At the agent's ~10 steps/L1 of random-with-xeps exploration, the
+probability of stumbling on a correct 8-step action sequence is
+~6^-8 ≈ 6e-7 — essentially zero in 10k steps. This is not a reward
+circuit problem; it's an exploration-depth / action-abstraction
+problem that no per-step intrinsic reward can solve.
+
+**Next remaining lever**: **action macros** (ARC 3 in the roadmap).
+Cluster frequently-occurring action subsequences into atomic
+options the policy can commit to in one decision, shortening the
+effective episode depth. Or model-based planning: use kindle's
+world model to roll out hypothetical action sequences and pick
+one that's predicted to reach a novel state. Both are substantial
+architecture work beyond reward-primitive tweaks.
