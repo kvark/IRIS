@@ -135,6 +135,14 @@ def main() -> int:
     parser.add_argument("--xeps-grid-resolution", type=float, default=None,
                         help="Grid bucket size for xeps state key. "
                         "Default = main grid_resolution.")
+    parser.add_argument("--macro-len", type=int, default=0,
+                        help="Harness-side random action-macro injection length "
+                        "(k steps executed from a single sampled action sequence). "
+                        "0 (default) disables. Tests whether deeper exploration "
+                        "breaks the 8-action-sequence gap on cd82.")
+    parser.add_argument("--macro-inject-prob", type=float, default=0.0,
+                        help="Probability per step of triggering a new k-action "
+                        "random macro (must be 0 if --macro-len=0).")
     args = parser.parse_args()
 
     # --- Set up the local ARC-AGI-3 env ---
@@ -297,6 +305,9 @@ def main() -> int:
     ep_levels_at_end: list[int] = []
     ep_lens: list[int] = []
     levels_events = 0  # total level completions across all episodes
+    # Harness-side action-macro injection state.
+    macro_queue: list[int] = []  # remaining actions to play from current macro
+    macros_injected = 0  # count of macros triggered (for diagnostic)
     t0 = time.time()
 
     def homeo_for(
@@ -369,6 +380,21 @@ def main() -> int:
         else:
             kindle_action = rng.randrange(num_actions)
             kindle_xy = None
+        # Harness-side action-macro injection. If a macro is queued,
+        # pop its next action and use it instead of kindle's. If none
+        # queued and the per-step injection-prob fires, sample a new
+        # random k-action sequence. This tests the "deeper exploration
+        # breaks the L1→L2 gap" hypothesis without any agent change;
+        # kindle still observes the played action via observe(), so
+        # the world model + credit machinery stay consistent (policy
+        # gradients are mildly off-policy for macro-injected steps).
+        if macro_queue:
+            kindle_action = macro_queue.pop(0)
+        elif args.macro_len > 0 and rng.random() < args.macro_inject_prob:
+            macro = [rng.randrange(num_actions) for _ in range(args.macro_len)]
+            kindle_action = macro[0]
+            macro_queue = macro[1:]
+            macros_injected += 1
         game_action = action_to_game(kindle_action, kindle_xy)
 
         # Step env
@@ -421,10 +447,11 @@ def main() -> int:
                     f"rnd={float(d.get('rnd_mse', 0.0)):+5.2f} "
                     f"dg={dg_bank:>3} xeps={xeps_pairs:>4}"
                 )
+            macro_stat = f" macros={macros_injected:>4}" if args.macro_len > 0 else ""
             print(
                 f"step={step:>5} eps={ep_count:>3} lvl_events={levels_events:>3} "
                 f"cur_lvl={new_levels} avail={available_actions} "
-                f"{last_ent} | {sps:5.1f} steps/s"
+                f"{last_ent}{macro_stat} | {sps:5.1f} steps/s"
             )
 
     # Final summary

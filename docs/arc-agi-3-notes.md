@@ -597,3 +597,67 @@ effective episode depth. Or model-based planning: use kindle's
 world model to roll out hypothetical action sequences and pick
 one that's predicted to reach a novel state. Both are substantial
 architecture work beyond reward-primitive tweaks.
+
+### Action-macro injection (harness experiment), 2026-04-20
+
+Before committing to an agent-level macro-discovery module, tested
+the upstream hypothesis cheaply: harness-side random k-action
+injection. `--macro-len K --macro-inject-prob p` plays a uniformly
+random K-action sequence committed over K consecutive steps.
+
+**cd82 results (all with full CNN+RND+coord stack):**
+
+| macro_len | prob | steps | macros | eps | levels/end | lvl_events |
+| --------- | ---- | ----- | ------ | --- | ---------- | ---------- |
+| 3         | 0.05 | 10k   | 329    | 99  | 1.00 / 1   | 1          |
+| 5         | 0.10 | 10k   | ~200   | 99  | 0.81 / 1   | 1          |
+| 8         | 0.02 | 10k   | ~25    | 99  | 0.90 / 1   | 1          |
+| 8         | 0.05 | 30k   | 906    | 299 | 0.97 / 1   | 1          |
+| 8, +xeps  | 0.05 | 15k   | ~440   | 149 | 0.93 / 1   | 1          |
+
+**All null on L2**, consistent with the combinatorial argument:
+L1→L2 requires 8 specific actions in sequence; random 8-sequences
+hit the target at prob `6⁻⁸ ≈ 6e-7`; 906 random macros at prob
+~5% started-at-L1 gives `906 × 0.05 × 6e-7 ≈ 2.7e-5` expected
+successes — effectively zero at any feasible budget.
+
+Longer macros + higher prob actually REGRESS mean-levels (from 0.99
+baseline to 0.81 at `len=5, p=0.1`) because 20% of decisions are
+random, disrupting the learned L1-reaching policy.
+
+### Summary — what works and what doesn't on ARC-AGI-3
+
+Tried and null on L2 progression within 10k–30k steps on cd82
+(where L1 is reached reliably):
+- M6 outcome head (v1 + trajectory v2 + RTG v3)
+- M7 approach reward (v1 + confidence-weighted v2 + novelty ranking)
+- M8 delta-goal bank (v1 + WM-surprise-gated v2)
+- RND curiosity + RND predictor reset on level
+- Coord action head
+- xeps cross-episode state-action novelty (α ∈ {0.1, 0.3, 1.0})
+- Random action-macro injection (lengths 3/5/8)
+- xeps + macros combined
+
+Helped partially:
+- RND + coord head: 100% L1 reliability (up from 90%), no L2
+- Fixed homeo signal: enabled first L1 event at all
+
+Not yet tried (would break generality constraint):
+- Expert trajectory bootstrapping
+- Curriculum with L1 save-states
+- Hand-coded symbolic priors
+
+**Conclusion (2026-04-20).** kindle's cold-start self-training
+paradigm, combined with per-step intrinsic reward primitives and
+naive exploration, cannot close the L1→L2 gap on cd82 within
+feasible step budgets. This is a sample-complexity argument, not
+an algorithmic one: the 8-action-sequence depth requires 1.7M
+candidate sequences; kindle explores maybe 2000 random sequences
+per 10k steps. Under the "preserve generality — no task priors"
+constraint, this game is beyond kindle's reach.
+
+**ARC-AGI-3 is not the right testbed for kindle algorithm work.**
+Gym canaries (GridWorld/CartPole/Acrobot/Pendulum) and LunarLander
+remain productive — shorter sequence depth, more responsive to
+reward-class changes. Recommend redirecting to Lander 1 (homeo
+decomposition) next per the April 20 roadmap.
