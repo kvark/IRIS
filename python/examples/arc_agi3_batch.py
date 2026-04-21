@@ -38,6 +38,108 @@ import sys
 import time
 
 
+# --- Ablation blocks ------------------------------------------------------
+#
+# Each entry maps a named "block" (a self-contained reward/exploration
+# primitive or architecture toggle) to the default CLI-arg values that
+# enable it. To disable a block, omit it from the active set: the
+# underlying agent knobs stay at their factory defaults (typically
+# `alpha = 0` → primitive skipped entirely).
+#
+# Explicit CLI args always override block values. The resolver detects
+# "explicit" by scanning sys.argv so that omitting a flag leaves block
+# defaults in force.
+#
+# PRESETS compose blocks into named combinations. `full` is the
+# validated 100% L1 reach stack on cd82. `everything` tries all landed
+# primitives simultaneously — mainly useful for confirming they don't
+# collide.
+
+BLOCKS: dict[str, dict[str, object]] = {
+    "cnn": {
+        "encoder": "cnn",
+    },
+    "rnd": {
+        "rnd_alpha": 2.0,
+        "rnd_reset_on_level": True,
+    },
+    "coord": {
+        "coord_alpha": 1.0,
+    },
+    "m8": {
+        "delta_goal_alpha": 0.3,
+        "delta_goal_threshold": 0.0,
+        "delta_goal_merge_radius": 0.1,
+        "delta_goal_surprise_threshold": 0.5,
+    },
+    "xeps": {
+        "xeps_alpha": 0.3,
+        "xeps_grid_resolution": 0.05,
+    },
+    "planner": {
+        "planner_horizon": 4,
+        "planner_samples": 32,
+        "planner_every": 20,
+    },
+    "macros": {
+        "macro_len": 8,
+        "macro_inject_prob": 0.05,
+    },
+    # Reward-weight tuning: the "fixed homeo" state matching the
+    # 2026-04-20 first-L1 config. Reducing homeo weight to 0.1 stops
+    # the persistent -50 signal from swamping other gradients on ARC.
+    "arc_rewards": {
+        "reward_homeostatic": 0.1,
+        "reward_surprise": 5.0,
+    },
+}
+
+PRESETS: dict[str, list[str]] = {
+    "none": [],
+    # Validated 100% L1 stack on cd82 (commit 45a6e6c).
+    "full": ["cnn", "rnd", "coord", "arc_rewards"],
+    # All landed reward/exploration primitives simultaneously. Mainly
+    # a collision check — M8/xeps/planner were each independently null
+    # on cd82 L2; stacking them stays null (structural cap).
+    "everything": [
+        "cnn", "rnd", "coord", "arc_rewards",
+        "m8", "xeps", "planner",
+    ],
+}
+
+
+def _apply_blocks(args: argparse.Namespace, raw_argv: list[str]) -> list[str]:
+    """Resolve --preset / --enable / --disable into a set of blocks,
+    then apply each block's values to `args` unless the user passed the
+    flag explicitly on the command line. Returns the active block list
+    (sorted) for logging.
+    """
+    explicit: set[str] = set()
+    for tok in raw_argv:
+        if tok.startswith("--"):
+            name = tok[2:].split("=", 1)[0]
+            explicit.add(name.replace("-", "_"))
+
+    active: list[str] = list(PRESETS.get(args.preset, []))
+    if args.enable:
+        for b in args.enable.split(","):
+            b = b.strip()
+            if b and b not in active:
+                if b not in BLOCKS:
+                    raise SystemExit(f"unknown block {b!r}; available: {sorted(BLOCKS)}")
+                active.append(b)
+    if args.disable:
+        drop = {b.strip() for b in args.disable.split(",") if b.strip()}
+        active = [b for b in active if b not in drop]
+
+    for block_name in active:
+        for arg_name, val in BLOCKS[block_name].items():
+            if arg_name in explicit:
+                continue
+            setattr(args, arg_name, val)
+    return sorted(active)
+
+
 def main() -> int:
     try:
         from arc_agi import Arcade
@@ -49,6 +151,20 @@ def main() -> int:
     import kindle
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # Ablation harness: preset + composable enable/disable. Any explicit
+    # `--foo` flag wins over whatever the block would set. See BLOCKS /
+    # PRESETS at the top of this file.
+    parser.add_argument("--preset", choices=list(PRESETS.keys()), default="none",
+                        help="Named block combination. 'full' = validated 100%% "
+                        "L1 stack on cd82 (cnn+rnd+coord+arc_rewards). 'everything' "
+                        "stacks every landed primitive for collision testing. "
+                        "'none' (default) runs bare kindle.")
+    parser.add_argument("--enable", default=None,
+                        help="Comma-separated block names to add on top of --preset. "
+                        f"Blocks: {','.join(sorted(BLOCKS.keys()))}.")
+    parser.add_argument("--disable", default=None,
+                        help="Comma-separated block names to remove from the active "
+                        "set (applied after --preset + --enable).")
     parser.add_argument("--game", default="ls20",
                         help="ARC-AGI-3 game id prefix (e.g. 'ls20', 'ar25').")
     parser.add_argument("--steps", type=int, default=2000)
@@ -159,6 +275,11 @@ def main() -> int:
                         help="Harness trigger: call plan_and_queue every N env "
                         "steps. 0 disables harness-side planning invocation.")
     args = parser.parse_args()
+    active_blocks = _apply_blocks(args, sys.argv[1:])
+    if active_blocks:
+        print(f"active blocks: {','.join(active_blocks)}")
+    else:
+        print("active blocks: (none — bare kindle)")
 
     # --- Set up the local ARC-AGI-3 env ---
     arcade = Arcade()

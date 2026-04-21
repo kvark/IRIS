@@ -262,6 +262,74 @@ def normalize_obs(obs):
     return [float(x) / s for x, s in zip(obs, _LL_SCALE)]
 
 
+# --- Ablation blocks ------------------------------------------------------
+#
+# See arc_agi3_batch.py for the design. Blocks map named primitives to
+# CLI default values. PRESETS compose blocks. Explicit --flag always
+# wins over block defaults.
+
+BLOCKS: dict[str, dict[str, object]] = {
+    "v6_shaping": {"shaping": "v6"},
+    "m6": {
+        "outcome_alpha": 0.1,
+        "outcome_target": "reward_to_go",
+        "outcome_bonus": "potential_delta",
+        "outcome_window": 4,
+    },
+    "m7": {
+        "approach_alpha": 0.1,
+        "approach_warmup": 20,
+        "approach_rank_by": "novelty",
+    },
+    "m7_taper": {
+        "homeo_taper": 0.5,
+        "approach_confidence_saturation": 500,
+    },
+    "planner": {
+        "planner_horizon": 4,
+        "planner_samples": 32,
+        "planner_every": 20,
+    },
+}
+
+PRESETS: dict[str, list[str]] = {
+    "none": [],
+    # Canonical Lander config: v6 decomposed shaping, nothing else.
+    # Verified 5.27% cumulative / 10.0% peak at 25k (commit 694990a).
+    "v6": ["v6_shaping"],
+    # Everything that didn't regress Lander when combined.
+    "v6+m7": ["v6_shaping", "m7"],
+    "v6+planner": ["v6_shaping", "planner"],
+}
+
+
+def _apply_blocks(args: argparse.Namespace, raw_argv: list[str]) -> list[str]:
+    explicit: set[str] = set()
+    for tok in raw_argv:
+        if tok.startswith("--"):
+            name = tok[2:].split("=", 1)[0]
+            explicit.add(name.replace("-", "_"))
+
+    active: list[str] = list(PRESETS.get(args.preset, []))
+    if args.enable:
+        for b in args.enable.split(","):
+            b = b.strip()
+            if b and b not in active:
+                if b not in BLOCKS:
+                    raise SystemExit(f"unknown block {b!r}; available: {sorted(BLOCKS)}")
+                active.append(b)
+    if args.disable:
+        drop = {b.strip() for b in args.disable.split(",") if b.strip()}
+        active = [b for b in active if b not in drop]
+
+    for block_name in active:
+        for arg_name, val in BLOCKS[block_name].items():
+            if arg_name in explicit:
+                continue
+            setattr(args, arg_name, val)
+    return sorted(active)
+
+
 def main() -> int:
     try:
         import gymnasium as gym
@@ -272,6 +340,14 @@ def main() -> int:
     import kindle
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--preset", choices=list(PRESETS.keys()), default="none",
+                        help="Named block combination. 'v6' = 3-axis decomposed "
+                        "shaping (5.27%% cum / 10.0%% peak at 25k). 'none' (default) "
+                        "leaves shaping=v1 and no extras.")
+    parser.add_argument("--enable", default=None,
+                        help=f"Comma-separated blocks to add. Blocks: {','.join(sorted(BLOCKS.keys()))}.")
+    parser.add_argument("--disable", default=None,
+                        help="Comma-separated blocks to remove from the active set.")
     parser.add_argument("--env", default="LunarLander-v3")
     parser.add_argument("--lanes", type=int, default=4, help="concurrent LunarLander envs (N)")
     parser.add_argument("--steps", type=int, default=2_000, help="synchronous steps (per lane)")
@@ -412,6 +488,11 @@ def main() -> int:
     parser.add_argument("--planner-every", type=int, default=0,
                         help="Harness planner trigger cadence. 0 disables.")
     args = parser.parse_args()
+    active_blocks = _apply_blocks(args, sys.argv[1:])
+    if active_blocks:
+        print(f"active blocks: {','.join(active_blocks)}")
+    else:
+        print("active blocks: (none — bare kindle, v1 shaping)")
 
     shaping_fn = _SHAPING_VARIANTS[args.shaping]
 
