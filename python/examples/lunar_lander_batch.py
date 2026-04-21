@@ -404,6 +404,13 @@ def main() -> int:
         "Prevents the softmax from fully collapsing to deterministic by "
         "keeping gradient alive on every logit even at a one-hot softmax.",
     )
+    parser.add_argument("--planner-horizon", type=int, default=0,
+                        help="Track 3 planner horizon. 0 disables. Samples K-action "
+                        "sequences, rolls via WM, commits novelty-max.")
+    parser.add_argument("--planner-samples", type=int, default=None,
+                        help="Planner samples per call. Default 32.")
+    parser.add_argument("--planner-every", type=int, default=0,
+                        help="Harness planner trigger cadence. 0 disables.")
     args = parser.parse_args()
 
     shaping_fn = _SHAPING_VARIANTS[args.shaping]
@@ -466,6 +473,8 @@ def main() -> int:
         approach_confidence_saturation=args.approach_confidence_saturation,
         homeo_confidence_taper=args.homeo_taper,
         approach_rank_by=args.approach_rank_by,
+        planner_horizon=args.planner_horizon if args.planner_horizon > 0 else None,
+        planner_samples=args.planner_samples,
     )
     print("agent ready (compiled graphs once, N lanes)")
 
@@ -505,6 +514,15 @@ def main() -> int:
     entropy_trajectory: list[tuple[int, float]] = []
 
     for step in range(args.steps):
+        # Track 3 planner: periodically replan a K-action sequence
+        # per lane, queued to be consumed by act().
+        if (
+            args.planner_horizon > 0
+            and args.planner_every > 0
+            and step > 0
+            and step % args.planner_every == 0
+        ):
+            agent.plan_and_queue(num_actions)
         actions = agent.act(obs_lists)
 
         # Step each env with its own action.

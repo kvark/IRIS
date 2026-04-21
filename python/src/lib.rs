@@ -461,6 +461,9 @@ impl PyBatchAgent {
         delta_goal_surprise_threshold = None,
         xeps_reward_alpha = None,
         xeps_grid_resolution = None,
+        planner_horizon = None,
+        planner_samples = None,
+        planner_refresh_interval = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -528,6 +531,9 @@ impl PyBatchAgent {
         delta_goal_surprise_threshold: Option<f32>,
         xeps_reward_alpha: Option<f32>,
         xeps_grid_resolution: Option<f32>,
+        planner_horizon: Option<usize>,
+        planner_samples: Option<usize>,
+        planner_refresh_interval: Option<usize>,
     ) -> PyResult<Self> {
         if obs_dim > OBS_TOKEN_DIM {
             return Err(PyValueError::new_err(format!(
@@ -763,6 +769,15 @@ impl PyBatchAgent {
         if let Some(v) = xeps_grid_resolution {
             config.xeps_grid_resolution = Some(v);
         }
+        if let Some(v) = planner_horizon {
+            config.planner_horizon = v;
+        }
+        if let Some(v) = planner_samples {
+            config.planner_samples = v;
+        }
+        if let Some(v) = planner_refresh_interval {
+            config.planner_refresh_interval = v;
+        }
         if let Some(ek) = encoder_kind {
             config.encoder_kind = match ek.as_str() {
                 "mlp" => EncoderKind::Mlp,
@@ -978,6 +993,22 @@ impl PyBatchAgent {
     /// cross-episode memory. Returns 0 when disabled.
     fn xeps_distinct_pairs(&self) -> usize {
         self.agent.xeps_distinct_pairs()
+    }
+
+    /// Run the Track 3 model-based planner for every lane with an
+    /// empty planner queue. Samples `planner_samples` random action
+    /// sequences of length `planner_horizon`, rolls each out
+    /// through the WM, and queues the highest-novelty-score
+    /// sequence. Call from the harness before `act()` when you
+    /// want the next K actions to come from planning rather than
+    /// the policy. No-op when `planner_horizon == 0`.
+    fn plan_and_queue(&mut self, num_actions: usize) {
+        self.agent.plan_and_queue(num_actions, &mut self.rng);
+    }
+
+    /// Total queued planner actions across all lanes. Diagnostic.
+    fn planner_queue_len(&self) -> usize {
+        self.agent.planner_queue_len()
     }
 }
 

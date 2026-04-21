@@ -143,6 +143,21 @@ def main() -> int:
     parser.add_argument("--macro-inject-prob", type=float, default=0.0,
                         help="Probability per step of triggering a new k-action "
                         "random macro (must be 0 if --macro-len=0).")
+    parser.add_argument("--planner-horizon", type=int, default=0,
+                        help="Track 3 model-based planner horizon. 0 (default) "
+                        "disables planning. K >= 1 samples random K-action "
+                        "sequences, rolls them through the WM, picks the one "
+                        "whose predicted latents visit the least-seen cells, "
+                        "and commits that sequence for the next K act() calls.")
+    parser.add_argument("--planner-samples", type=int, default=None,
+                        help="Planner: number of random K-sequences sampled "
+                        "per plan call. Default 32.")
+    parser.add_argument("--planner-refresh-interval", type=int, default=None,
+                        help="Planner: steps between WM-weight refreshes into "
+                        "the CPU cache. Default 200.")
+    parser.add_argument("--planner-every", type=int, default=0,
+                        help="Harness trigger: call plan_and_queue every N env "
+                        "steps. 0 disables harness-side planning invocation.")
     args = parser.parse_args()
 
     # --- Set up the local ARC-AGI-3 env ---
@@ -291,6 +306,12 @@ def main() -> int:
             agent_kwargs["xeps_reward_alpha"] = args.xeps_alpha
         if args.xeps_grid_resolution is not None:
             agent_kwargs["xeps_grid_resolution"] = args.xeps_grid_resolution
+        if args.planner_horizon > 0:
+            agent_kwargs["planner_horizon"] = args.planner_horizon
+        if args.planner_samples is not None:
+            agent_kwargs["planner_samples"] = args.planner_samples
+        if args.planner_refresh_interval is not None:
+            agent_kwargs["planner_refresh_interval"] = args.planner_refresh_interval
         agent = kindle.BatchAgent(**agent_kwargs)
     else:
         agent = None  # random baseline
@@ -370,6 +391,17 @@ def main() -> int:
         if agent is not None:
             if args.encoder == "cnn":
                 agent.set_visual_obs(preprocess_visual(frame))
+            # Track 3 planner: periodically replan the next K-action
+            # sequence if enabled. The agent's queue is consumed by
+            # act() below — when non-empty, act() returns the planned
+            # action in place of a policy-sampled one.
+            if (
+                args.planner_horizon > 0
+                and args.planner_every > 0
+                and step > 0
+                and step % args.planner_every == 0
+            ):
+                agent.plan_and_queue(num_actions)
             # Sample coords BEFORE act so kindle can cache the
             # sample state; train happens post-observe.
             kindle_xy = None
@@ -436,6 +468,7 @@ def main() -> int:
                 d = diags[0]
                 dg_bank = agent.delta_goal_bank_size()
                 xeps_pairs = agent.xeps_distinct_pairs()
+                plan_q = agent.planner_queue_len()
                 last_ent = (
                     f"| wm={float(d['loss_world_model']):.3f} "
                     f"pi={float(d['loss_policy']):.3f} "
@@ -445,7 +478,7 @@ def main() -> int:
                     f"hom={float(d['reward_homeo']):+5.2f} "
                     f"ord={float(d['reward_order']):+4.2f} "
                     f"rnd={float(d.get('rnd_mse', 0.0)):+5.2f} "
-                    f"dg={dg_bank:>3} xeps={xeps_pairs:>4}"
+                    f"dg={dg_bank:>3} xeps={xeps_pairs:>4} plan={plan_q:>2}"
                 )
             macro_stat = f" macros={macros_injected:>4}" if args.macro_len > 0 else ""
             print(

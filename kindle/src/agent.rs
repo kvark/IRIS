@@ -43,6 +43,7 @@ use crate::encoder::{CnnEncoder, Encoder};
 use crate::env::{Action, ActionKind, Environment, Observation};
 use crate::option;
 use crate::outcome;
+use crate::planner;
 use crate::policy;
 use crate::reward::{RewardCircuit, RewardWeights};
 use crate::rnd;
@@ -443,6 +444,24 @@ pub struct AgentConfig {
     /// `None` → reuse `grid_resolution` (the state-novelty bucket
     /// size), keeping the two quantization schemes consistent.
     pub xeps_grid_resolution: Option<f32>,
+    /// Model-based planner. When `> 0`, kindle maintains a CPU
+    /// copy of the world-model weights and can simulate candidate
+    /// action sequences via `plan_and_queue()` — sampling
+    /// `planner_samples` random sequences of length `planner_horizon`,
+    /// rolling each out through the frozen WM, scoring by sum of
+    /// `1/sqrt(1+visit_count)` over the predicted latents, and
+    /// queueing the best sequence for subsequent `act()` calls to
+    /// consume. Disabled (0) by default. Applies to discrete-action
+    /// envs only (continuous actions are skipped; the queue stays
+    /// empty).
+    pub planner_horizon: usize,
+    /// Number of random action sequences sampled per plan call.
+    /// Cost scales O(samples × horizon × hidden²). Default 32.
+    pub planner_samples: usize,
+    /// Steps between WM-weight refreshes into the planner's CPU
+    /// cache. Too frequent wastes cycles; too infrequent uses
+    /// stale weights. Default 200.
+    pub planner_refresh_interval: usize,
     /// WM encoder backbone. `Mlp` (default) = kindle's original
     /// obs-token encoder; `Cnn { channels, height, width }` =
     /// conv-net encoder for visual/grid inputs (ARC-AGI-3 etc.).
@@ -551,6 +570,9 @@ impl Default for AgentConfig {
             delta_goal_surprise_threshold: 0.5,
             xeps_reward_alpha: 0.0,
             xeps_grid_resolution: None,
+            planner_horizon: 0,
+            planner_samples: 32,
+            planner_refresh_interval: 200,
             encoder_kind: EncoderKind::Mlp,
             outcome_window: 1,
             outcome_clamp: 5.0,
@@ -1013,6 +1035,18 @@ pub struct Agent {
     /// action) pair. `None` before any action has been sampled on
     /// that lane, or after an episode boundary reset.
     xeps_prev_action: Vec<Option<u32>>,
+    /// Track 3 model-based planner. `None` when
+    /// `planner_horizon == 0`. Weights are refreshed every
+    /// `planner_refresh_interval` calls to `plan_and_queue()`.
+    planner: Option<planner::WmRollout>,
+    /// Per-lane action queue populated by the planner. `act()`
+    /// pops from the front of this queue before policy sampling,
+    /// so a queued sequence commits the next-K actions.
+    planner_queue: Vec<std::collections::VecDeque<u32>>,
+    /// Number of `plan_and_queue` calls since the last WM-weight
+    /// refresh. Triggers a refresh when it hits
+    /// `planner_refresh_interval`.
+    planner_calls_since_refresh: usize,
 }
 
 /// Cosine similarity between two equal-length vectors. Returns 0 when
@@ -1349,6 +1383,19 @@ impl Agent {
             None
         };
 
+        // Track 3 model-based planner. Allocated when horizon > 0.
+        // Weights are zero-initialized; the first `plan_and_queue`
+        // call triggers a refresh that pulls the current WM state.
+        let planner = if config.planner_horizon > 0 {
+            Some(planner::WmRollout::new(
+                config.latent_dim,
+                MAX_ACTION_DIM,
+                config.hidden_dim,
+            ))
+        } else {
+            None
+        };
+
         // M6 outcome-value head (CPU MLP). Constructed only when the
         // user has asked for a non-zero bonus weight. Its LR derives
         // from `lr_outcome` or falls back to `learning_rate × 0.3`.
@@ -1482,6 +1529,9 @@ impl Agent {
             last_delta_goal_events: 0,
             xeps_memory,
             xeps_prev_action: vec![None; n],
+            planner,
+            planner_queue: (0..n).map(|_| std::collections::VecDeque::new()).collect(),
+            planner_calls_since_refresh: 0,
             config,
         }
     }
@@ -1779,17 +1829,30 @@ impl Agent {
             lane.last_value = value_stack[i];
             lane.last_entropy = lane.adapter.head_entropy(head);
 
-            let resample = lane.repeats_left == 0 || lane.cached_action.is_none();
-            let action = if resample {
-                let a = lane.adapter.sample_action(head, rng);
-                lane.cached_action = Some(a.clone());
-                lane.repeats_left = action_repeat - 1;
-                a
+            // Model-based planner: if the queue has a pre-planned
+            // action for this lane, play it instead of sampling from
+            // the policy head. Skips action_repeat accounting — a
+            // planned sequence is semantically one committed plan,
+            // not independent samples to repeat.
+            let queued = self.planner_queue[i].pop_front();
+            let action = if let Some(a) = queued {
+                let act = Action::Discrete(a as usize);
+                lane.cached_action = Some(act.clone());
+                lane.repeats_left = 0;
+                act
             } else {
-                lane.repeats_left -= 1;
-                lane.cached_action
-                    .clone()
-                    .expect("cached_action is Some by branch condition")
+                let resample = lane.repeats_left == 0 || lane.cached_action.is_none();
+                if resample {
+                    let a = lane.adapter.sample_action(head, rng);
+                    lane.cached_action = Some(a.clone());
+                    lane.repeats_left = action_repeat - 1;
+                    a
+                } else {
+                    lane.repeats_left -= 1;
+                    lane.cached_action
+                        .clone()
+                        .expect("cached_action is Some by branch condition")
+                }
             };
             // Cache the discrete action id for cross-episode memory.
             // Continuous actions don't key the xeps memory (no natural
@@ -3151,6 +3214,85 @@ impl Agent {
     /// cross-episode memory. 0 when disabled. Diagnostic.
     pub fn xeps_distinct_pairs(&self) -> usize {
         self.xeps_memory.as_ref().map_or(0, |m| m.distinct_pairs())
+    }
+
+    /// Run the Track 3 model-based planner for every lane whose
+    /// planner queue is currently empty. For each such lane:
+    /// - Sample `planner_samples` random discrete action sequences
+    ///   of length `planner_horizon` over `num_actions` (passed by
+    ///   the caller — typically from the env's action space).
+    /// - Roll each sequence out through the frozen WM starting
+    ///   from the lane's most recent latent.
+    /// - Score each by the sum of `1/sqrt(1+visit_count)` across
+    ///   predicted latents — pulling toward under-visited regions
+    ///   of the state space.
+    /// - Queue the highest-scoring sequence for consumption by
+    ///   subsequent `act()` calls.
+    ///
+    /// No-op when `planner_horizon == 0` or when a lane has no
+    /// prior observation (first step of the agent's life).
+    /// `num_actions` is clamped to the WM's compiled action width.
+    pub fn plan_and_queue<R: Rng>(&mut self, num_actions: usize, rng: &mut R) {
+        let Some(planner) = self.planner.as_mut() else {
+            return;
+        };
+        let k = self.config.planner_horizon;
+        let m = self.config.planner_samples;
+        if k == 0 || m == 0 {
+            return;
+        }
+        // Refresh WM weights into the CPU cache at the configured
+        // cadence. First call always triggers a refresh.
+        if self.planner_calls_since_refresh == 0
+            || self.planner_calls_since_refresh >= self.config.planner_refresh_interval
+        {
+            planner.refresh_from_session(&self.wm_session);
+            self.planner_calls_since_refresh = 0;
+        }
+        self.planner_calls_since_refresh += 1;
+
+        let num_actions_eff = num_actions.min(planner.action_dim).max(1);
+        let mut one_hot = vec![0.0f32; planner.action_dim];
+        let mut traj = vec![0.0f32; k * planner.latent_dim];
+
+        for (lane_idx, lane) in self.lanes.iter().enumerate() {
+            if !self.planner_queue[lane_idx].is_empty() {
+                continue;
+            }
+            let z0 = match lane.buffer.last() {
+                Some(t) => t.latent.clone(),
+                None => continue,
+            };
+
+            let mut best_score = f32::NEG_INFINITY;
+            let mut best_actions: Vec<u32> = Vec::new();
+            for _ in 0..m {
+                let actions: Vec<u32> = (0..k)
+                    .map(|_| rng.random_range(0..num_actions_eff) as u32)
+                    .collect();
+                planner.rollout(&z0, &actions, &mut one_hot, &mut traj);
+
+                let mut score = 0.0f32;
+                for step in 0..k {
+                    let z_step = &traj[step * planner.latent_dim..(step + 1) * planner.latent_dim];
+                    let c = lane.buffer.visit_count(z_step);
+                    score += 1.0 / ((c as f32 + 1.0).sqrt());
+                }
+                if score > best_score {
+                    best_score = score;
+                    best_actions = actions;
+                }
+            }
+            for a in best_actions {
+                self.planner_queue[lane_idx].push_back(a);
+            }
+        }
+    }
+
+    /// Total number of actions currently queued by the planner
+    /// across all lanes (diagnostic).
+    pub fn planner_queue_len(&self) -> usize {
+        self.planner_queue.iter().map(|q| q.len()).sum()
     }
 
     pub fn approach_confidence(&self) -> f32 {

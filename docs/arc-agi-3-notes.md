@@ -661,3 +661,55 @@ Gym canaries (GridWorld/CartPole/Acrobot/Pendulum) and LunarLander
 remain productive — shorter sequence depth, more responsive to
 reward-class changes. Recommend redirecting to Lander 1 (homeo
 decomposition) next per the April 20 roadmap.
+
+### Track 3 — model-based planning with the WM, 2026-04-21
+
+`kindle/src/planner.rs`: pulls the WM's 3-layer MLP weights into a
+CPU cache, exposes `WmRollout::rollout(z0, actions) → trajectory`.
+Agent method `plan_and_queue(num_actions)`: samples
+`planner_samples` random K-action sequences, rolls each through the
+frozen WM, scores by `Σ_t 1/sqrt(1+visit_count(predicted_z_t))`,
+queues the best for `act()` to consume. +5 unit tests (62 total).
+
+cd82 A/B (10k steps, full CNN+RND+coord stack, seed 42):
+
+| config                        | mean levels | lvl_events |
+| ----------------------------- | ----------- | ---------- |
+| baseline                      | 0.99        | 1          |
+| planner K=4 every=2 (100%)    | 0.00        | 0          |
+| planner K=4 every=20 (20%)    | 0.89        | 1          |
+| planner K=8 every=40 (20%)    | 0.64        | 1          |
+
+Lander v6 A/B (50k steps):
+  baseline v6:      5.9% soft, pi_loss 0.84 end
+  v6 + planner K=4: 4.5% soft, pi_loss -51.3 end (destabilized)
+
+Null to negative on both testbeds. Root cause: the WM has never seen
+the cd82 L1→L2 transition (we never reach L2), so its predictions
+for any action sequence FROM L1 are untrained-noise. The
+novelty-score over noise picks arbitrary sequences; the agent
+executes them; still random exploration at the L1→L2 gap. No
+improvement over the `--macro-len 8` random-injection experiment.
+
+On Lander, the WM IS well-trained (we see many landing/crash
+trajectories), but the forced-action sequences bias policy
+gradients off-policy and destabilize pi_loss.
+
+**Track 3 infrastructure is kept** (sound CPU rollout, weight
+refresh, plan-queue API — a general tool that may work on envs
+where the WM is well-trained AND the reward gradient is
+non-sparse). **But it does not solve the ARC-AGI-3 structural
+cap** because the cap's origin is sample complexity on a sparse
+reward, not under-planning.
+
+**Final verdict for ARC-AGI-3 under the generality constraint**:
+kindle's cold-start self-training paradigm, even augmented with
+(in order of landed infrastructure) vision encoder, RND,
+RND-reset-on-level, coord head, M6 learnable reward, M7 approach
+reward, M8 delta-goals v1/v2, xeps cross-episode memory, random
+action macros, and WM-based planning, cannot close the L1→L2 gap
+on cd82 at feasible budgets. The gap needs 8 specific actions in
+sequence; all general exploration mechanisms produce ~6e-7-hit-
+rate attempts. The only viable directions violate generality
+(demos, curriculum, symbolic priors). ARC-AGI-3 is off the
+research path.

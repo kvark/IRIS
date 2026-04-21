@@ -32,6 +32,7 @@ pub mod encoder;
 pub mod env;
 pub mod option;
 pub mod outcome;
+pub mod planner;
 pub mod policy;
 pub mod reward;
 pub mod rnd;
