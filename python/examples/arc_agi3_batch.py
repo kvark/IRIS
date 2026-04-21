@@ -125,7 +125,9 @@ def main() -> int:
         return 1
     # kindle's discrete adapter emits actions 0..num_actions-1.
     # We use num_actions = min(6, len(available_actions)) so
-    # kindle's MAX_ACTION_DIM=6 covers the space.
+    # kindle's MAX_ACTION_DIM=6 covers the space. (Complex actions
+    # — ACTION6 — are allowed here; their (x, y) payload is filled
+    # with random coords per step by `action_to_game` below.)
     num_actions = min(6, len(available_actions))
 
     def preprocess(frame_ndarray: np.ndarray) -> list[float]:
@@ -144,23 +146,27 @@ def main() -> int:
     # Pre-build a value→member map; `GameAction(value)` is broken
     # on this enum type in the installed arcengine build.
     action_by_value = {int(a.value): a for a in GameAction}
-    # Filter to simple actions only (ACTION1..ACTION7). Complex
-    # (coordinate-parameterized) actions need {x, y} data we
-    # don't synthesize in this adapter.
-    SIMPLE_ACTIONS = set(range(1, 8))
 
     def action_to_game(kindle_action_idx: int) -> GameAction:
         """Map kindle's 0-indexed discrete output to the current
-        frame's simple available_actions. If kindle picks an
-        index outside that list, clip to the last available."""
-        aa = [v for v in available_actions if int(v) in SIMPLE_ACTIONS]
+        frame's `available_actions`. For complex actions
+        (currently ACTION6), attach random (x, y) coordinates in
+        [0, 63] — kindle's policy doesn't control coords yet, so
+        random baseline exploration of the coord space.
+        Simple actions ignore the coordinate payload.
+        """
+        aa = available_actions
         if not aa:
-            # Fall back to ACTION1; games with only complex
-            # actions are out of scope for this adapter.
             return action_by_value[1]
         idx = max(0, min(kindle_action_idx, len(aa) - 1))
         action_num = int(aa[idx])
-        return action_by_value[action_num]
+        a = action_by_value[action_num]
+        if a.is_complex():
+            a.set_data({
+                "x": rng.randrange(64),
+                "y": rng.randrange(64),
+            })
+        return a
 
     # --- Kindle agent (one lane) ---
     if args.agent == "kindle":
@@ -219,24 +225,38 @@ def main() -> int:
     levels_events = 0  # total level completions across all episodes
     t0 = time.time()
 
-    def homeo_for(frame_arr: np.ndarray, delta_levels: int) -> list[dict]:
+    def homeo_for(
+        frame_arr: np.ndarray,
+        new_levels: int,
+        win_levels: int,
+    ) -> list[dict]:
         """Kindle homeo-variable list. Two terms:
-          - levels progress spike: value = -delta_levels·scale
-            (negative of a negative deviation, i.e. progress is
-            reward). Target 0, tol 0.
-          - frame entropy: unique-values proxy — encourages
-            encountering new frame patterns."""
+
+        - **distance-to-win**: `value = (win_levels − new_levels) ·
+          scale`, target 0, tol 0. Kindle's homeo function returns
+          `−|value − target|` as the contribution, so the reward
+          is `−(win_levels − levels_completed) · scale`. This is
+          a persistent negative signal that decreases in magnitude
+          as levels are completed. At level-up, per-step reward
+          jumps by `+scale` (the homeo weight multiplies it in
+          `reward_circuit.compute`). Unlike the original
+          `-delta_levels` formulation, this is a *sustained*
+          incentive to progress, not a one-step spike at the
+          exact moment of level completion.
+
+        - **frame entropy**: `1 − unique_cells/16`, target 0, tol
+          0.1. Small exploration nudge — higher when the frame is
+          monotonous, zero when diverse.
+        """
+        remaining = max(0, win_levels - new_levels)
         levels_term = {
-            "value": -delta_levels * args.levels_reward_scale,
+            "value": float(remaining) * args.levels_reward_scale,
             "target": 0.0,
             "tolerance": 0.0,
         }
-        # Small frame-entropy homeo (number of unique cell colours)
-        # to give kindle a scalar that meaningfully varies with
-        # exploration. Normalize by 16 colours.
         uniq = float(np.unique(frame_arr).size) / 16.0
         entropy_term = {
-            "value": 1.0 - uniq,  # high when obs is monotonous
+            "value": 1.0 - uniq,
             "target": 0.0,
             "tolerance": 0.1,
         }
@@ -288,7 +308,7 @@ def main() -> int:
         if agent is not None:
             if args.encoder == "cnn":
                 agent.set_visual_obs(preprocess_visual(frame))
-            homeos = [homeo_for(frame, delta_levels)]
+            homeos = [homeo_for(frame, new_levels, int(obs_raw.win_levels))]
             agent.observe([new_obs], [kindle_action], homeostatic=homeos)
 
         current_obs = new_obs
