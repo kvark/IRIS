@@ -174,14 +174,14 @@ impl PyAgent {
                 Action::Continuous(_) => 0,
             };
 
-            let step_args = PyTuple::new_bound(py, [action_idx]);
+            let step_args = PyTuple::new(py, [action_idx])?;
             let step_ret = env.call_method1("step", step_args)?;
             let (next_vec, reward, terminated, truncated) = unpack_step(&step_ret)?;
             episode_return += reward;
 
             let homeo = match homeo_fn {
                 Some(fun) => {
-                    let obs_list = PyList::new_bound(py, next_vec.iter().copied());
+                    let obs_list = PyList::new(py, next_vec.iter().copied())?;
                     let ret = fun.call1((obs_list,))?;
                     parse_homeo(&ret)?
                 }
@@ -228,7 +228,7 @@ impl PyAgent {
             .first()
             .ok_or_else(|| PyRuntimeError::new_err("agent has no lanes"))?;
         let json = serde_json::to_string(d).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let json_mod = py.import_bound("json")?;
+        let json_mod = py.import("json")?;
         json_mod.call_method1("loads", (json,))
     }
 }
@@ -267,7 +267,7 @@ impl<'a> Environment for ProxyEnv<'a> {
 
 fn parse_obs(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
     // Fast path: Python list of floats.
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         let mut v = Vec::with_capacity(list.len());
         for item in list.iter() {
             v.push(item.extract::<f32>()?);
@@ -275,7 +275,7 @@ fn parse_obs(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
         return Ok(v);
     }
     // Fallback: any iterable (tuple, numpy array, etc.).
-    let iter = obj.iter()?;
+    let iter = obj.try_iter()?;
     let mut v = Vec::new();
     for item in iter {
         let item: Bound<'_, PyAny> = item?;
@@ -286,7 +286,7 @@ fn parse_obs(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
 
 fn parse_homeo(obj: &Bound<'_, PyAny>) -> PyResult<Vec<HomeostaticVariable>> {
     let mut out = Vec::new();
-    for item in obj.iter()? {
+    for item in obj.try_iter()? {
         let item: Bound<'_, PyAny> = item?;
         out.push(parse_homeo_one(&item)?);
     }
@@ -295,7 +295,7 @@ fn parse_homeo(obj: &Bound<'_, PyAny>) -> PyResult<Vec<HomeostaticVariable>> {
 
 fn parse_homeo_one(obj: &Bound<'_, PyAny>) -> PyResult<HomeostaticVariable> {
     // Accept either a {"value", "target", "tolerance"} dict or a 3-tuple/list.
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let value = dict_get_f32(dict, "value")?;
         let target = dict_get_f32(dict, "target")?;
         let tolerance = dict_get_f32(dict, "tolerance")?;
@@ -305,7 +305,7 @@ fn parse_homeo_one(obj: &Bound<'_, PyAny>) -> PyResult<HomeostaticVariable> {
             tolerance,
         });
     }
-    if let Ok(tup) = obj.downcast::<PyTuple>() {
+    if let Ok(tup) = obj.cast::<PyTuple>() {
         if tup.len() != 3 {
             return Err(PyValueError::new_err(
                 "homeostatic tuple must have length 3: (value, target, tolerance)",
@@ -333,7 +333,7 @@ fn dict_get_f32(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<f32> {
 
 /// Gymnasium: `reset() -> (obs, info)`. Older gym: `reset() -> obs`.
 fn unpack_reset(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
-    if let Ok(tup) = obj.downcast::<PyTuple>() {
+    if let Ok(tup) = obj.cast::<PyTuple>() {
         if !tup.is_empty() {
             return parse_obs(&tup.get_item(0)?);
         }
@@ -345,7 +345,7 @@ fn unpack_reset(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
 /// Older gym:  `(obs, reward, done, info)`.
 fn unpack_step(obj: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, f32, bool, bool)> {
     let tup = obj
-        .downcast::<PyTuple>()
+        .cast::<PyTuple>()
         .map_err(|_| PyValueError::new_err("env.step() must return a tuple"))?;
     let n = tup.len();
     if n < 4 {
@@ -850,7 +850,7 @@ impl PyBatchAgent {
         // Parse actions list.
         let actions_outer: Vec<Bound<'_, PyAny>> = {
             let mut v = Vec::with_capacity(self.batch_size);
-            for item in actions_list.iter()? {
+            for item in actions_list.try_iter()? {
                 v.push(item?);
             }
             v
@@ -879,7 +879,7 @@ impl PyBatchAgent {
             None => (0..self.batch_size).map(|_| Vec::new()).collect(),
             Some(outer) => {
                 let mut out: Vec<Vec<HomeostaticVariable>> = Vec::with_capacity(self.batch_size);
-                for (i, inner) in outer.iter()?.enumerate() {
+                for (i, inner) in outer.try_iter()?.enumerate() {
                     if i >= self.batch_size {
                         return Err(PyValueError::new_err(
                             "homeostatic list longer than batch_size",
@@ -929,7 +929,7 @@ impl PyBatchAgent {
         let diags = self.agent.diagnostics();
         let json =
             serde_json::to_string(&diags).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let json_mod = py.import_bound("json")?;
+        let json_mod = py.import("json")?;
         json_mod.call_method1("loads", (json,))
     }
 
@@ -1016,7 +1016,7 @@ impl PyBatchAgent {
 /// 1-D obs vector (list/tuple/ndarray of floats).
 fn parse_obs_list(obj: &Bound<'_, PyAny>, expected: usize) -> PyResult<Vec<Vec<f32>>> {
     let mut out = Vec::with_capacity(expected);
-    for item in obj.iter()? {
+    for item in obj.try_iter()? {
         let item: Bound<'_, PyAny> = item?;
         out.push(parse_obs(&item)?);
     }
