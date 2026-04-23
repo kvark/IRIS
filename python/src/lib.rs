@@ -946,8 +946,87 @@ impl PyBatchAgent {
     /// laid out as flat NCHW. Must be called before each
     /// `observe()` when the agent's encoder is CNN; no-op for MLP
     /// agents.
-    fn set_visual_obs(&mut self, visual: Vec<f32>) {
-        self.agent.set_visual_obs(&visual);
+    fn set_visual_obs(&mut self, visual: &Bound<'_, PyAny>) -> PyResult<()> {
+        // Fast path: a contiguous float32 buffer (numpy array, bytes,
+        // memoryview, etc.) — read directly via the buffer protocol
+        // without materializing an intermediate Vec<f32>. For Atari's
+        // 28224 floats / lane / step this is ~50× cheaper than
+        // `Vec::<f32>::extract`, which iterates a Python sequence.
+        if let Ok(buf) = pyo3::buffer::PyBuffer::<f32>::get(visual) {
+            let py = visual.py();
+            if let Some(slice) = buf.as_slice(py) {
+                // `ReadOnlyCell<f32>` has the same layout as `f32`;
+                // cast and hand kindle an ordinary slice.
+                let ptr = slice.as_ptr() as *const f32;
+                let len = slice.len();
+                let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+                self.agent.set_visual_obs(slice);
+                return Ok(());
+            }
+        }
+        // Fallback: extract to a Vec<f32>. Accepts any iterable of
+        // floats (legacy `list[float]` usage).
+        let v: Vec<f32> = visual.extract()?;
+        self.agent.set_visual_obs(&v);
+        Ok(())
+    }
+
+    /// Writable `memoryview` over the world-model session's
+    /// `visual_obs` input buffer. Meganeura allocates that buffer
+    /// as `Memory::Shared` (device-local + host-visible + host-
+    /// coherent), so a Python write through this memoryview lands
+    /// directly in the GPU-side memory — no staging, no explicit
+    /// upload, no `VK_EXT_external_memory_host` import.
+    ///
+    /// Typical usage:
+    ///
+    /// ```python
+    /// mv = agent.visual_obs_memoryview()
+    /// buf = np.frombuffer(mv, dtype=np.float32).reshape(
+    ///     batch, channels, height, width
+    /// )
+    /// np.divide(raw_u8, 255.0, out=buf, dtype=np.float32, casting="unsafe")
+    /// agent.observe(...)  # reads the just-written frames
+    /// ```
+    ///
+    /// Returns an error when the encoder is MLP (no visual slot).
+    /// The memoryview lifetime is tied to the agent; the agent
+    /// must not be dropped while Python still holds the view.
+    ///
+    /// Ordering: writes through this pointer must complete before
+    /// the next `observe()` call. `observe()` internally waits for
+    /// the previous step's GPU reads to finish before returning,
+    /// so any write performed between two `observe()` calls is
+    /// safe.
+    fn visual_obs_memoryview<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let (ptr, size) = self.agent.visual_obs_host_ptr().ok_or_else(|| {
+            PyRuntimeError::new_err(
+                "visual_obs_memoryview: no visual_obs slot (encoder is MLP, not CNN)",
+            )
+        })?;
+        // Safety: `ptr`/`size` are stable for the lifetime of the
+        // agent (backed by meganeura's owned graph buffer). The
+        // memoryview is a non-owning view; Python must not outlive
+        // the BatchAgent, which matches typical harness usage.
+        let mv = unsafe {
+            let ffi_mv = pyo3::ffi::PyMemoryView_FromMemory(
+                ptr as *mut std::os::raw::c_char,
+                size as pyo3::ffi::Py_ssize_t,
+                pyo3::ffi::PyBUF_WRITE,
+            );
+            if ffi_mv.is_null() {
+                return Err(PyErr::fetch(py));
+            }
+            Bound::from_owned_ptr(py, ffi_mv)
+        };
+        Ok(mv)
+    }
+
+    /// Byte size of the `visual_obs` input buffer. Matches the
+    /// length of the memoryview returned by `visual_obs_memoryview`.
+    /// Zero when the encoder is MLP.
+    fn visual_obs_host_size(&self) -> usize {
+        self.agent.visual_obs_host_size()
     }
 
     /// Re-initialize the RND predictor. Used to re-activate

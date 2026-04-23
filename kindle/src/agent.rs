@@ -950,11 +950,14 @@ pub struct Agent {
     batch_lr_scale: f32,
     /// Scratch buffers, sized [N × per-lane-dim], reused each step.
     obs_token_scratch: Vec<f32>,
-    /// Visual-encoder input buffer; sized `batch × channels × h × w`
-    /// when `encoder_kind` is `Cnn`, empty otherwise. Populated via
-    /// `Agent::set_visual_obs` by the harness before each
-    /// `observe()` call.
-    visual_obs_scratch: Vec<f32>,
+    /// Cached expected byte-size of the WM session's `visual_obs`
+    /// input slot. Non-zero only when `encoder_kind` is `Cnn`.
+    /// Used to sanity-check caller-supplied slices. The actual
+    /// data lives in the meganeura-owned, device-local, host-
+    /// visible graph buffer — accessed via
+    /// `wm_session.input_host_ptr("visual_obs")` — so kindle keeps
+    /// no CPU-side scratch for the CNN input.
+    visual_obs_size_bytes: usize,
     action_token_scratch: Vec<f32>,
     z_target_scratch: Vec<f32>,
     task_scratch: Vec<f32>,
@@ -1502,7 +1505,9 @@ impl Agent {
             encoder_lr_scale: 1.0,
             batch_lr_scale: (config.batch_size as f32).sqrt(),
             obs_token_scratch: vec![0.0; n * OBS_TOKEN_DIM],
-            visual_obs_scratch: vec![0.0; n * config.encoder_kind.visual_dim()],
+            visual_obs_size_bytes: n
+                * config.encoder_kind.visual_dim()
+                * std::mem::size_of::<f32>(),
             action_token_scratch: vec![0.0; n * MAX_ACTION_DIM],
             z_target_scratch: vec![0.0; n * config.latent_dim],
             task_scratch: vec![0.0; n * TASK_DIM],
@@ -2414,8 +2419,15 @@ impl Agent {
                 self.wm_session.set_input("obs", &self.obs_token_scratch);
             }
             EncoderKind::Cnn { .. } => {
-                self.wm_session
-                    .set_input("visual_obs", &self.visual_obs_scratch);
+                // The `visual_obs` graph buffer is allocated by
+                // meganeura as `Memory::Shared` (device-local +
+                // host-visible + host-coherent). The harness writes
+                // preprocessed frames directly into the mapped
+                // pointer via `set_visual_obs` or
+                // `visual_obs_host_ptr`, so there's no CPU-side
+                // scratch to upload here — the data is already in
+                // the GPU buffer. Queue submit's implicit host-
+                // domain barrier makes the writes visible.
             }
         }
         self.wm_session
@@ -2429,23 +2441,71 @@ impl Agent {
         self.wm_session.read_loss()
     }
 
-    /// Populate the visual-obs buffer for the next `observe()`. Must
-    /// be called by the harness when `encoder_kind = Cnn` and the
-    /// input shape is flat NCHW of size `batch × channels × h × w`.
-    /// No-op when the agent's encoder is `Mlp`.
+    /// Populate the visual-obs buffer for the next `observe()`.
+    ///
+    /// Must be called by the harness when `encoder_kind = Cnn` and
+    /// the input shape is flat NCHW of size `batch · channels · h · w`.
+    /// No-op when the encoder is `Mlp`.
+    ///
+    /// This writes directly into meganeura's device-local,
+    /// host-visible graph buffer via `Session::input_host_ptr` —
+    /// the legacy scratch copy + `set_input` upload is gone, so
+    /// one memcpy lands the frames in the GPU-side memory with
+    /// no intermediary.
     pub fn set_visual_obs(&mut self, visual_obs: &[f32]) {
-        if self.visual_obs_scratch.is_empty() {
+        if self.visual_obs_size_bytes == 0 {
             return;
         }
-        let n = self.visual_obs_scratch.len();
+        let want = self.visual_obs_size_bytes / std::mem::size_of::<f32>();
         assert_eq!(
             visual_obs.len(),
-            n,
+            want,
             "set_visual_obs: expected {} floats (batch · channels · h · w), got {}",
-            n,
+            want,
             visual_obs.len()
         );
-        self.visual_obs_scratch.copy_from_slice(visual_obs);
+        let (dst, size) = self
+            .wm_session
+            .input_host_ptr("visual_obs")
+            .expect("visual_obs input slot present under CNN encoder");
+        let need = std::mem::size_of_val(visual_obs);
+        debug_assert!(need <= size, "visual_obs write {need} > slot {size}");
+        // Safety: `dst` points at a host-visible, host-coherent
+        // buffer owned by wm_session for the lifetime of this
+        // Agent. We write exactly `need` bytes which fits within
+        // the slot size. `observe()` calls `wm_session.wait()`
+        // before returning, so the previous step's GPU read has
+        // completed — no race on the next host write.
+        unsafe {
+            std::ptr::copy_nonoverlapping(visual_obs.as_ptr() as *const u8, dst, need);
+        }
+    }
+
+    /// Raw host pointer + byte size of the WM session's
+    /// `visual_obs` input buffer. `None` when the encoder is
+    /// `Mlp` (no visual input slot).
+    ///
+    /// The buffer is allocated as `Memory::Shared` (device-local,
+    /// host-visible, host-coherent). Writes through the pointer
+    /// are picked up by the next `observe()` without any upload,
+    /// staging, or external-memory import — a single memcpy lands
+    /// the frame in GPU-visible memory.
+    ///
+    /// # Safety
+    ///
+    /// The returned pointer is valid for the lifetime of this
+    /// Agent. The caller must write at most `size_bytes` and must
+    /// not initiate a write before the previous `observe()`
+    /// returns (wm_session's `wait()` inside `observe` synchronizes
+    /// with the GPU's read of the buffer).
+    pub fn visual_obs_host_ptr(&self) -> Option<(*mut u8, usize)> {
+        self.wm_session.input_host_ptr("visual_obs")
+    }
+
+    /// Byte size of the `visual_obs` slot, or 0 when the encoder
+    /// is `Mlp`. Diagnostic.
+    pub fn visual_obs_host_size(&self) -> usize {
+        self.visual_obs_size_bytes
     }
 
     /// Sample one replay transition per lane and run a single batched WM
