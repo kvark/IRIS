@@ -75,6 +75,18 @@ def main() -> int:
                         "on dense-reward envs). 0.5 is standard PPO. Try "
                         "0.1-0.5 to let policy gradient actually steer the "
                         "shared optimizer.")
+    parser.add_argument("--policy-update-interval", type=int, default=1,
+                        help="Update policy only every N env-steps, then do "
+                        "N gradient steps on the accumulated rollout "
+                        "(A2C/PPO-style). 1 = per-env-step (default). "
+                        "Try n_step+1 (e.g. 9) to keep the rollout fully "
+                        "on-policy with respect to the collector.")
+    parser.add_argument("--advantage-normalize", action="store_true",
+                        help="Zero-mean / unit-std the advantages per batch "
+                        "before the policy update (standard PPO/A2C trick). "
+                        "Strips the \"V lags reward\" bias — critical early "
+                        "in training when V hasn't caught up and every "
+                        "advantage is same-sign.")
     parser.add_argument("--async-envs", action="store_true")
     args = parser.parse_args()
 
@@ -118,6 +130,8 @@ def main() -> int:
         value_bootstrap=args.value_bootstrap,
         gae_lambda=args.gae_lambda if args.gae_lambda > 0 else None,
         value_loss_coef=args.value_loss_coef,
+        policy_update_interval=args.policy_update_interval,
+        advantage_normalize=args.advantage_normalize,
     )
     print("agent ready (MLP encoder)")
 

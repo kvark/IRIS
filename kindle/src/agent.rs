@@ -563,6 +563,36 @@ pub struct AgentConfig {
     /// effectively learn ~50× slower than the value. Setting this
     /// to 0.1–0.5 rebalances without separate LRs or sessions.
     pub value_loss_coef: f32,
+    /// Update the policy only every N env-steps, then do N
+    /// gradient steps in a row on the accumulated rollout.
+    /// Default `1` = per-env-step update (the existing behavior).
+    ///
+    /// Why this matters: kindle's per-step update means by the
+    /// time a transition becomes "ripe" (n_step in the past), the
+    /// policy has already taken n_step + 1 gradient steps since
+    /// that transition was collected. The data is effectively
+    /// off-policy from the very first update, which biases the
+    /// policy-gradient estimator and produces the commit/uncommit
+    /// oscillation seen on CartPole. Setting `policy_update_interval
+    /// = n_step + 1` keeps the rollout fully on-policy with respect
+    /// to the policy that collected it — the standard A2C/PPO
+    /// setup. On the fire step, the agent does `interval` sequential
+    /// gradient steps, each trained on the ripe transition at a
+    /// different offset back through the rollout buffer.
+    pub policy_update_interval: usize,
+    /// Normalize advantages per-batch to zero mean / unit std before
+    /// feeding them into the policy update. Standard PPO/A2C trick.
+    /// Default `false` (backward compat).
+    ///
+    /// On many envs V lags the reward early on, so advantages are all
+    /// same-sign (e.g. +1/+2 every step when reward is +1). Same-sign
+    /// advantages push the policy toward whichever action a majority of
+    /// lanes happened to take, regardless of whether that action is
+    /// actually better — the advantage signal carries the *bias* from
+    /// "V doesn't predict reward yet" rather than the *differential*
+    /// information we actually need. Mean-centering strips the bias;
+    /// variance-normalization fixes the gradient-magnitude scale.
+    pub advantage_normalize: bool,
     /// Model-based planner. When `> 0`, kindle maintains a CPU
     /// copy of the world-model weights and can simulate candidate
     /// action sequences via `plan_and_queue()` — sampling
@@ -696,6 +726,8 @@ impl Default for AgentConfig {
             value_bootstrap: false,
             gae_lambda: 0.0,
             value_loss_coef: 1.0,
+            policy_update_interval: 1,
+            advantage_normalize: false,
             planner_horizon: 0,
             planner_samples: 32,
             planner_refresh_interval: 200,
@@ -1067,6 +1099,11 @@ pub struct Agent {
     /// at init — the first few updates run at full LR until the
     /// EMA warms up.
     policy_loss_ema: f32,
+    /// Env-step counter modulo `policy_update_interval`. When it
+    /// reaches the configured interval, the policy fires
+    /// `interval` consecutive gradient steps on a sliding window
+    /// of ripe transitions and resets to 0.
+    policy_update_ticks: usize,
     last_replay_loss: f32,
     last_option_credit_loss: f32,
     last_h_eff_l1: f32,
@@ -1760,6 +1797,7 @@ impl Agent {
             last_wm_loss: 0.0,
             last_credit_loss: 0.0,
             last_policy_loss: 0.0,
+            policy_update_ticks: 0,
             policy_loss_ema: 0.0,
             last_replay_loss: 0.0,
             last_option_credit_loss: 0.0,
@@ -3188,7 +3226,30 @@ impl Agent {
         // dedicated path that trains on old (z, action, value) with
         // an n-step Monte-Carlo return as the advantage.
         if n_step >= 2 {
-            self.policy_step_n_step(n_step);
+            // Rollout-gated dispatch. With `policy_update_interval = 1`
+            // (default) this fires every env-step on the single ripe
+            // transition at `buf_len - n_step - bootstrap_headroom` —
+            // identical to the old per-step behavior. With
+            // `policy_update_interval > 1` we accumulate transitions
+            // and, when the tick hits the interval, fire `interval`
+            // sequential gradient steps on the last `interval` ripe
+            // transitions (ripe_back_offset = 0, 1, …, interval-1).
+            // Each step's advantage is still computed from the stored
+            // V's, so `interval = n_step + 1` keeps the whole rollout
+            // on-policy w.r.t. the collector.
+            let interval = self.config.policy_update_interval.max(1);
+            self.policy_update_ticks += 1;
+            if self.policy_update_ticks < interval {
+                return;
+            }
+            self.policy_update_ticks = 0;
+            // Oldest ripe first so the gradient order matches the
+            // temporal order of the collected rollout — Adam's moment
+            // estimates then update in the same order the data was
+            // produced, which matches how A2C trains on a rollout.
+            for k in (0..interval).rev() {
+                self.policy_step_n_step_at(n_step, k);
+            }
             return;
         }
         // Build stacked value targets: use the *base* reward (no L1
@@ -3366,7 +3427,12 @@ impl Agent {
     /// Value head still trains on the single-step base reward at the
     /// old state, preserving the value-head stability that the
     /// previous discounted-return attempt (commit 8f291e5) lost.
-    fn policy_step_n_step(&mut self, n_step: usize) {
+    /// Train the policy on the ripe transition at
+    /// `ripe_idx = buf_len - n_step - headroom - ripe_back_offset`.
+    /// `ripe_back_offset = 0` → most-recent ripe (the per-step default).
+    /// Larger offsets walk back through the rollout for
+    /// `policy_update_interval > 1`.
+    fn policy_step_n_step_at(&mut self, n_step: usize, ripe_back_offset: usize) {
         let n = self.lanes.len();
         let gamma = self.config.gamma;
         let eps_base = self.config.label_smoothing;
@@ -3416,17 +3482,21 @@ impl Agent {
         let bootstrap_headroom = needs_bootstrap_slot as usize;
         let value_target_bootstrap = self.config.value_bootstrap || use_gae;
 
+        // First pass: compute raw advantage + value target for each
+        // active lane. We collect them all before labeling so that
+        // `advantage_normalize` can zero-mean / unit-std the batch
+        // before it feeds into the CE labels.
+        let mut raw_advantages = vec![0.0f32; n];
+        let mut value_targets = vec![0.0f32; n];
+        let mut lane_active = vec![false; n];
+        let adv_clamp = self.config.advantage_clamp.max(0.0);
         for (i, lane) in self.lanes.iter().enumerate() {
             let buf_len = lane.buffer.len();
-            if buf_len < n_step + bootstrap_headroom {
+            if buf_len < n_step + bootstrap_headroom + ripe_back_offset {
                 continue;
             }
-            let ripe_idx = buf_len - n_step - bootstrap_headroom;
+            let ripe_idx = buf_len - n_step - bootstrap_headroom - ripe_back_offset;
             let ripe = lane.buffer.get(ripe_idx);
-
-            // n-step TD return with optional bootstrap — factored into
-            // `compute_td_n_step_return` so the math is unit-testable
-            // without depending on the GPU session.
             let (ret, _gk_end, _terminated) = compute_td_n_step_return(
                 &lane.buffer,
                 ripe_idx,
@@ -3435,8 +3505,7 @@ impl Agent {
                 value_target_bootstrap,
                 100.0,
             );
-            let adv_clamp = self.config.advantage_clamp.max(0.0);
-            let advantage_raw = if use_gae {
+            let adv_raw = if use_gae {
                 compute_gae_advantage(
                     &lane.buffer,
                     ripe_idx,
@@ -3448,22 +3517,56 @@ impl Agent {
             } else {
                 ret - ripe.value
             };
-            let advantage = advantage_raw.clamp(-adv_clamp, adv_clamp);
-
-            // Value-head target. Default path keeps single-step
-            // `ripe.reward` for backward compatibility. With
-            // `value_bootstrap` (or GAE, which implies it), target
-            // becomes the same n-step TD return — the classical
-            // actor-critic consistency condition that drives Bellman
-            // backups through V.
-            let v_t = if value_target_bootstrap {
+            raw_advantages[i] = adv_raw;
+            value_targets[i] = if value_target_bootstrap {
                 ret.clamp(-100.0, 100.0)
             } else if ripe.reward.is_finite() {
                 ripe.reward.clamp(-100.0, 100.0)
             } else {
                 0.0
             };
-            self.value_target_scratch[i] = v_t;
+            lane_active[i] = true;
+        }
+
+        // Optional zero-mean / unit-std normalization across the active
+        // lanes. Strips the "V lags reward" bias and rescales gradient
+        // magnitudes to O(1) regardless of reward scale. Computed over
+        // active lanes only; inactive lanes contribute nothing.
+        if self.config.advantage_normalize {
+            let active_count = lane_active.iter().filter(|&&a| a).count();
+            if active_count >= 2 {
+                let mut sum = 0.0f32;
+                for (i, &a) in raw_advantages.iter().enumerate() {
+                    if lane_active[i] {
+                        sum += a;
+                    }
+                }
+                let mean = sum / active_count as f32;
+                let mut sq_sum = 0.0f32;
+                for (i, &a) in raw_advantages.iter().enumerate() {
+                    if lane_active[i] {
+                        let d = a - mean;
+                        sq_sum += d * d;
+                    }
+                }
+                let std = (sq_sum / active_count as f32).sqrt().max(1e-3);
+                for (i, a) in raw_advantages.iter_mut().enumerate() {
+                    if lane_active[i] {
+                        *a = (*a - mean) / std;
+                    }
+                }
+            }
+        }
+
+        for (i, lane) in self.lanes.iter().enumerate() {
+            if !lane_active[i] {
+                continue;
+            }
+            let buf_len = lane.buffer.len();
+            let ripe_idx = buf_len - n_step - bootstrap_headroom - ripe_back_offset;
+            let ripe = lane.buffer.get(ripe_idx);
+            let advantage = raw_advantages[i].clamp(-adv_clamp, adv_clamp);
+            self.value_target_scratch[i] = value_targets[i];
 
             let entropy_deficit = if floor > 0.0 {
                 ((floor - lane.last_entropy) / floor).clamp(0.0, 1.0)

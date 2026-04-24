@@ -468,6 +468,8 @@ impl PyBatchAgent {
         value_bootstrap = None,
         gae_lambda = None,
         value_loss_coef = None,
+        policy_update_interval = None,
+        advantage_normalize = None,
         planner_horizon = None,
         planner_samples = None,
         planner_refresh_interval = None,
@@ -545,6 +547,8 @@ impl PyBatchAgent {
         value_bootstrap: Option<bool>,
         gae_lambda: Option<f32>,
         value_loss_coef: Option<f32>,
+        policy_update_interval: Option<usize>,
+        advantage_normalize: Option<bool>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
         planner_refresh_interval: Option<usize>,
@@ -803,6 +807,12 @@ impl PyBatchAgent {
         }
         if let Some(v) = value_loss_coef {
             config.value_loss_coef = v;
+        }
+        if let Some(v) = policy_update_interval {
+            config.policy_update_interval = v;
+        }
+        if let Some(v) = advantage_normalize {
+            config.advantage_normalize = v;
         }
         if let Some(v) = planner_horizon {
             config.planner_horizon = v;
