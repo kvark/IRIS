@@ -268,6 +268,10 @@ def main() -> int:
     parser.add_argument("--gamma", type=float, default=None,
                         help="Discount factor for n-step returns. Default 0.95. "
                         "Try 0.99 on long-horizon envs.")
+    parser.add_argument("--value-bootstrap", action="store_true",
+                        help="TD-bootstrap the value-head target "
+                        "(V_target = Σ γ^k r_{t+k} + γ^n·V(s_{t+n})). "
+                        "Densifies sparse-reward TD gradient.")
     parser.add_argument("--balance-events", action="store_true",
                         help="Harness-side rebalance per-step rewards so rare "
                         "events (positive in Pong/Breakout) get amplified to "
@@ -357,6 +361,8 @@ def main() -> int:
             ] = v
     if args.planner_horizon > 0:
         agent_kwargs["planner_horizon"] = args.planner_horizon
+    if args.value_bootstrap:
+        agent_kwargs["value_bootstrap"] = True
 
     agent = kindle.BatchAgent(**agent_kwargs)
 
