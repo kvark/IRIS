@@ -609,6 +609,16 @@ pub struct AgentConfig {
     /// PPO clip radius ε. Standard value `0.2`. Ratio is clipped to
     /// `[1 − ε, 1 + ε]`.
     pub ppo_clip_eps: f32,
+    /// Number of epochs to replay each rollout through the PPO
+    /// update. On epoch 1 the ratio is ≈ 1 everywhere (policy
+    /// hasn't moved since collection), so the clip does nothing —
+    /// the update is identical to plain advantage-weighted PG. On
+    /// epochs 2+, the policy has drifted from π_old, ratios diverge
+    /// from 1, and the clip actually caps updates that would move
+    /// the policy past the trust region. Standard PPO uses 3–10.
+    /// Only has effect when `use_ppo = true`. Default 1 (equivalent
+    /// to the no-clip baseline for single-epoch runs).
+    pub ppo_n_epochs: usize,
     /// Model-based planner. When `> 0`, kindle maintains a CPU
     /// copy of the world-model weights and can simulate candidate
     /// action sequences via `plan_and_queue()` — sampling
@@ -746,6 +756,7 @@ impl Default for AgentConfig {
             advantage_normalize: false,
             use_ppo: false,
             ppo_clip_eps: 0.2,
+            ppo_n_epochs: 1,
             planner_horizon: 0,
             planner_samples: 32,
             planner_refresh_interval: 200,
@@ -3306,12 +3317,33 @@ impl Agent {
                 return;
             }
             self.policy_update_ticks = 0;
-            // Oldest ripe first so the gradient order matches the
-            // temporal order of the collected rollout — Adam's moment
-            // estimates then update in the same order the data was
-            // produced, which matches how A2C trains on a rollout.
-            for k in (0..interval).rev() {
-                self.policy_step_n_step_at(n_step, k);
+            let n_epochs = if self.config.use_ppo {
+                self.config.ppo_n_epochs.max(1)
+            } else {
+                1
+            };
+            // Epoch loop: replay the same `interval`-step rollout
+            // `n_epochs` times. With PPO, epoch 1's ratio ≈ 1 (π_new
+            // ≈ π_old since collection), so it runs as plain PG.
+            // Epochs 2+ see the policy drifted from π_old (because
+            // epoch 1 updated weights), so ratios diverge from 1 and
+            // the PPO clip starts actually capping updates that would
+            // push past the trust region. This is the standard PPO
+            // training schedule (e.g. SB3 defaults to n_epochs=10).
+            //
+            // Non-PPO path keeps n_epochs=1 — replaying the same
+            // rollout under plain PG would just multiply the update
+            // magnitude (every epoch is unclipped, so each repeat is
+            // basically an LR boost).
+            for _ in 0..n_epochs {
+                // Oldest ripe first so the gradient order matches
+                // the temporal order of the collected rollout —
+                // Adam's moment estimates then update in the same
+                // order the data was produced, which matches how
+                // A2C trains on a rollout.
+                for k in (0..interval).rev() {
+                    self.policy_step_n_step_at(n_step, k);
+                }
             }
             return;
         }

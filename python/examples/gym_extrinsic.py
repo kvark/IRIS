@@ -94,6 +94,11 @@ def main() -> int:
     parser.add_argument("--ppo-clip-eps", type=float, default=0.2,
                         help="PPO clip radius ε; ratio is clamped to "
                         "[1-ε, 1+ε]. Standard 0.2.")
+    parser.add_argument("--ppo-n-epochs", type=int, default=1,
+                        help="Number of epochs to replay each rollout "
+                        "through the PPO update. Only matters with "
+                        "--use-ppo. Standard 3-10. On epoch 1 ratio ≈ 1 "
+                        "(no clip activity); epochs 2+ exercise the clip.")
     parser.add_argument("--async-envs", action="store_true")
     args = parser.parse_args()
 
@@ -141,6 +146,7 @@ def main() -> int:
         advantage_normalize=args.advantage_normalize,
         use_ppo=args.use_ppo,
         ppo_clip_eps=args.ppo_clip_eps,
+        ppo_n_epochs=args.ppo_n_epochs,
     )
     print("agent ready (MLP encoder)")
 
