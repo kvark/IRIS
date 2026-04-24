@@ -461,6 +461,7 @@ impl PyBatchAgent {
         delta_goal_surprise_threshold = None,
         xeps_reward_alpha = None,
         xeps_grid_resolution = None,
+        extrinsic_reward_alpha = None,
         planner_horizon = None,
         planner_samples = None,
         planner_refresh_interval = None,
@@ -531,6 +532,7 @@ impl PyBatchAgent {
         delta_goal_surprise_threshold: Option<f32>,
         xeps_reward_alpha: Option<f32>,
         xeps_grid_resolution: Option<f32>,
+        extrinsic_reward_alpha: Option<f32>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
         planner_refresh_interval: Option<usize>,
@@ -769,6 +771,9 @@ impl PyBatchAgent {
         if let Some(v) = xeps_grid_resolution {
             config.xeps_grid_resolution = Some(v);
         }
+        if let Some(v) = extrinsic_reward_alpha {
+            config.extrinsic_reward_alpha = v;
+        }
         if let Some(v) = planner_horizon {
             config.planner_horizon = v;
         }
@@ -968,6 +973,26 @@ impl PyBatchAgent {
         // floats (legacy `list[float]` usage).
         let v: Vec<f32> = visual.extract()?;
         self.agent.set_visual_obs(&v);
+        Ok(())
+    }
+
+    /// Set per-lane extrinsic (env) reward for the next `observe()`
+    /// call. `rewards` is a length-`batch_size` buffer (numpy array
+    /// preferred for zero-copy; any iterable also accepted). No-op
+    /// when `extrinsic_reward_alpha == 0.0` at agent construction.
+    fn set_extrinsic_reward(&mut self, rewards: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(buf) = pyo3::buffer::PyBuffer::<f32>::get(rewards) {
+            let py = rewards.py();
+            if let Some(slice) = buf.as_slice(py) {
+                let ptr = slice.as_ptr() as *const f32;
+                let len = slice.len();
+                let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+                self.agent.set_extrinsic_reward(slice);
+                return Ok(());
+            }
+        }
+        let v: Vec<f32> = rewards.extract()?;
+        self.agent.set_extrinsic_reward(&v);
         Ok(())
     }
 

@@ -444,6 +444,20 @@ pub struct AgentConfig {
     /// `None` → reuse `grid_resolution` (the state-novelty bucket
     /// size), keeping the two quantization schemes consistent.
     pub xeps_grid_resolution: Option<f32>,
+    /// Extrinsic-reward weight. When `> 0`, the harness can supply
+    /// a per-lane scalar via `Agent::set_extrinsic_reward(&[f32])`
+    /// before each `observe()` call; kindle adds
+    /// `α · extrinsic[i]` to the per-step reward used by credit
+    /// and policy training. Unlike the homeo primitive — which
+    /// always subtracts a positive deviation from a target and
+    /// thus produces a one-sided signal — extrinsic reward is
+    /// signed and passes through unchanged, so sparse ±1 signals
+    /// (Atari, Gym classic control reward) reach policy gradient
+    /// with the correct sign. Kindle's value head absorbs the DC
+    /// offset automatically; the advantage sees the per-step
+    /// variance. Zero (default) preserves the pre-primitive
+    /// behaviour byte-for-byte.
+    pub extrinsic_reward_alpha: f32,
     /// Model-based planner. When `> 0`, kindle maintains a CPU
     /// copy of the world-model weights and can simulate candidate
     /// action sequences via `plan_and_queue()` — sampling
@@ -570,6 +584,7 @@ impl Default for AgentConfig {
             delta_goal_surprise_threshold: 0.5,
             xeps_reward_alpha: 0.0,
             xeps_grid_resolution: None,
+            extrinsic_reward_alpha: 0.0,
             planner_horizon: 0,
             planner_samples: 32,
             planner_refresh_interval: 200,
@@ -1050,6 +1065,13 @@ pub struct Agent {
     /// refresh. Triggers a refresh when it hits
     /// `planner_refresh_interval`.
     planner_calls_since_refresh: usize,
+    /// Per-lane extrinsic reward for the NEXT `observe()` call.
+    /// Populated by the harness via `set_extrinsic_reward`. Zero-
+    /// initialized; cleared back to 0 after each `observe()` so a
+    /// missed `set_extrinsic_reward` doesn't silently repeat the
+    /// previous step's value. Only consumed when
+    /// `extrinsic_reward_alpha > 0`.
+    extrinsic_reward: Vec<f32>,
 }
 
 /// Cosine similarity between two equal-length vectors. Returns 0 when
@@ -1537,6 +1559,7 @@ impl Agent {
             planner,
             planner_queue: (0..n).map(|_| std::collections::VecDeque::new()).collect(),
             planner_calls_since_refresh: 0,
+            extrinsic_reward: vec![0.0; n],
             config,
         }
     }
@@ -1985,6 +2008,7 @@ impl Agent {
         let mut dg_events_this_step: usize = 0;
         let xeps_alpha = self.config.xeps_reward_alpha;
         let mut xeps_memory = self.xeps_memory.take();
+        let ext_alpha = self.config.extrinsic_reward_alpha;
         let m7_warmup = self.config.approach_warmup_episodes;
         let m7_homeo_taper = self.config.homeo_confidence_taper.clamp(0.0, 1.0);
         let mut m7_state = self.approach_state.take();
@@ -2319,8 +2343,23 @@ impl Agent {
                 self.xeps_prev_action[i] = None;
             }
 
-            let reward =
-                reward_pre_m6 + m6_bonus + m7_reward + rnd_reward + dg_reward + xeps_reward;
+            // Extrinsic reward (signed, passed through from the env).
+            // Kindle's value head absorbs the mean; the per-step
+            // variance stays in the advantage. This is the channel
+            // stock RL consumes — scaled by alpha it sits alongside
+            // kindle's intrinsic primitives. Harness sets
+            // `self.extrinsic_reward[i]` via `set_extrinsic_reward`
+            // before calling observe; we consume and zero it here.
+            let ext_reward = ext_alpha * self.extrinsic_reward[i];
+            self.extrinsic_reward[i] = 0.0;
+
+            let reward = reward_pre_m6
+                + m6_bonus
+                + m7_reward
+                + rnd_reward
+                + dg_reward
+                + xeps_reward
+                + ext_reward;
 
             // Cache per-lane reward for the coord head's next
             // REINFORCE update; the head uses this step's reward
@@ -2443,6 +2482,28 @@ impl Agent {
 
     /// Populate the visual-obs buffer for the next `observe()`.
     ///
+    /// Per-lane extrinsic (env) reward for the NEXT `observe()` call.
+    /// `rewards.len()` must equal `batch_size`. No-op when
+    /// `extrinsic_reward_alpha == 0.0`.
+    ///
+    /// Call between env step and `observe` — the harness is the only
+    /// party that knows the env's native reward. Kindle zeroes the
+    /// per-lane value inside `observe` after consuming it, so a
+    /// missed call doesn't silently replay the previous step.
+    pub fn set_extrinsic_reward(&mut self, rewards: &[f32]) {
+        if self.config.extrinsic_reward_alpha == 0.0 {
+            return;
+        }
+        assert_eq!(
+            rewards.len(),
+            self.extrinsic_reward.len(),
+            "set_extrinsic_reward: expected {} rewards, got {}",
+            self.extrinsic_reward.len(),
+            rewards.len()
+        );
+        self.extrinsic_reward.copy_from_slice(rewards);
+    }
+
     /// Must be called by the harness when `encoder_kind = Cnn` and
     /// the input shape is flat NCHW of size `batch · channels · h · w`.
     /// No-op when the encoder is `Mlp`.
