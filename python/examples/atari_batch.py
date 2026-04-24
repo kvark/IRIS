@@ -152,6 +152,46 @@ def homeo_for(step_reward: float) -> list[dict[str, float]]:
     ]
 
 
+class EventBalancer:
+    """Rebalances per-step reward so rare events get amplified.
+
+    Stock on-policy RL sees 21 losses per 1 win on Pong (random policy),
+    so accumulated gradient tells the policy "avoid actions during
+    losses" — which happens to be "don't chase the ball." This
+    rebalancer tracks running counts of positive and negative events
+    per lane and scales the rarer sign up so each event class
+    contributes equally to the accumulated gradient.
+
+    At balance (pos_count == neg_count) scale is 1 for both. In
+    Pong's 21:1 regime, scale for positive events becomes ~21 and
+    for negative stays 1 (or vice versa depending on which is rarer).
+
+    Not pure task-agnostic — it embeds a prior that rare events are
+    important — but it's a generic prior applicable to any sparse-
+    reward env, not Atari-specific.
+    """
+
+    def __init__(self, num_lanes: int, eps: float = 1.0):
+        import numpy as np
+        self.pos = np.full(num_lanes, eps, dtype=np.float64)
+        self.neg = np.full(num_lanes, eps, dtype=np.float64)
+
+    def scale(self, rewards: np.ndarray) -> np.ndarray:
+        """Return rebalanced rewards in-place-safe."""
+        import numpy as np
+        # Update counts first, so current-step scaling reflects the
+        # distribution AFTER this step's contribution is known.
+        self.pos += (rewards > 0).astype(np.float64)
+        self.neg += (rewards < 0).astype(np.float64)
+        # Scale factor amplifies the rarer sign to match the other.
+        out = rewards.astype(np.float32).copy()
+        pos_scale = self.neg / self.pos  # >1 when positives rare
+        neg_scale = self.pos / self.neg  # >1 when negatives rare
+        out[rewards > 0] *= pos_scale[rewards > 0].astype(np.float32)
+        out[rewards < 0] *= neg_scale[rewards < 0].astype(np.float32)
+        return out
+
+
 class Profiler:
     """Tiny cumulative-time instrument with named sections."""
 
@@ -216,6 +256,26 @@ def main() -> int:
     parser.add_argument("--reward-order", type=float, default=None)
     parser.add_argument("--advantage-clamp", type=float, default=None)
     parser.add_argument("--entropy-beta", type=float, default=None)
+    parser.add_argument("--history-len", type=int, default=None,
+                        help="L0 credit-attention window in steps. Default 16. "
+                        "Atari score events land ~10-30 env-steps after the "
+                        "causal action; try 64-128.")
+    parser.add_argument("--n-step", type=int, default=None,
+                        help="Advantage lookahead horizon. Default 1 (single-step). "
+                        "N ≥ 2 trains on an N-step γ-discounted Monte-Carlo return — "
+                        "needed when reward events are many steps downstream of the "
+                        "causal action (Pong scoring, Breakout brick bounces).")
+    parser.add_argument("--gamma", type=float, default=None,
+                        help="Discount factor for n-step returns. Default 0.95. "
+                        "Try 0.99 on long-horizon envs.")
+    parser.add_argument("--balance-events", action="store_true",
+                        help="Harness-side rebalance per-step rewards so rare "
+                        "events (positive in Pong/Breakout) get amplified to "
+                        "contribute equally to the accumulated policy "
+                        "gradient. Without it, kindle's policy commits in the "
+                        "wrong direction on imbalanced envs (observed on Pong "
+                        "at 400k env-steps: entropy drops 1.79→1.68 but "
+                        "avg_return drifts −20.2→−21.0).")
     parser.add_argument("--rnd-alpha", type=float, default=None)
     parser.add_argument("--delta-goal-alpha", type=float, default=None)
     parser.add_argument("--delta-goal-threshold", type=float, default=None)
@@ -273,6 +333,7 @@ def main() -> int:
         "xeps_alpha", "xeps_grid_resolution", "planner_samples",
         "reward_homeostatic", "reward_surprise", "reward_novelty", "reward_order",
         "advantage_clamp", "entropy_beta",
+        "history_len", "n_step", "gamma",
     ]:
         v = getattr(args, name, None)
         if v is not None:
@@ -302,6 +363,10 @@ def main() -> int:
         f"agent ready (CNN {N_CHANNELS}×{FRAME_H}×{FRAME_W} → {args.latent_dim}); "
         f"visual_obs buffer: {agent.visual_obs_host_size() / (1 << 10):.1f} KiB "
         f"(Memory::Shared, device-local + host-visible)"
+    )
+
+    balancer: EventBalancer | None = (
+        EventBalancer(args.lanes) if args.balance_events else None
     )
 
     # --- Training loop ---
@@ -352,7 +417,8 @@ def main() -> int:
         prof.tick("push_frame (next)", time.time() - t)
 
         t = time.time()
-        homeos = [homeo_for(float(rewards[i])) for i in range(args.lanes)]
+        shaped = balancer.scale(rewards) if balancer is not None else rewards
+        homeos = [homeo_for(float(shaped[i])) for i in range(args.lanes)]
         agent.observe(obs_token_small, [int(a) for a in actions], homeostatic=homeos)
         prof.tick("agent.observe", time.time() - t)
 
