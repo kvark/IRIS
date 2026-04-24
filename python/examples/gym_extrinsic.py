@@ -87,6 +87,13 @@ def main() -> int:
                         "Strips the \"V lags reward\" bias — critical early "
                         "in training when V hasn't caught up and every "
                         "advantage is same-sign.")
+    parser.add_argument("--use-ppo", action="store_true",
+                        help="Use the PPO clipped-surrogate policy loss. "
+                        "Requires policy_update_interval > 1 to exercise the "
+                        "ratio. Incompatible with L1 options for now.")
+    parser.add_argument("--ppo-clip-eps", type=float, default=0.2,
+                        help="PPO clip radius ε; ratio is clamped to "
+                        "[1-ε, 1+ε]. Standard 0.2.")
     parser.add_argument("--async-envs", action="store_true")
     args = parser.parse_args()
 
@@ -132,6 +139,8 @@ def main() -> int:
         value_loss_coef=args.value_loss_coef,
         policy_update_interval=args.policy_update_interval,
         advantage_normalize=args.advantage_normalize,
+        use_ppo=args.use_ppo,
+        ppo_clip_eps=args.ppo_clip_eps,
     )
     print("agent ready (MLP encoder)")
 
