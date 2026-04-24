@@ -619,6 +619,18 @@ pub struct AgentConfig {
     /// Only has effect when `use_ppo = true`. Default 1 (equivalent
     /// to the no-clip baseline for single-epoch runs).
     pub ppo_n_epochs: usize,
+    /// Zero all advantages (and therefore the policy-gradient
+    /// signal) for the first `policy_warmup_steps` env-steps.
+    /// The value head still trains — only the policy-gradient
+    /// portion of the combined loss is silenced. Gives V a head
+    /// start so that when the policy starts training the advantages
+    /// are grounded in a reasonably accurate baseline rather than
+    /// random-init V ≈ 0 (which on dense-reward envs produces
+    /// uniformly positive advantages for every state, and the
+    /// policy commits to random-majority actions).
+    ///
+    /// Default 0 (disabled). Try 2000–10000 on dense-reward envs.
+    pub policy_warmup_steps: usize,
     /// A2C/PPO rollout buffer length. When `> 1`:
     ///   - The policy graph is built with
     ///     `batch_size = lanes × rollout_length`, so each policy
@@ -773,6 +785,7 @@ impl Default for AgentConfig {
             use_ppo: false,
             ppo_clip_eps: 0.2,
             ppo_n_epochs: 1,
+            policy_warmup_steps: 0,
             rollout_length: 1,
             planner_horizon: 0,
             planner_samples: 32,
@@ -3760,7 +3773,11 @@ impl Agent {
             let buf_len = lane.buffer.len();
             let ripe_idx = buf_len - n_step - bootstrap_headroom - ripe_back_offset;
             let ripe = lane.buffer.get(ripe_idx);
-            let advantage = raw_advantages[i].clamp(-adv_clamp, adv_clamp);
+            let advantage = if self.step_count < self.config.policy_warmup_steps {
+                0.0
+            } else {
+                raw_advantages[i].clamp(-adv_clamp, adv_clamp)
+            };
             self.value_target_scratch[i] = value_targets[i];
 
             let entropy_deficit = if floor > 0.0 {
@@ -4017,7 +4034,11 @@ impl Agent {
                 continue;
             }
             any_active = true;
-            let advantage = raw_advantages[row].clamp(-adv_clamp, adv_clamp);
+            let advantage = if self.step_count < self.config.policy_warmup_steps {
+                0.0
+            } else {
+                raw_advantages[row].clamp(-adv_clamp, adv_clamp)
+            };
             self.value_target_scratch[row] = value_targets[row];
 
             // z_scratch row

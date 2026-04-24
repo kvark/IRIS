@@ -105,6 +105,11 @@ def main() -> int:
                         "one policy session.step() per update covers the "
                         "whole rollout at once. Supersedes "
                         "--policy-update-interval when > 1. Try 8-32.")
+    parser.add_argument("--policy-warmup-steps", type=int, default=0,
+                        help="Zero advantages for the first N env-steps, "
+                        "so only the value head trains. Lets V catch up "
+                        "to reward scale before policy starts committing. "
+                        "Try 2000-10000 on dense-reward envs.")
     parser.add_argument("--async-envs", action="store_true")
     args = parser.parse_args()
 
@@ -153,6 +158,7 @@ def main() -> int:
         use_ppo=args.use_ppo,
         ppo_clip_eps=args.ppo_clip_eps,
         ppo_n_epochs=args.ppo_n_epochs,
+        policy_warmup_steps=args.policy_warmup_steps,
         rollout_length=args.rollout_length,
     )
     print("agent ready (MLP encoder)")
