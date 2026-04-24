@@ -276,6 +276,14 @@ def main() -> int:
                         "wrong direction on imbalanced envs (observed on Pong "
                         "at 400k env-steps: entropy drops 1.79→1.68 but "
                         "avg_return drifts −20.2→−21.0).")
+    parser.add_argument("--extrinsic-alpha", type=float, default=None,
+                        help="Weight on kindle's first-class extrinsic-reward "
+                        "primitive. When > 0, the harness supplies the raw "
+                        "env reward ± directly to kindle's per-step reward "
+                        "channel (additive alongside surprise/novelty/homeo/…). "
+                        "Unlike homeo's distance-to-target, this is signed and "
+                        "passes through — the correct integration for "
+                        "per-step ±1 Atari-style reward.")
     parser.add_argument("--rnd-alpha", type=float, default=None)
     parser.add_argument("--delta-goal-alpha", type=float, default=None)
     parser.add_argument("--delta-goal-threshold", type=float, default=None)
@@ -334,11 +342,16 @@ def main() -> int:
         "reward_homeostatic", "reward_surprise", "reward_novelty", "reward_order",
         "advantage_clamp", "entropy_beta",
         "history_len", "n_step", "gamma",
+        "extrinsic_alpha",
     ]:
         v = getattr(args, name, None)
         if v is not None:
             agent_kwargs[
-                {"rnd_alpha": "rnd_reward_alpha", "xeps_alpha": "xeps_reward_alpha"}.get(
+                {
+                    "rnd_alpha": "rnd_reward_alpha",
+                    "xeps_alpha": "xeps_reward_alpha",
+                    "extrinsic_alpha": "extrinsic_reward_alpha",
+                }.get(
                     name, name
                 )
             ] = v
@@ -419,6 +432,10 @@ def main() -> int:
         t = time.time()
         shaped = balancer.scale(rewards) if balancer is not None else rewards
         homeos = [homeo_for(float(shaped[i])) for i in range(args.lanes)]
+        if args.extrinsic_alpha is not None and args.extrinsic_alpha > 0:
+            # Raw env reward, signed, passed through kindle's extrinsic
+            # primitive. Shaped=balanced copy if --balance-events is on.
+            agent.set_extrinsic_reward(shaped.astype(np.float32, copy=False))
         agent.observe(obs_token_small, [int(a) for a in actions], homeostatic=homeos)
         prof.tick("agent.observe", time.time() - t)
 
