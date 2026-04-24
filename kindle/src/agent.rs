@@ -593,6 +593,22 @@ pub struct AgentConfig {
     /// information we actually need. Mean-centering strips the bias;
     /// variance-normalization fixes the gradient-magnitude scale.
     pub advantage_normalize: bool,
+    /// Enable the PPO clipped-surrogate policy loss. When `true`, the
+    /// agent uses `build_ppo_policy_graph` instead of the plain
+    /// advantage-weighted CE path — see that function's docstring for
+    /// the formula. The clipped ratio provides a mathematical trust
+    /// region: once the policy has moved ε away from the data-
+    /// collection policy on a given transition, the gradient through
+    /// that transition drops to zero. This is what stabilizes committed
+    /// policies and closes the commit/uncommit oscillation that
+    /// advantage-normalized on-policy PG cannot escape on its own.
+    /// Default `false`. Requires `policy_update_interval > 1` (at least
+    /// some rollout window) for the ratio to be meaningfully ≠ 1 across
+    /// inner-loop steps.
+    pub use_ppo: bool,
+    /// PPO clip radius ε. Standard value `0.2`. Ratio is clipped to
+    /// `[1 − ε, 1 + ε]`.
+    pub ppo_clip_eps: f32,
     /// Model-based planner. When `> 0`, kindle maintains a CPU
     /// copy of the world-model weights and can simulate candidate
     /// action sequences via `plan_and_queue()` — sampling
@@ -728,6 +744,8 @@ impl Default for AgentConfig {
             value_loss_coef: 1.0,
             policy_update_interval: 1,
             advantage_normalize: false,
+            use_ppo: false,
+            ppo_clip_eps: 0.2,
             planner_horizon: 0,
             planner_samples: 32,
             planner_refresh_interval: 200,
@@ -1013,6 +1031,11 @@ struct Lane {
 
     // Cached last-step values for diagnostics & policy advantage.
     last_value: f32,
+    /// π_old(a | s) for the action just sampled in `act()`. Stored
+    /// into `Transition.prob_taken` in `observe()` so the PPO path can
+    /// compute importance ratios. In (0, 1]; default 1.0 before first
+    /// `act()`.
+    last_prob_taken: f32,
     last_entropy: f32,
     last_surprise: f32,
     last_novelty: f32,
@@ -1137,6 +1160,12 @@ pub struct Agent {
     /// either the cross-entropy or MSE loss path without needing a
     /// per-row loss weighting input on the graph side.
     policy_action_scratch: Vec<f32>,
+    /// PPO mode: per-row advantage `[N, 1]` (separate input, not
+    /// baked into `policy_action_scratch` like the plain path).
+    ppo_advantage_scratch: Vec<f32>,
+    /// PPO mode: per-row `π_old(a | s)` for the taken action
+    /// `[N, 1]`. Positive, non-zero.
+    ppo_old_prob_scratch: Vec<f32>,
     /// Effective option_dim (resolved from config: 0 → latent_dim). The
     /// goal vector width used by the goal-alignment reward bonus.
     option_dim: usize,
@@ -1560,7 +1589,24 @@ impl Agent {
         // and routes it through a direct-to-logits bias head (see
         // `policy::build_policy_graph`).
         let policy_session = {
-            let g = if is_discrete {
+            let g = if is_discrete && config.use_ppo {
+                // PPO mode does not support L1 options yet — options are
+                // an orthogonal feature; the PPO graph assumes a flat
+                // policy without per-option bias heads.
+                assert!(
+                    config.num_options <= 1,
+                    "use_ppo is not compatible with num_options > 1 (L1 options)"
+                );
+                policy::build_ppo_policy_graph(
+                    config.latent_dim,
+                    MAX_ACTION_DIM,
+                    config.hidden_dim,
+                    config.batch_size,
+                    config.ppo_clip_eps,
+                    config.value_loss_coef,
+                    config.entropy_beta,
+                )
+            } else if is_discrete {
                 policy::build_policy_graph(
                     config.latent_dim,
                     MAX_ACTION_DIM,
@@ -1764,6 +1810,7 @@ impl Agent {
                 option_start_z: vec![0.0; config.latent_dim],
                 option_history: OptionHistory::new(config.option_history_len.max(1)),
                 last_value: 0.0,
+                last_prob_taken: 1.0,
                 last_entropy: 0.0,
                 last_surprise: 0.0,
                 last_novelty: 0.0,
@@ -1814,6 +1861,8 @@ impl Agent {
             task_scratch: vec![0.0; n * TASK_DIM],
             value_target_scratch: vec![0.0; n],
             policy_action_scratch: vec![0.0; n * MAX_ACTION_DIM],
+            ppo_advantage_scratch: vec![0.0; n],
+            ppo_old_prob_scratch: vec![1.0; n],
             option_dim,
             option_onehot_scratch: vec![0.0; n * config.num_options.max(1)],
             option_taken_scratch: vec![0.0; n * config.num_options],
@@ -2160,6 +2209,19 @@ impl Agent {
                         .clone()
                         .expect("cached_action is Some by branch condition")
                 }
+            };
+            // Cache π_old(a | s) for the PPO path — head is logits for
+            // discrete adapters; re-softmax it here rather than threading
+            // an extra array out of the batched forward. Continuous
+            // actions use a Gaussian with fixed scale, we approximate
+            // their π_old as 1.0 (the MSE surrogate is scale-invariant).
+            lane.last_prob_taken = match &action {
+                Action::Discrete(a) => {
+                    let probs = crate::policy::softmax_probs(head);
+                    let idx = (*a).min(probs.len().saturating_sub(1));
+                    probs[idx].max(1e-8)
+                }
+                Action::Continuous(_) => 1.0,
             };
             // Cache the discrete action id for cross-episode memory.
             // Continuous actions don't key the xeps memory (no natural
@@ -2657,6 +2719,7 @@ impl Agent {
                 credit: 0.0,
                 pred_error,
                 value: lane.last_value,
+                prob_taken: lane.last_prob_taken,
                 option_idx: lane.current_option,
                 env_id: lane.adapter.id(),
                 env_boundary,
@@ -3558,6 +3621,12 @@ impl Agent {
             }
         }
 
+        let use_ppo = self.config.use_ppo;
+        if use_ppo {
+            self.ppo_advantage_scratch.fill(0.0);
+            self.ppo_old_prob_scratch.fill(1.0);
+        }
+
         for (i, lane) in self.lanes.iter().enumerate() {
             if !lane_active[i] {
                 continue;
@@ -3578,21 +3647,33 @@ impl Agent {
             }
             any_active = true;
 
-            let eps = (eps_base + (1.0 - eps_base) * entropy_deficit).min(1.0);
-            let effective_adv = if advantage.abs() < 1e-3 && entropy_deficit > 0.0 {
-                entropy_deficit
-            } else {
-                advantage
-            };
-
             old_z_stack[i * ld..(i + 1) * ld].copy_from_slice(&ripe.latent);
 
-            let act_src = &ripe.action;
-            let act_dst =
-                &mut self.policy_action_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
-            for (dst, &src) in act_dst.iter_mut().zip(act_src.iter()) {
-                let smoothed = (1.0 - eps) * src + eps / k_actions;
-                *dst = effective_adv * smoothed;
+            if use_ppo {
+                // PPO feeds: plain one-hot `action` (sum=1), scalar
+                // `advantage`, scalar `old_prob_taken`. The clip and
+                // the advantage-weighting live inside the graph.
+                let act_dst = &mut self.policy_action_scratch
+                    [i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+                for (dst, &src) in act_dst.iter_mut().zip(ripe.action.iter()) {
+                    *dst = src;
+                }
+                self.ppo_advantage_scratch[i] = advantage;
+                self.ppo_old_prob_scratch[i] = ripe.prob_taken.max(1e-8);
+            } else {
+                let eps = (eps_base + (1.0 - eps_base) * entropy_deficit).min(1.0);
+                let effective_adv = if advantage.abs() < 1e-3 && entropy_deficit > 0.0 {
+                    entropy_deficit
+                } else {
+                    advantage
+                };
+                let act_src = &ripe.action;
+                let act_dst = &mut self.policy_action_scratch
+                    [i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+                for (dst, &src) in act_dst.iter_mut().zip(act_src.iter()) {
+                    let smoothed = (1.0 - eps) * src + eps / k_actions;
+                    *dst = effective_adv * smoothed;
+                }
             }
 
             if has_options {
@@ -3644,6 +3725,12 @@ impl Agent {
             .set_input("action", &self.policy_action_scratch);
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
+        if use_ppo {
+            self.policy_session
+                .set_input("advantage", &self.ppo_advantage_scratch);
+            self.policy_session
+                .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
+        }
         self.policy_session
             .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
         self.policy_session.step();
@@ -4050,6 +4137,7 @@ mod tests {
                 credit: 0.0,
                 pred_error: 0.0,
                 value,
+                prob_taken: 1.0,
                 option_idx: 0,
                 env_id: 0,
                 env_boundary,

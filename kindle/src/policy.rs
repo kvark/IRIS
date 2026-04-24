@@ -246,6 +246,132 @@ pub fn build_policy_graph(
     g
 }
 
+/// Build the discrete PPO-style policy + value training graph.
+///
+/// Inputs:
+/// - `"z"`: `[batch_size, latent_dim]`
+/// - `"action"`: `[batch_size, action_dim]` — one-hot of the taken action
+///   (MUST sum to 1 per row — plain one-hot, no advantage weighting)
+/// - `"advantage"`: `[batch_size, 1]` — per-row scalar advantage Â_t
+/// - `"old_prob_taken"`: `[batch_size, 1]` — π_old(a_t|s_t), the probability
+///   of the taken action under the policy that collected the data (positive,
+///   non-zero)
+/// - `"value_target"`: `[batch_size, 1]` — TD target for the value head
+///
+/// Outputs: `[loss, logits, value]`.
+///
+/// Loss: the PPO clipped surrogate
+/// ```text
+/// r_t = π_new(a_t|s_t) / π_old(a_t|s_t)
+/// L = -E[ min(r_t · Â_t, clip(r_t, 1-ε, 1+ε) · Â_t) ]
+/// ```
+/// Decomposed using only the ops meganeura has today: softmax (→prob),
+/// per-row gather via matmul with a `[K,1]` ones column, elementwise
+/// division, and `greater()`-gated min/max selectors. The `greater` op
+/// has zero backward gradient, so the clip boundary correctly produces
+/// zero gradient — the defining property that makes PPO a proper trust
+/// region and stops committed policies from overshooting.
+///
+/// `entropy_beta` and `value_loss_coef` behave identically to the
+/// non-PPO variant.
+pub fn build_ppo_policy_graph(
+    latent_dim: usize,
+    action_dim: usize,
+    hidden_dim: usize,
+    batch_size: usize,
+    clip_eps: f32,
+    value_loss_coef: f32,
+    entropy_beta: f32,
+) -> Graph {
+    let mut g = Graph::new();
+    let z = g.input("z", &[batch_size, latent_dim]);
+    let action = g.input("action", &[batch_size, action_dim]);
+    let advantage = g.input("advantage", &[batch_size, 1]);
+    let old_prob_taken = g.input("old_prob_taken", &[batch_size, 1]);
+    let value_target = g.input("value_target", &[batch_size, 1]);
+
+    let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+    let logits = policy.forward(&mut g, z);
+
+    // π_new(a | s) — probability of the taken action under the current
+    // policy. Built from `softmax(logits) * one_hot` followed by a
+    // per-row sum implemented as matmul with a `[K, 1]` ones vector.
+    let sm_new = g.softmax(logits);
+    let p_per_class = g.mul(sm_new, action);
+    let ones_k1 = g.constant(vec![1.0; action_dim], &[action_dim, 1]);
+    let new_prob_taken = g.matmul(p_per_class, ones_k1);
+
+    // ratio r_t = π_new / π_old
+    let ratio = g.div(new_prob_taken, old_prob_taken);
+
+    // Clip ratio to [1-ε, 1+ε] via two `greater()`-gated selectors:
+    // ratio_hi = min(ratio, 1+ε)
+    // ratio_clip = max(ratio_hi, 1-ε)
+    let one_plus_eps = g.constant(vec![1.0 + clip_eps; batch_size], &[batch_size, 1]);
+    let one_minus_eps = g.constant(vec![1.0 - clip_eps; batch_size], &[batch_size, 1]);
+    let ones_bx1 = g.constant(vec![1.0; batch_size], &[batch_size, 1]);
+
+    // min(a, b) = (1 - gate) * a + gate * b  where gate = greater(a, b)
+    let gate_over = g.greater(ratio, one_plus_eps);
+    let neg_gate_over = g.neg(gate_over);
+    let inv_gate_over = g.add(ones_bx1, neg_gate_over);
+    let term1 = g.mul(ratio, inv_gate_over);
+    let term2 = g.mul(one_plus_eps, gate_over);
+    let ratio_hi = g.add(term1, term2);
+
+    // max(a, b) = (1 - gate) * a + gate * b  where gate = greater(b, a)
+    let gate_under = g.greater(one_minus_eps, ratio_hi);
+    let neg_gate_under = g.neg(gate_under);
+    let inv_gate_under = g.add(ones_bx1, neg_gate_under);
+    let cterm1 = g.mul(ratio_hi, inv_gate_under);
+    let cterm2 = g.mul(one_minus_eps, gate_under);
+    let ratio_clip = g.add(cterm1, cterm2);
+
+    // surr1 = r_t · Â_t,  surr2 = clip(r_t) · Â_t
+    let surr1 = g.mul(ratio, advantage);
+    let surr2 = g.mul(ratio_clip, advantage);
+
+    // min(surr1, surr2) → pessimistic of the two (PPO's conservative choice)
+    let gate_min = g.greater(surr1, surr2);
+    let neg_gate_min = g.neg(gate_min);
+    let inv_gate_min = g.add(ones_bx1, neg_gate_min);
+    let smin1 = g.mul(surr1, inv_gate_min);
+    let smin2 = g.mul(surr2, gate_min);
+    let surr_min = g.add(smin1, smin2);
+
+    // Policy loss = -mean(surr_min). We MAXIMIZE surr_min, so loss negates.
+    let neg_surr_min = g.neg(surr_min);
+    let policy_loss = g.mean_all(neg_surr_min);
+
+    // Value head — same structure as the non-PPO path
+    let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
+    let raw_value = value_head.forward(&mut g, z);
+    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
+    let value_loss_raw = g.mse_loss(value, value_target);
+    let value_loss = if (value_loss_coef - 1.0).abs() < 1e-6 {
+        value_loss_raw
+    } else {
+        let coef = g.scalar(value_loss_coef);
+        g.mul(value_loss_raw, coef)
+    };
+    let base_loss = g.add(policy_loss, value_loss);
+
+    let total_loss = if entropy_beta == 0.0 {
+        base_loss
+    } else {
+        let sm = g.softmax(logits);
+        let lsm = g.log_softmax(logits);
+        let p_log_p = g.mul(sm, lsm);
+        let mean_ent = g.mean_all(p_log_p);
+        let beta_node = g.scalar(entropy_beta);
+        let ent_penalty = g.mul(mean_ent, beta_node);
+        g.add(base_loss, ent_penalty)
+    };
+
+    g.set_outputs(vec![total_loss, logits, value]);
+    g
+}
+
 /// Build the continuous policy + value training graph for a diagonal
 /// Gaussian with fixed unit variance.
 ///

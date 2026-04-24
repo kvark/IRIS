@@ -470,6 +470,8 @@ impl PyBatchAgent {
         value_loss_coef = None,
         policy_update_interval = None,
         advantage_normalize = None,
+        use_ppo = None,
+        ppo_clip_eps = None,
         planner_horizon = None,
         planner_samples = None,
         planner_refresh_interval = None,
@@ -549,6 +551,8 @@ impl PyBatchAgent {
         value_loss_coef: Option<f32>,
         policy_update_interval: Option<usize>,
         advantage_normalize: Option<bool>,
+        use_ppo: Option<bool>,
+        ppo_clip_eps: Option<f32>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
         planner_refresh_interval: Option<usize>,
@@ -813,6 +817,12 @@ impl PyBatchAgent {
         }
         if let Some(v) = advantage_normalize {
             config.advantage_normalize = v;
+        }
+        if let Some(v) = use_ppo {
+            config.use_ppo = v;
+        }
+        if let Some(v) = ppo_clip_eps {
+            config.ppo_clip_eps = v;
         }
         if let Some(v) = planner_horizon {
             config.planner_horizon = v;

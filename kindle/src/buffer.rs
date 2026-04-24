@@ -97,6 +97,11 @@ pub struct Transition {
     /// `AgentConfig::n_step`) to compute `R − V(s_old)` without a
     /// second forward on old state.
     pub value: f32,
+    /// Probability π_old(a_t | s_t) of the action actually taken, cached
+    /// at act-time under the policy that collected this transition. Used
+    /// as the denominator in PPO's importance ratio; unused by the plain
+    /// policy-gradient path. Always in (0, 1].
+    pub prob_taken: f32,
     /// L1 option index active at this step. Mirrors `lane.current_option`
     /// at push time; needed so the n-step training forward can feed the
     /// option_onehot that matches the old state (options can change
