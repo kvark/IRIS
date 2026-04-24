@@ -140,6 +140,7 @@ pub fn build_policy_graph(
     entropy_beta: f32,
     num_options: usize,
     per_option_heads: bool,
+    value_loss_coef: f32,
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
@@ -203,7 +204,18 @@ pub fn build_policy_graph(
 
     // Policy loss: cross-entropy with one-hot action selects -log π(a|s)
     let policy_loss = g.cross_entropy_loss(logits, action);
-    let value_loss = g.mse_loss(value, value_target);
+    let value_loss_raw = g.mse_loss(value, value_target);
+    // Value-loss coefficient (PPO/A2C `vf_coef`). Under a shared
+    // optimizer the value head tends to dominate the combined
+    // gradient — its MSE target is reward-scale while the policy-CE
+    // loss is O(log K) — so we weight value down explicitly. Default
+    // 1.0 keeps the old behavior.
+    let value_loss = if (value_loss_coef - 1.0).abs() < 1e-6 {
+        value_loss_raw
+    } else {
+        let coef = g.scalar(value_loss_coef);
+        g.mul(value_loss_raw, coef)
+    };
     let base_loss = g.add(policy_loss, value_loss);
 
     // Entropy regularizer: subtract β · H(π) from the loss.
@@ -258,6 +270,7 @@ pub fn build_continuous_policy_graph(
     batch_size: usize,
     num_options: usize,
     per_option_heads: bool,
+    value_loss_coef: f32,
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
@@ -307,7 +320,13 @@ pub fn build_continuous_policy_graph(
 
     // Policy loss: MSE(μ, taken_action) ≡ Gaussian NLL with σ² = 1
     let policy_loss = g.mse_loss(mean, action);
-    let value_loss = g.mse_loss(value, value_target);
+    let value_loss_raw = g.mse_loss(value, value_target);
+    let value_loss = if (value_loss_coef - 1.0).abs() < 1e-6 {
+        value_loss_raw
+    } else {
+        let coef = g.scalar(value_loss_coef);
+        g.mul(value_loss_raw, coef)
+    };
     let total_loss = g.add(policy_loss, value_loss);
 
     g.set_outputs(vec![total_loss, mean, value]);

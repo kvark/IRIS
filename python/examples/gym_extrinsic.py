@@ -63,6 +63,18 @@ def main() -> int:
                         "the n-step path: V_target = Σ γ^k r_{t+k} + γ^n·V(s_{t+n}). "
                         "Turns sparse external rewards into dense TD gradients "
                         "via the Bellman equation. Requires n_step ≥ 2.")
+    parser.add_argument("--gae-lambda", type=float, default=0.0,
+                        help="GAE λ for advantage estimation. 0 = disabled "
+                        "(plain n-step advantage). 0.95 is the PPO default. "
+                        "Decouples value target from advantage — prevents "
+                        "value-kills-advantage collapse on dense-reward envs. "
+                        "Implies value_bootstrap slot.")
+    parser.add_argument("--value-loss-coef", type=float, default=1.0,
+                        help="Value-head loss coefficient (PPO vf_coef). "
+                        "1.0 = current behavior (value gradient dominates "
+                        "on dense-reward envs). 0.5 is standard PPO. Try "
+                        "0.1-0.5 to let policy gradient actually steer the "
+                        "shared optimizer.")
     parser.add_argument("--async-envs", action="store_true")
     args = parser.parse_args()
 
@@ -104,6 +116,8 @@ def main() -> int:
         policy_lr_adaptive_target=args.policy_lr_adaptive_target if args.policy_lr_adaptive_target > 0 else None,
         policy_lr_adaptive_ema=args.policy_lr_adaptive_ema,
         value_bootstrap=args.value_bootstrap,
+        gae_lambda=args.gae_lambda if args.gae_lambda > 0 else None,
+        value_loss_coef=args.value_loss_coef,
     )
     print("agent ready (MLP encoder)")
 

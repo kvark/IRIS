@@ -272,6 +272,10 @@ def main() -> int:
                         help="TD-bootstrap the value-head target "
                         "(V_target = Σ γ^k r_{t+k} + γ^n·V(s_{t+n})). "
                         "Densifies sparse-reward TD gradient.")
+    parser.add_argument("--gae-lambda", type=float, default=0.0,
+                        help="GAE λ for advantage estimation. 0 disables. "
+                        "0.95 is PPO default. Decouples value target from "
+                        "advantage; fights value-kills-advantage collapse.")
     parser.add_argument("--balance-events", action="store_true",
                         help="Harness-side rebalance per-step rewards so rare "
                         "events (positive in Pong/Breakout) get amplified to "
@@ -363,6 +367,8 @@ def main() -> int:
         agent_kwargs["planner_horizon"] = args.planner_horizon
     if args.value_bootstrap:
         agent_kwargs["value_bootstrap"] = True
+    if args.gae_lambda > 0:
+        agent_kwargs["gae_lambda"] = args.gae_lambda
 
     agent = kindle.BatchAgent(**agent_kwargs)
 

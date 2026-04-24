@@ -5,3 +5,8 @@ members = ["kindle", "kindle-gym"]
 # It isn't part of the `cargo build --workspace` flow because the
 # `extension-module` feature requires linking against libpython.
 exclude = ["python"]
+
+# Local meganeura override while iterating on cross-entropy gradient fix.
+# Revert (or bump the kindle/Cargo.toml git rev) before committing upstream.
+[patch."https://github.com/kvark/meganeura"]
+meganeura = { path = "../meganeura" }
