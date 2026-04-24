@@ -462,6 +462,9 @@ impl PyBatchAgent {
         xeps_reward_alpha = None,
         xeps_grid_resolution = None,
         extrinsic_reward_alpha = None,
+        policy_adv_global_clip = None,
+        policy_lr_adaptive_target = None,
+        policy_lr_adaptive_ema = None,
         planner_horizon = None,
         planner_samples = None,
         planner_refresh_interval = None,
@@ -533,6 +536,9 @@ impl PyBatchAgent {
         xeps_reward_alpha: Option<f32>,
         xeps_grid_resolution: Option<f32>,
         extrinsic_reward_alpha: Option<f32>,
+        policy_adv_global_clip: Option<f32>,
+        policy_lr_adaptive_target: Option<f32>,
+        policy_lr_adaptive_ema: Option<f32>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
         planner_refresh_interval: Option<usize>,
@@ -773,6 +779,15 @@ impl PyBatchAgent {
         }
         if let Some(v) = extrinsic_reward_alpha {
             config.extrinsic_reward_alpha = v;
+        }
+        if let Some(v) = policy_adv_global_clip {
+            config.policy_adv_global_clip = v;
+        }
+        if let Some(v) = policy_lr_adaptive_target {
+            config.policy_lr_adaptive_target = v;
+        }
+        if let Some(v) = policy_lr_adaptive_ema {
+            config.policy_lr_adaptive_ema = v;
         }
         if let Some(v) = planner_horizon {
             config.planner_horizon = v;

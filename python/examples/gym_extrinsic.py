@@ -49,6 +49,15 @@ def main() -> int:
     parser.add_argument("--reward-novelty", type=float, default=0.1)
     parser.add_argument("--reward-order", type=float, default=0.1)
     parser.add_argument("--entropy-beta", type=float, default=0.01)
+    parser.add_argument("--policy-adv-global-clip", type=float, default=0.0,
+                        help="L2 norm clip on the batch-wide advantage vector "
+                        "before the policy update — the policy-gradient analog "
+                        "of global-grad-norm clipping. Try 1.0-5.0. 0 disables.")
+    parser.add_argument("--policy-lr-adaptive-target", type=float, default=0.0,
+                        help="Target |pi_loss| magnitude. When EMA(|pi_loss|) "
+                        "exceeds it, per-step LR scales by target/EMA. Simple "
+                        "TRPO-style damping. Try 0.5-2.0. 0 disables.")
+    parser.add_argument("--policy-lr-adaptive-ema", type=float, default=0.05)
     parser.add_argument("--async-envs", action="store_true")
     args = parser.parse_args()
 
@@ -86,6 +95,9 @@ def main() -> int:
         reward_novelty=args.reward_novelty,
         reward_order=args.reward_order,
         extrinsic_reward_alpha=args.extrinsic_alpha,
+        policy_adv_global_clip=args.policy_adv_global_clip if args.policy_adv_global_clip > 0 else None,
+        policy_lr_adaptive_target=args.policy_lr_adaptive_target if args.policy_lr_adaptive_target > 0 else None,
+        policy_lr_adaptive_ema=args.policy_lr_adaptive_ema,
     )
     print("agent ready (MLP encoder)")
 

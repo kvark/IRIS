@@ -457,7 +457,40 @@ pub struct AgentConfig {
     /// offset automatically; the advantage sees the per-step
     /// variance. Zero (default) preserves the pre-primitive
     /// behaviour byte-for-byte.
+    ///
+    /// Note: using the extrinsic primitive couples kindle's policy
+    /// to a task-specific reward signal and thus violates the
+    /// cold-start self-training thesis. Prefer expressing goals
+    /// via homeostatic variables when possible; this channel is
+    /// primarily diagnostic (validating kindle's policy-gradient
+    /// machinery on envs where the reward signal is known).
     pub extrinsic_reward_alpha: f32,
+    /// Global advantage-norm clip applied across the batch before
+    /// the policy update is built. When `> 0`, the L2 norm of the
+    /// per-lane advantage vector is bounded: if
+    /// `‖adv‖_2 > policy_adv_global_clip`, every lane's advantage
+    /// is rescaled by `clip / ‖adv‖_2`. This is the policy-gradient
+    /// analogue of global-grad-norm clipping — since each lane's
+    /// contribution to the policy gradient is linear in its
+    /// advantage, clipping advantages bounds the gradient norm.
+    /// Complements per-lane `advantage_clamp` (which is an L∞
+    /// bound). Zero (default) disables.
+    pub policy_adv_global_clip: f32,
+    /// Adaptive LR target for policy updates. When `> 0`, kindle
+    /// maintains an EMA of `|pi_loss|` (smoothed by
+    /// `policy_lr_adaptive_ema`) and scales the per-step policy
+    /// learning rate by `target / max(ema, target)`. When the
+    /// policy is taking huge update steps (loss magnitude far
+    /// above the target), effective LR drops proportionally;
+    /// when the policy has settled into a range below the target,
+    /// full LR is used. Classic adaptive-step-size damping — the
+    /// simpler cousin of KL-constrained TRPO. Zero (default)
+    /// disables.
+    pub policy_lr_adaptive_target: f32,
+    /// EMA rate for the `|pi_loss|` tracking in adaptive LR.
+    /// Default `0.05` (20-step effective window). Higher = more
+    /// responsive but noisier.
+    pub policy_lr_adaptive_ema: f32,
     /// Model-based planner. When `> 0`, kindle maintains a CPU
     /// copy of the world-model weights and can simulate candidate
     /// action sequences via `plan_and_queue()` — sampling
@@ -585,6 +618,9 @@ impl Default for AgentConfig {
             xeps_reward_alpha: 0.0,
             xeps_grid_resolution: None,
             extrinsic_reward_alpha: 0.0,
+            policy_adv_global_clip: 0.0,
+            policy_lr_adaptive_target: 0.0,
+            policy_lr_adaptive_ema: 0.05,
             planner_horizon: 0,
             planner_samples: 32,
             planner_refresh_interval: 200,
@@ -950,6 +986,12 @@ pub struct Agent {
     last_wm_loss: f32,
     last_credit_loss: f32,
     last_policy_loss: f32,
+    /// EMA of `|last_policy_loss|`. Updated inside the policy
+    /// training paths after each `step()`. Drives
+    /// `policy_lr_adaptive_target` scaling when enabled. Zero
+    /// at init — the first few updates run at full LR until the
+    /// EMA warms up.
+    policy_loss_ema: f32,
     last_replay_loss: f32,
     last_option_credit_loss: f32,
     last_h_eff_l1: f32,
@@ -1520,6 +1562,7 @@ impl Agent {
             last_wm_loss: 0.0,
             last_credit_loss: 0.0,
             last_policy_loss: 0.0,
+            policy_loss_ema: 0.0,
             last_replay_loss: 0.0,
             last_option_credit_loss: 0.0,
             last_h_eff_l1: 0.0,
@@ -3043,6 +3086,28 @@ impl Agent {
             return;
         }
 
+        // Global advantage-norm clip — see `policy_step_n_step` for
+        // rationale.
+        let clip = self.config.policy_adv_global_clip;
+        if clip > 0.0 {
+            let sum_sq: f32 = self.policy_action_scratch.iter().map(|v| v * v).sum();
+            let norm = sum_sq.sqrt();
+            if norm > clip {
+                let scale = clip / norm;
+                for v in self.policy_action_scratch.iter_mut() {
+                    *v *= scale;
+                }
+            }
+        }
+
+        // Adaptive learning-rate scaling — see `policy_step_n_step`.
+        let target = self.config.policy_lr_adaptive_target;
+        let lr_scale = if target > 0.0 && self.policy_loss_ema > target {
+            target / self.policy_loss_ema
+        } else {
+            1.0
+        };
+
         // Feed the pure latent `z` plus, when L1 is active, the per-lane
         // one-hot `option_onehot` so the policy graph's option bias head
         // receives the current option identity for training.
@@ -3062,7 +3127,7 @@ impl Agent {
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
         self.policy_session
-            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale);
+            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
         self.policy_session.step();
         self.policy_session.wait();
 
@@ -3084,6 +3149,8 @@ impl Agent {
             self.last_policy_loss = 0.0;
         } else {
             self.last_policy_loss = loss;
+            let rate = self.config.policy_lr_adaptive_ema.clamp(0.001, 1.0);
+            self.policy_loss_ema = (1.0 - rate) * self.policy_loss_ema + rate * loss.abs();
         }
     }
 
@@ -3213,6 +3280,35 @@ impl Agent {
             return;
         }
 
+        // Global advantage-norm clip (policy-gradient-analogue of
+        // grad-norm clipping). The per-lane `advantage_clamp` is an
+        // L∞ bound; this is the L2 bound across the batch. Since
+        // each lane contributes linearly to the policy gradient,
+        // bounding the batch L2 norm bounds the update magnitude.
+        let clip = self.config.policy_adv_global_clip;
+        if clip > 0.0 {
+            let sum_sq: f32 = self.policy_action_scratch.iter().map(|v| v * v).sum();
+            let norm = sum_sq.sqrt();
+            if norm > clip {
+                let scale = clip / norm;
+                for v in self.policy_action_scratch.iter_mut() {
+                    *v *= scale;
+                }
+            }
+        }
+
+        // Adaptive learning-rate scaling based on EMA(|pi_loss|).
+        // When the recent policy updates have been unusually loud
+        // (EMA loss magnitude far above the target), scale LR down
+        // so the next update is smaller. Damps the commit-recover
+        // oscillation we observed on CartPole.
+        let target = self.config.policy_lr_adaptive_target;
+        let lr_scale = if target > 0.0 && self.policy_loss_ema > target {
+            target / self.policy_loss_ema
+        } else {
+            1.0
+        };
+
         self.policy_session.set_input("z", &old_z_stack);
         if has_options {
             self.policy_session
@@ -3223,7 +3319,7 @@ impl Agent {
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
         self.policy_session
-            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale);
+            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
         self.policy_session.step();
         self.policy_session.wait();
 
@@ -3239,6 +3335,8 @@ impl Agent {
             self.last_policy_loss = 0.0;
         } else {
             self.last_policy_loss = loss;
+            let rate = self.config.policy_lr_adaptive_ema.clamp(0.001, 1.0);
+            self.policy_loss_ema = (1.0 - rate) * self.policy_loss_ema + rate * loss.abs();
         }
     }
 
