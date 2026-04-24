@@ -99,6 +99,12 @@ def main() -> int:
                         "through the PPO update. Only matters with "
                         "--use-ppo. Standard 3-10. On epoch 1 ratio ≈ 1 "
                         "(no clip activity); epochs 2+ exercise the clip.")
+    parser.add_argument("--rollout-length", type=int, default=1,
+                        help="A2C-style rollout buffer length. Policy "
+                        "graph batch_size becomes lanes×rollout_length; "
+                        "one policy session.step() per update covers the "
+                        "whole rollout at once. Supersedes "
+                        "--policy-update-interval when > 1. Try 8-32.")
     parser.add_argument("--async-envs", action="store_true")
     args = parser.parse_args()
 
@@ -147,6 +153,7 @@ def main() -> int:
         use_ppo=args.use_ppo,
         ppo_clip_eps=args.ppo_clip_eps,
         ppo_n_epochs=args.ppo_n_epochs,
+        rollout_length=args.rollout_length,
     )
     print("agent ready (MLP encoder)")
 

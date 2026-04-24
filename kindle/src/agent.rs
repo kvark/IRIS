@@ -619,6 +619,22 @@ pub struct AgentConfig {
     /// Only has effect when `use_ppo = true`. Default 1 (equivalent
     /// to the no-clip baseline for single-epoch runs).
     pub ppo_n_epochs: usize,
+    /// A2C/PPO rollout buffer length. When `> 1`:
+    ///   - The policy graph is built with
+    ///     `batch_size = lanes × rollout_length`, so each policy
+    ///     `session.step()` sees `rollout_length` temporal offsets
+    ///     of every lane at once.
+    ///   - The policy update fires every `rollout_length` env-steps
+    ///     (supersedes `policy_update_interval`). One gradient step
+    ///     per fire, or `ppo_n_epochs` steps under PPO.
+    /// The low-variance mean gradient estimate that a big-batch
+    /// update produces is precisely what lets the PPO clip fire on
+    /// genuine trust-region excursions rather than on per-lane
+    /// noise. Standard A2C: 5–128. Standard PPO: 128–2048 (with
+    /// minibatching). On CartPole-scale envs, 16–64 typically
+    /// suffice. Default 1 (keeps per-env-step update path identical
+    /// to the pre-refactor code).
+    pub rollout_length: usize,
     /// Model-based planner. When `> 0`, kindle maintains a CPU
     /// copy of the world-model weights and can simulate candidate
     /// action sequences via `plan_and_queue()` — sampling
@@ -757,6 +773,7 @@ impl Default for AgentConfig {
             use_ppo: false,
             ppo_clip_eps: 0.2,
             ppo_n_epochs: 1,
+            rollout_length: 1,
             planner_horizon: 0,
             planner_samples: 32,
             planner_refresh_interval: 200,
@@ -1171,6 +1188,11 @@ pub struct Agent {
     /// either the cross-entropy or MSE loss path without needing a
     /// per-row loss weighting input on the graph side.
     policy_action_scratch: Vec<f32>,
+    /// Pre-allocated `[policy_batch × latent_dim]` buffer for the
+    /// policy session's `z` input. At rollout_length=1 this is the
+    /// same size as the encoder's per-lane z output; at >1 the
+    /// rows beyond `lanes` are zero-padded on every act() call.
+    policy_z_scratch: Vec<f32>,
     /// PPO mode: per-row advantage `[N, 1]` (separate input, not
     /// baked into `policy_action_scratch` like the plain path).
     ppo_advantage_scratch: Vec<f32>,
@@ -1599,6 +1621,14 @@ impl Agent {
         // active, the graph also takes a one-hot `option_onehot` input
         // and routes it through a direct-to-logits bias head (see
         // `policy::build_policy_graph`).
+        // Policy graph's batch_size covers the rollout: `lanes ×
+        // rollout_length` rows per `session.step()`. At the default
+        // `rollout_length = 1` this collapses to `lanes`, identical
+        // to the pre-rollout-buffer behavior. Other graphs (WM,
+        // credit, option) stay at `lanes` — they update per env-
+        // step on lane-current state, not on a rollout.
+        let rollout_length = config.rollout_length.max(1);
+        let policy_batch = config.batch_size * rollout_length;
         let policy_session = {
             let g = if is_discrete && config.use_ppo {
                 // PPO mode does not support L1 options yet — options are
@@ -1612,7 +1642,7 @@ impl Agent {
                     config.latent_dim,
                     MAX_ACTION_DIM,
                     config.hidden_dim,
-                    config.batch_size,
+                    policy_batch,
                     config.ppo_clip_eps,
                     config.value_loss_coef,
                     config.entropy_beta,
@@ -1622,7 +1652,7 @@ impl Agent {
                     config.latent_dim,
                     MAX_ACTION_DIM,
                     config.hidden_dim,
-                    config.batch_size,
+                    policy_batch,
                     config.entropy_beta,
                     config.num_options,
                     config.per_option_heads,
@@ -1633,7 +1663,7 @@ impl Agent {
                     config.latent_dim,
                     MAX_ACTION_DIM,
                     config.hidden_dim,
-                    config.batch_size,
+                    policy_batch,
                     config.num_options,
                     config.per_option_heads,
                     config.value_loss_coef,
@@ -1870,12 +1900,20 @@ impl Agent {
             action_token_scratch: vec![0.0; n * MAX_ACTION_DIM],
             z_target_scratch: vec![0.0; n * config.latent_dim],
             task_scratch: vec![0.0; n * TASK_DIM],
-            value_target_scratch: vec![0.0; n],
-            policy_action_scratch: vec![0.0; n * MAX_ACTION_DIM],
-            ppo_advantage_scratch: vec![0.0; n],
-            ppo_old_prob_scratch: vec![1.0; n],
+            // Policy-session inputs are sized for the expanded rollout
+            // batch (`lanes × rollout_length`). At rollout_length=1
+            // this equals `n` — pre-refactor behavior. For rollout
+            // mode, act() still fills only the first `n` rows (the
+            // rest are ignored — act reads only first `n` output rows);
+            // training fills all `policy_batch` rows from the rollout
+            // window.
+            value_target_scratch: vec![0.0; policy_batch],
+            policy_action_scratch: vec![0.0; policy_batch * MAX_ACTION_DIM],
+            policy_z_scratch: vec![0.0; policy_batch * config.latent_dim],
+            ppo_advantage_scratch: vec![0.0; policy_batch],
+            ppo_old_prob_scratch: vec![1.0; policy_batch],
             option_dim,
-            option_onehot_scratch: vec![0.0; n * config.num_options.max(1)],
+            option_onehot_scratch: vec![0.0; policy_batch * config.num_options.max(1)],
             option_taken_scratch: vec![0.0; n * config.num_options],
             option_return_scratch: vec![0.0; n],
             termination_target_scratch: vec![0.0; n],
@@ -2139,12 +2177,27 @@ impl Agent {
                 let row = &mut self.option_onehot_scratch[i * num_options..(i + 1) * num_options];
                 row[lane.current_option as usize] = 1.0;
             }
-            self.policy_session.set_input("z", &z_stack);
+            // Pad z_stack from [lanes × ld] to the policy graph's
+            // expected [policy_batch × ld]. With rollout_length=1
+            // these are the same size. With rollout_length>1, rows
+            // beyond `lanes` are zeros — their forward outputs are
+            // garbage that we throw away (act() only reads the first
+            // `lanes` output rows), but the session still requires a
+            // valid-sized input.
+            self.policy_z_scratch[..n * ld].copy_from_slice(&z_stack);
+            for v in self.policy_z_scratch[n * ld..].iter_mut() {
+                *v = 0.0;
+            }
+            self.policy_session.set_input("z", &self.policy_z_scratch);
             self.policy_session
                 .set_input("option_onehot", &self.option_onehot_scratch);
         } else {
-            // L0-only path — feed z directly.
-            self.policy_session.set_input("z", &z_stack);
+            // L0-only path — feed z directly (padded).
+            self.policy_z_scratch[..n * ld].copy_from_slice(&z_stack);
+            for v in self.policy_z_scratch[n * ld..].iter_mut() {
+                *v = 0.0;
+            }
+            self.policy_session.set_input("z", &self.policy_z_scratch);
         }
 
         self.action_token_scratch.fill(0.0);
@@ -3311,12 +3364,36 @@ impl Agent {
             // Each step's advantage is still computed from the stored
             // V's, so `interval = n_step + 1` keeps the whole rollout
             // on-policy w.r.t. the collector.
-            let interval = self.config.policy_update_interval.max(1);
+            // When `rollout_length > 1`, it supersedes
+            // `policy_update_interval` — the update cadence and the
+            // per-update batch size both come from rollout_length.
+            let rollout_length = self.config.rollout_length.max(1);
+            let interval = if rollout_length > 1 {
+                rollout_length
+            } else {
+                self.config.policy_update_interval.max(1)
+            };
             self.policy_update_ticks += 1;
             if self.policy_update_ticks < interval {
                 return;
             }
             self.policy_update_ticks = 0;
+            if rollout_length > 1 {
+                // Big-batch rollout path: one policy session.step() per
+                // epoch over a flat `lanes × rollout_length`-row batch.
+                // This is what actually lowers the per-update gradient
+                // variance and makes the PPO clip fire on genuine trust-
+                // region excursions rather than on noise.
+                let n_epochs = if self.config.use_ppo {
+                    self.config.ppo_n_epochs.max(1)
+                } else {
+                    1
+                };
+                for _ in 0..n_epochs {
+                    self.policy_step_rollout_batch(n_step, rollout_length);
+                }
+                return;
+            }
             let n_epochs = if self.config.use_ppo {
                 self.config.ppo_n_epochs.max(1)
             } else {
@@ -3335,13 +3412,30 @@ impl Agent {
             // rollout under plain PG would just multiply the update
             // magnitude (every epoch is unclipped, so each repeat is
             // basically an LR boost).
+            //
+            // Within each epoch, the offsets are traversed in a
+            // RANDOMIZED order (Fisher-Yates shuffle). This is the
+            // PPO minibatch-shuffling trick: without it, the
+            // consecutive gradient steps in a single epoch all come
+            // from adjacent time positions in the rollout, which
+            // keeps the optimizer moving in a temporally-correlated
+            // direction and amplifies the commit/uncommit feedback
+            // loop. Shuffling breaks that correlation — each
+            // consecutive gradient step sees a different time slice,
+            // so the mean update direction is closer to the true
+            // rollout-averaged gradient.
+            use rand::SeedableRng;
+            use rand::seq::SliceRandom;
+            // Seed a local RNG from step_count so shuffles are
+            // deterministic per-agent across runs (reproducibility),
+            // and vary between updates (so epochs aren't identical).
+            let mut shuffle_rng = rand::rngs::StdRng::seed_from_u64(
+                0x9E37_79B9_7F4A_7C15u64 ^ (self.step_count as u64),
+            );
+            let mut offsets: Vec<usize> = (0..interval).collect();
             for _ in 0..n_epochs {
-                // Oldest ripe first so the gradient order matches
-                // the temporal order of the collected rollout —
-                // Adam's moment estimates then update in the same
-                // order the data was produced, which matches how
-                // A2C trains on a rollout.
-                for k in (0..interval).rev() {
+                offsets.shuffle(&mut shuffle_rng);
+                for &k in offsets.iter() {
                     self.policy_step_n_step_at(n_step, k);
                 }
             }
@@ -3774,6 +3868,256 @@ impl Agent {
             init_parameters(&mut self.policy_session);
             log::warn!(
                 "policy loss {:.1} unstable at step {} (n-step), re-initialized policy params",
+                loss,
+                self.step_count
+            );
+            self.last_policy_loss = 0.0;
+        } else {
+            self.last_policy_loss = loss;
+            let rate = self.config.policy_lr_adaptive_ema.clamp(0.001, 1.0);
+            self.policy_loss_ema = (1.0 - rate) * self.policy_loss_ema + rate * loss.abs();
+        }
+    }
+
+    /// Big-batch rollout policy update: flatten the `rollout_length`-
+    /// step rollout × `lanes` = `policy_batch` samples into a single
+    /// `session.step()`, rather than doing `rollout_length` sequential
+    /// `lanes`-sized steps. Lower per-update gradient variance is the
+    /// point — it's what lets PPO's clip engage on meaningful trust-
+    /// region excursions rather than on per-lane noise.
+    ///
+    /// Row layout in the flat batch: row `r = offset × lanes + lane_i`
+    /// corresponds to lane `lane_i`'s ripe transition at
+    /// `ripe_back_offset = offset`. Older offsets (larger `offset`)
+    /// appear first, matching the temporal order of collection.
+    fn policy_step_rollout_batch(&mut self, n_step: usize, rollout_length: usize) {
+        let lanes = self.lanes.len();
+        let policy_batch = lanes * rollout_length;
+        let gamma = self.config.gamma;
+        let ld = self.latent_dim;
+        let num_options = self.config.num_options;
+        let has_options = self.option_session.is_some();
+        let k_actions = MAX_ACTION_DIM as f32;
+        let eps_base = self.config.label_smoothing;
+        let floor = self.config.entropy_floor;
+
+        let use_gae = self.config.gae_lambda > 0.0;
+        let needs_bootstrap_slot = self.config.value_bootstrap || use_gae;
+        let bootstrap_headroom = needs_bootstrap_slot as usize;
+        let value_target_bootstrap = self.config.value_bootstrap || use_gae;
+        let use_ppo = self.config.use_ppo;
+
+        // Initialize scratch buffers for the whole batch.
+        self.policy_action_scratch.fill(0.0);
+        self.value_target_scratch.fill(0.0);
+        self.policy_z_scratch.fill(0.0);
+        if has_options {
+            self.option_onehot_scratch.fill(0.0);
+        }
+        if use_ppo {
+            self.ppo_advantage_scratch.fill(0.0);
+            for v in self.ppo_old_prob_scratch.iter_mut() {
+                *v = 1.0;
+            }
+        }
+
+        // First pass: compute raw advantages + value targets for
+        // every (offset, lane) pair. Also record which rows are
+        // "active" (buffer long enough). Inactive rows stay at 0
+        // scratch and contribute no gradient through the CE/PPO loss.
+        let mut raw_advantages = vec![0.0f32; policy_batch];
+        let mut value_targets = vec![0.0f32; policy_batch];
+        let mut row_active = vec![false; policy_batch];
+        let mut ripe_action = vec![vec![0.0f32; MAX_ACTION_DIM]; policy_batch];
+        let mut ripe_latent = vec![vec![0.0f32; ld]; policy_batch];
+        let mut ripe_option = vec![0u32; policy_batch];
+        let mut ripe_prob_taken = vec![1.0f32; policy_batch];
+
+        let adv_clamp = self.config.advantage_clamp.max(0.0);
+        for offset in 0..rollout_length {
+            for (lane_i, lane) in self.lanes.iter().enumerate() {
+                let row = offset * lanes + lane_i;
+                let buf_len = lane.buffer.len();
+                if buf_len < n_step + bootstrap_headroom + offset {
+                    continue;
+                }
+                let ripe_idx = buf_len - n_step - bootstrap_headroom - offset;
+                let ripe = lane.buffer.get(ripe_idx);
+                let (ret, _, _) = compute_td_n_step_return(
+                    &lane.buffer,
+                    ripe_idx,
+                    n_step,
+                    gamma,
+                    value_target_bootstrap,
+                    100.0,
+                );
+                let adv_raw = if use_gae {
+                    compute_gae_advantage(
+                        &lane.buffer,
+                        ripe_idx,
+                        n_step,
+                        gamma,
+                        self.config.gae_lambda,
+                        100.0,
+                    )
+                } else {
+                    ret - ripe.value
+                };
+                raw_advantages[row] = adv_raw;
+                value_targets[row] = if value_target_bootstrap {
+                    ret.clamp(-100.0, 100.0)
+                } else if ripe.reward.is_finite() {
+                    ripe.reward.clamp(-100.0, 100.0)
+                } else {
+                    0.0
+                };
+                ripe_latent[row].copy_from_slice(&ripe.latent);
+                ripe_action[row].copy_from_slice(&ripe.action);
+                ripe_option[row] = ripe.option_idx;
+                ripe_prob_taken[row] = ripe.prob_taken.max(1e-8);
+                row_active[row] = true;
+            }
+        }
+
+        // Advantage normalization across the full rollout batch.
+        // This is where the big-batch layout actually pays off for
+        // normalization: std over N*R samples is a much better
+        // estimate of population std than std over N samples at one
+        // time slice.
+        if self.config.advantage_normalize {
+            let active_count = row_active.iter().filter(|&&a| a).count();
+            if active_count >= 2 {
+                let mut sum = 0.0f32;
+                for (i, &a) in raw_advantages.iter().enumerate() {
+                    if row_active[i] {
+                        sum += a;
+                    }
+                }
+                let mean = sum / active_count as f32;
+                let mut sq_sum = 0.0f32;
+                for (i, &a) in raw_advantages.iter().enumerate() {
+                    if row_active[i] {
+                        let d = a - mean;
+                        sq_sum += d * d;
+                    }
+                }
+                let std = (sq_sum / active_count as f32).sqrt().max(1e-3);
+                for (i, a) in raw_advantages.iter_mut().enumerate() {
+                    if row_active[i] {
+                        *a = (*a - mean) / std;
+                    }
+                }
+            }
+        }
+
+        // Second pass: fill scratch buffers.
+        let mut any_active = false;
+        for row in 0..policy_batch {
+            if !row_active[row] {
+                continue;
+            }
+            any_active = true;
+            let advantage = raw_advantages[row].clamp(-adv_clamp, adv_clamp);
+            self.value_target_scratch[row] = value_targets[row];
+
+            // z_scratch row
+            self.policy_z_scratch[row * ld..(row + 1) * ld].copy_from_slice(&ripe_latent[row]);
+
+            if use_ppo {
+                let act_dst = &mut self.policy_action_scratch
+                    [row * MAX_ACTION_DIM..(row + 1) * MAX_ACTION_DIM];
+                act_dst.copy_from_slice(&ripe_action[row]);
+                self.ppo_advantage_scratch[row] = advantage;
+                self.ppo_old_prob_scratch[row] = ripe_prob_taken[row];
+            } else {
+                // Plain advantage-weighted CE path. Use the corresponding
+                // lane's current entropy as the entropy-deficit source;
+                // this is an approximation (the ripe transition was
+                // collected under possibly different entropy), but is
+                // only used to trigger the label-smoothing fallback when
+                // the live policy is near-deterministic.
+                let lane_i = row % lanes;
+                let live_entropy = self.lanes[lane_i].last_entropy;
+                let entropy_deficit = if floor > 0.0 {
+                    ((floor - live_entropy) / floor).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let eps = (eps_base + (1.0 - eps_base) * entropy_deficit).min(1.0);
+                let effective_adv = if advantage.abs() < 1e-3 && entropy_deficit > 0.0 {
+                    entropy_deficit
+                } else {
+                    advantage
+                };
+                let act_dst = &mut self.policy_action_scratch
+                    [row * MAX_ACTION_DIM..(row + 1) * MAX_ACTION_DIM];
+                for (dst, &src) in act_dst.iter_mut().zip(ripe_action[row].iter()) {
+                    let smoothed = (1.0 - eps) * src + eps / k_actions;
+                    *dst = effective_adv * smoothed;
+                }
+            }
+
+            if has_options {
+                let r = &mut self.option_onehot_scratch[row * num_options..(row + 1) * num_options];
+                let oi = (ripe_option[row] as usize).min(num_options.saturating_sub(1));
+                r[oi] = 1.0;
+            }
+        }
+
+        if !any_active {
+            return;
+        }
+
+        // Global advantage-norm clip (L2 bound across the whole batch).
+        let clip = self.config.policy_adv_global_clip;
+        if clip > 0.0 {
+            let sum_sq: f32 = self.policy_action_scratch.iter().map(|v| v * v).sum();
+            let norm = sum_sq.sqrt();
+            if norm > clip {
+                let scale = clip / norm;
+                for v in self.policy_action_scratch.iter_mut() {
+                    *v *= scale;
+                }
+            }
+        }
+
+        // Adaptive LR scaling (same rule as the per-step path).
+        let target = self.config.policy_lr_adaptive_target;
+        let lr_scale = if target > 0.0 && self.policy_loss_ema > target {
+            target / self.policy_loss_ema
+        } else {
+            1.0
+        };
+
+        self.policy_session.set_input("z", &self.policy_z_scratch);
+        if has_options {
+            self.policy_session
+                .set_input("option_onehot", &self.option_onehot_scratch);
+        }
+        self.policy_session
+            .set_input("action", &self.policy_action_scratch);
+        self.policy_session
+            .set_input("value_target", &self.value_target_scratch);
+        if use_ppo {
+            self.policy_session
+                .set_input("advantage", &self.ppo_advantage_scratch);
+            self.policy_session
+                .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
+        }
+        // LR is not scaled down by rollout_length — the loss is already
+        // mean-reduced over `policy_batch` rows, so gradient magnitude
+        // per parameter is comparable to a `lanes`-batch update.
+        self.policy_session
+            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
+        self.policy_session.step();
+        self.policy_session.wait();
+
+        let loss = self.policy_session.read_loss();
+        let wd = self.config.policy_loss_watchdog_threshold;
+        if !loss.is_finite() || loss.abs() > wd {
+            init_parameters(&mut self.policy_session);
+            log::warn!(
+                "policy loss {:.1} unstable at step {} (rollout), re-initialized policy params",
                 loss,
                 self.step_count
             );
