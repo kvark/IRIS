@@ -135,12 +135,20 @@ def _write_frames_into_shared(obs_batch: np.ndarray, dest: np.ndarray) -> None:
     np.divide(obs_batch, 255.0, out=dest, dtype=np.float32, casting="unsafe")
 
 
-def homeo_for(prev_score: float, target: float) -> list[dict[str, float]]:
-    """One homeo variable: distance from current cumulative score to a
-    target (e.g. 21 for Pong). Starts large, shrinks as the agent
-    accumulates positive reward."""
+def homeo_for(step_reward: float) -> list[dict[str, float]]:
+    """Per-step env reward as a homeo variable.
+
+    value = -step_reward, target = 0, tolerance = 0.5.
+
+    Most Atari steps produce 0 reward (deviation 0, inside tolerance →
+    homeo 0). A score event produces ±1, giving an immediate ±1 delta
+    that's sharp in time — exactly the per-step signal the policy
+    gradient needs. Cumulative-score formulations end up constant
+    mid-episode and the value head learns the DC offset, zeroing the
+    advantage; this delta formulation keeps the signal in the
+    advantage, not the value."""
     return [
-        {"value": -prev_score, "target": -target, "tolerance": 1.0},
+        {"value": -step_reward, "target": 0.0, "tolerance": 0.5},
     ]
 
 
@@ -200,6 +208,14 @@ def main() -> int:
     parser.add_argument("--async-envs", action="store_true",
                         help="Use gymnasium AsyncVectorEnv (multiprocessing). "
                         "Default is SyncVectorEnv (single process).")
+    parser.add_argument("--reward-homeostatic", type=float, default=None,
+                        help="Weight on the homeostatic primitive. Kindle default 2.0. "
+                        "With per-step reward-delta homeo, try 0.5-1.0.")
+    parser.add_argument("--reward-surprise", type=float, default=None)
+    parser.add_argument("--reward-novelty", type=float, default=None)
+    parser.add_argument("--reward-order", type=float, default=None)
+    parser.add_argument("--advantage-clamp", type=float, default=None)
+    parser.add_argument("--entropy-beta", type=float, default=None)
     parser.add_argument("--rnd-alpha", type=float, default=None)
     parser.add_argument("--delta-goal-alpha", type=float, default=None)
     parser.add_argument("--delta-goal-threshold", type=float, default=None)
@@ -255,6 +271,8 @@ def main() -> int:
         "rnd_alpha", "delta_goal_alpha", "delta_goal_threshold",
         "delta_goal_merge_radius", "delta_goal_surprise_threshold",
         "xeps_alpha", "xeps_grid_resolution", "planner_samples",
+        "reward_homeostatic", "reward_surprise", "reward_novelty", "reward_order",
+        "advantage_clamp", "entropy_beta",
     ]:
         v = getattr(args, name, None)
         if v is not None:
@@ -334,7 +352,7 @@ def main() -> int:
         prof.tick("push_frame (next)", time.time() - t)
 
         t = time.time()
-        homeos = [homeo_for(float(cur_scores[i]), args.score_target) for i in range(args.lanes)]
+        homeos = [homeo_for(float(rewards[i])) for i in range(args.lanes)]
         agent.observe(obs_token_small, [int(a) for a in actions], homeostatic=homeos)
         prof.tick("agent.observe", time.time() - t)
 
@@ -351,9 +369,25 @@ def main() -> int:
             sps = step * args.lanes / max(1e-3, elapsed)
             all_recent = [r for lane_rets in ep_returns for r in lane_rets[-3:]]
             avg_ret = sum(all_recent) / max(1, len(all_recent))
+
+            diags = agent.diagnostics()
+            d = diags[0]
+
+            def _safe(x, default=float("nan")):
+                return float(x) if x is not None else default
+
+            wm = _safe(d.get("loss_world_model"))
+            pi = _safe(d.get("loss_policy"))
+            ent = _safe(d.get("policy_entropy"))
+            surp = _safe(d.get("reward_surprise"))
+            nov = _safe(d.get("reward_novelty"))
+            hom = _safe(d.get("reward_homeo"))
+            rew = _safe(d.get("reward_mean"))
             print(
                 f"step={step:>6} eps={ep_count:>3} avg_ret={avg_ret:+6.1f} "
-                f"| {sps:7.0f} env-steps/s"
+                f"| wm={wm:.3f} pi={pi:+7.2f} ent={ent:.2f} "
+                f"r={rew:+5.2f} surp={surp:+4.2f} nov={nov:+4.2f} hom={hom:+6.2f} "
+                f"| {sps:5.0f} env-steps/s"
             )
 
     envs.close()
