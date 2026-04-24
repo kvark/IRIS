@@ -3108,17 +3108,23 @@ impl Agent {
         let floor = self.config.entropy_floor;
         let k_actions = MAX_ACTION_DIM as f32;
 
-        // Effective horizon normalizer Σ γ^k, so the n-step return
-        // stays in the same magnitude range as a single-step reward.
-        let mut horizon_norm = 0.0f32;
-        let mut gk = 1.0f32;
-        for _ in 0..n_step {
-            horizon_norm += gk;
-            gk *= gamma;
-        }
-        if horizon_norm < 1e-6 {
-            return;
-        }
+        // The n-step return `Σ γ^k r_{t+k}` is compared against a
+        // value-head baseline that tracks the *single-step* reward —
+        // the previous implementation normalized ret by
+        // `Σ γ^k ≈ n_step` to keep the two scales comparable. That
+        // works for dense reward streams but is catastrophic on
+        // sparse ones: a single ±1 event in a 16-step window divides
+        // down to ±0.06, which trips the `advantage.abs() < 1e-3`
+        // skip check in the label-smoothing block below and produces
+        // a near-zero policy gradient. Empirically (Pong 400k
+        // env-steps, all ±1 events averaged away to silence).
+        //
+        // Correct handling: treat ret as the Monte-Carlo return
+        // directly. `ripe.value` is an EMA of single-step reward at
+        // that state — a correctly-signed (if slightly biased)
+        // baseline. Advantage = ret - value in the reward-scale
+        // units. advantage_clamp still bounds the per-step update
+        // magnitude.
 
         self.policy_action_scratch.fill(0.0);
         self.value_target_scratch.fill(0.0);
@@ -3156,9 +3162,8 @@ impl Agent {
                 ret += gk * tr.reward;
                 gk *= gamma;
             }
-            let r_mean = ret / horizon_norm;
             let adv_clamp = self.config.advantage_clamp.max(0.0);
-            let advantage = (r_mean - ripe.value).clamp(-adv_clamp, adv_clamp);
+            let advantage = (ret - ripe.value).clamp(-adv_clamp, adv_clamp);
 
             // Value-head target tracks the *old* single-step reward at
             // s_old, clamped. Keeps the value head on its stable
