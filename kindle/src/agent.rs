@@ -525,6 +525,44 @@ pub struct AgentConfig {
     /// bootstrap target doesn't change under the current update,
     /// avoiding the DQN-style divergence mode).
     pub value_bootstrap: bool,
+    /// GAE (Generalized Advantage Estimation) λ parameter.
+    /// `0.0` = disabled (advantage = `R_n − V(s_ripe)` as before).
+    /// `(0, 1]` = enable:
+    /// ```text
+    /// Â_t = Σ_{k=0}^{n-1} (γλ)^k · δ_{t+k}
+    /// δ_{t+k} = r_{t+k} + γ·V(s_{t+k+1}) - V(s_{t+k})
+    /// ```
+    /// Exponentially-weighted average over all n-step TD targets —
+    /// λ=0 → pure 1-step TD (low variance, high bias),
+    /// λ=1 → Monte-Carlo return − V (high variance, unbiased),
+    /// λ≈0.95 is the PPO/A2C default.
+    ///
+    /// Why this matters over plain `value_bootstrap`: GAE decouples
+    /// the *advantage* estimator from the *value target*. With only
+    /// `value_bootstrap`, advantage = `R_n − V(s_ripe)` and V is
+    /// trained to fit `R_n` — so as V gets accurate, advantage → 0
+    /// and the policy-gradient signal dies. GAE advantages are
+    /// TD-error-based, so they stay non-trivial (E[Â_t]=0 but
+    /// Var[Â_t] > 0) even when V has converged.
+    ///
+    /// Enabling GAE also enables the bootstrap headroom (needs
+    /// `V(s_{t+1})` for each per-step δ). The value target itself
+    /// stays on the `value_bootstrap` path — set `value_bootstrap =
+    /// true` alongside `gae_lambda > 0` for the standard A2C setup.
+    pub gae_lambda: f32,
+    /// Coefficient on the value-head MSE before it's summed with
+    /// the policy loss. Standard PPO/A2C use `0.5`; defaults to
+    /// `1.0` here for backward compatibility.
+    ///
+    /// With a shared optimizer, the combined-loss gradient is
+    /// dominated by whichever head produces the larger loss
+    /// magnitude. On dense-reward envs the value MSE is on the
+    /// reward scale (potentially tens or hundreds), while the
+    /// policy cross-entropy is on a log-scale (O(log K) ≈ 0.7 for
+    /// CartPole). Leaving the value at 1.0 makes the policy
+    /// effectively learn ~50× slower than the value. Setting this
+    /// to 0.1–0.5 rebalances without separate LRs or sessions.
+    pub value_loss_coef: f32,
     /// Model-based planner. When `> 0`, kindle maintains a CPU
     /// copy of the world-model weights and can simulate candidate
     /// action sequences via `plan_and_queue()` — sampling
@@ -656,6 +694,8 @@ impl Default for AgentConfig {
             policy_lr_adaptive_target: 0.0,
             policy_lr_adaptive_ema: 0.05,
             value_bootstrap: false,
+            gae_lambda: 0.0,
+            value_loss_coef: 1.0,
             planner_horizon: 0,
             planner_samples: 32,
             planner_refresh_interval: 200,
@@ -1209,6 +1249,71 @@ fn compute_td_n_step_return(
     (ret, gk, terminated)
 }
 
+/// Compute the GAE (Generalized Advantage Estimation) advantage at
+/// `ripe_idx` using `n_step` one-step TD errors folded back with
+/// factor `γλ`.
+///
+/// Formula:
+/// ```text
+/// δ_t       = r_t + γ·V(s_{t+1}) - V(s_t)         per-step TD error
+/// Â_t       = δ_t + γλ·Â_{t+1}·(1 - done_{t+1})   GAE recursion
+/// ```
+/// where `done_{t+1}` is true if the episode terminated between t
+/// and t+1 (i.e. `tr_{t+1}.env_boundary` is set — a fresh episode
+/// started, so V(s_{t+1}) is semantically zero for the old episode).
+///
+/// Requires `ripe_idx + n_step ≤ buffer.len() - 1` (one extra slot
+/// past the n-step window to read `V(s_{ripe+n_step})` for the last
+/// δ's bootstrap). The caller enforces this via
+/// `bootstrap_headroom = 1` when `gae_lambda > 0`.
+///
+/// `bootstrap_value_clamp` is applied symmetrically to both
+/// `V(s_t)` and `V(s_{t+1})` readings before computing δ — the
+/// same safeguard as `compute_td_n_step_return`.
+fn compute_gae_advantage(
+    buffer: &crate::buffer::ExperienceBuffer,
+    ripe_idx: usize,
+    n_step: usize,
+    gamma: f32,
+    lambda: f32,
+    bootstrap_value_clamp: f32,
+) -> f32 {
+    // First pass: accumulate δ's forward, stopping if the episode
+    // ended strictly inside the window (after k=0).
+    let mut deltas: Vec<f32> = Vec::with_capacity(n_step);
+    for k in 0..n_step {
+        let t = ripe_idx + k;
+        let tr = buffer.get(t);
+        if k > 0 && tr.env_boundary {
+            break;
+        }
+        let next = buffer.get(t + 1);
+        let next_v = if next.env_boundary || !next.value.is_finite() {
+            0.0
+        } else {
+            next.value.clamp(-bootstrap_value_clamp, bootstrap_value_clamp)
+        };
+        let v_t = if tr.value.is_finite() {
+            tr.value.clamp(-bootstrap_value_clamp, bootstrap_value_clamp)
+        } else {
+            0.0
+        };
+        let r = if tr.reward.is_finite() { tr.reward } else { 0.0 };
+        let delta = r + gamma * next_v - v_t;
+        deltas.push(delta);
+    }
+    // Second pass: fold back with γλ discount.
+    // Â_t = δ_t + γλ · Â_{t+1}. done_{t+1} handling is baked in
+    // via the loop cutoff above — once we stopped at a boundary,
+    // all later δ's are implicitly zero (no accumulation past
+    // termination).
+    let mut adv = 0.0f32;
+    for &delta in deltas.iter().rev() {
+        adv = delta + gamma * lambda * adv;
+    }
+    adv
+}
+
 fn unit_cosine(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
     let a_norm: f32 = a.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -1427,6 +1532,7 @@ impl Agent {
                     config.entropy_beta,
                     config.num_options,
                     config.per_option_heads,
+                    config.value_loss_coef,
                 )
             } else {
                 policy::build_continuous_policy_graph(
@@ -1436,6 +1542,7 @@ impl Agent {
                     config.batch_size,
                     config.num_options,
                     config.per_option_heads,
+                    config.value_loss_coef,
                 )
             };
             let mut s = build_session(&g, config.opt_level);
@@ -3299,11 +3406,15 @@ impl Agent {
 
         let mut any_active = false;
 
-        // Under `value_bootstrap`, shift ripe one step earlier so
-        // we reserve the last buffer slot as the bootstrap state
-        // for `V(s_{ripe+n_step})`. Without it, ripe_idx + n_step
-        // would be out of range (== buf_len).
-        let bootstrap_headroom = self.config.value_bootstrap as usize;
+        // Under `value_bootstrap` OR `gae_lambda > 0`, shift ripe
+        // one step earlier so we reserve the last buffer slot as
+        // the bootstrap state for `V(s_{ripe+n_step})`. Without it,
+        // ripe_idx + n_step would be out of range (== buf_len) —
+        // both the value-bootstrap and GAE paths read that slot.
+        let use_gae = self.config.gae_lambda > 0.0;
+        let needs_bootstrap_slot = self.config.value_bootstrap || use_gae;
+        let bootstrap_headroom = needs_bootstrap_slot as usize;
+        let value_target_bootstrap = self.config.value_bootstrap || use_gae;
 
         for (i, lane) in self.lanes.iter().enumerate() {
             let buf_len = lane.buffer.len();
@@ -3321,19 +3432,31 @@ impl Agent {
                 ripe_idx,
                 n_step,
                 gamma,
-                self.config.value_bootstrap,
+                value_target_bootstrap,
                 100.0,
             );
             let adv_clamp = self.config.advantage_clamp.max(0.0);
-            let advantage = (ret - ripe.value).clamp(-adv_clamp, adv_clamp);
+            let advantage_raw = if use_gae {
+                compute_gae_advantage(
+                    &lane.buffer,
+                    ripe_idx,
+                    n_step,
+                    gamma,
+                    self.config.gae_lambda,
+                    100.0,
+                )
+            } else {
+                ret - ripe.value
+            };
+            let advantage = advantage_raw.clamp(-adv_clamp, adv_clamp);
 
             // Value-head target. Default path keeps single-step
             // `ripe.reward` for backward compatibility. With
-            // `value_bootstrap` on, target becomes the same n-step
-            // TD return the advantage was computed from — the
-            // classical actor-critic consistency condition that
-            // drives Bellman backups through V.
-            let v_t = if self.config.value_bootstrap {
+            // `value_bootstrap` (or GAE, which implies it), target
+            // becomes the same n-step TD return — the classical
+            // actor-critic consistency condition that drives Bellman
+            // backups through V.
+            let v_t = if value_target_bootstrap {
                 ret.clamp(-100.0, 100.0)
             } else if ripe.reward.is_finite() {
                 ripe.reward.clamp(-100.0, 100.0)
@@ -3988,5 +4111,182 @@ mod tests {
         // γ^0 · 7 + 0 · 999 + 0 · 999 + 0 · bootstrap = 7
         assert!((ret - 7.0).abs() < 1e-5, "ret: {}", ret);
         assert_eq!(gk, 0.0);
+    }
+
+    // ---- GAE advantage tests ----
+
+    #[test]
+    fn gae_lambda_zero_is_pure_td0() {
+        // λ=0 → Â_t = δ_0 = r_0 + γ·V(s_1) − V(s_0).
+        // ripe has reward=2, value=1; next has value=5.
+        let buf = mk_buffer(&[
+            (2.0, 1.0, false),
+            (0.0, 5.0, false),
+            (0.0, 0.0, false), // padding so buf_len > ripe+n_step
+        ]);
+        let gamma = 0.9;
+        let adv = compute_gae_advantage(&buf, 0, 1, gamma, 0.0, 100.0);
+        let expected = 2.0 + 0.9 * 5.0 - 1.0;
+        assert!(
+            (adv - expected).abs() < 1e-5,
+            "adv: {} vs {}",
+            adv,
+            expected
+        );
+    }
+
+    #[test]
+    fn gae_lambda_one_equals_mc_minus_value() {
+        // λ=1 → Â_t = Σ γ^k · δ_{t+k} = (Σ γ^k · r_{t+k}) + γ^n · V(s_{t+n}) − V(s_t).
+        // Verify via telescoping.
+        let buf = mk_buffer(&[
+            (1.0, 0.5, false),  // ripe: r=1, V=0.5
+            (2.0, 0.3, false),  // t+1: r=2, V=0.3
+            (4.0, 0.2, false),  // t+2: r=4, V=0.2
+            (99.0, 10.0, false), // bootstrap slot: V=10
+        ]);
+        let gamma = 0.9;
+        let adv = compute_gae_advantage(&buf, 0, 3, gamma, 1.0, 100.0);
+        // MC return + γ^3·V_boot − V(s_ripe)
+        let expected = 1.0 + 0.9 * 2.0 + 0.81 * 4.0 + 0.729 * 10.0 - 0.5;
+        assert!(
+            (adv - expected).abs() < 1e-4,
+            "adv: {} vs {}",
+            adv,
+            expected
+        );
+    }
+
+    #[test]
+    fn gae_recursive_identity() {
+        // Â_t = δ_t + γλ · Â_{t+1}. Compute twice — once for the
+        // full window at ripe_idx=0, once for the shorter window at
+        // ripe_idx=1 — and verify the identity numerically.
+        let buf = mk_buffer(&[
+            (1.0, 0.5, false),
+            (2.0, 0.3, false),
+            (4.0, 0.2, false),
+            (0.0, 6.0, false),
+        ]);
+        let gamma = 0.9;
+        let lambda = 0.95;
+        let adv_full = compute_gae_advantage(&buf, 0, 3, gamma, lambda, 100.0);
+        let adv_tail = compute_gae_advantage(&buf, 1, 2, gamma, lambda, 100.0);
+        // δ_0 = 1 + 0.9·0.3 − 0.5 = 0.77
+        let delta0 = 1.0 + 0.9 * 0.3 - 0.5;
+        let expected = delta0 + gamma * lambda * adv_tail;
+        assert!(
+            (adv_full - expected).abs() < 1e-5,
+            "adv_full: {} vs δ_0 + γλ·adv_tail = {}",
+            adv_full,
+            expected
+        );
+    }
+
+    #[test]
+    fn gae_termination_inside_window_stops_accumulation() {
+        // Boundary at k=2 (index 2 is the start of a new episode)
+        // → only δ's for k=0 and k=1 accumulate.
+        let buf = mk_buffer(&[
+            (1.0, 0.5, false),
+            (2.0, 0.3, false),
+            (999.0, 777.0, true), // boundary → don't accumulate this δ,
+            //                     and its V is NOT read as V(s_{t+1}) for k=1
+            (0.0, 0.0, false),
+        ]);
+        let gamma = 0.9;
+        let lambda = 0.95;
+        let adv = compute_gae_advantage(&buf, 0, 3, gamma, lambda, 100.0);
+        // δ_0: r=1, V(s_1)=0.3 (next has no boundary) → 1 + 0.9·0.3 − 0.5 = 0.77
+        // δ_1: r=2, V(s_2) — but index 2 has env_boundary=true → V(s_2) treated as 0
+        //      → 2 + 0.9·0 − 0.3 = 1.7
+        // Stop (index 2 boundary also cuts accumulation for k≥2).
+        // Â_0 = δ_0 + γλ · δ_1 = 0.77 + 0.9·0.95·1.7 = 0.77 + 1.4535 = 2.2235
+        let d0 = 1.0 + 0.9 * 0.3 - 0.5;
+        let d1 = 2.0 + 0.9 * 0.0 - 0.3;
+        let expected = d0 + gamma * lambda * d1;
+        assert!(
+            (adv - expected).abs() < 1e-4,
+            "adv: {} vs {}",
+            adv,
+            expected
+        );
+    }
+
+    #[test]
+    fn gae_boundary_at_bootstrap_zeros_last_next_v() {
+        // No boundary inside the window, but the n+1-th slot IS a
+        // boundary → V(s_{ripe+n_step}) treated as 0 for the last δ.
+        let buf = mk_buffer(&[
+            (1.0, 0.5, false),
+            (2.0, 0.3, false),
+            (4.0, 0.2, false),
+            (99.0, 777.0, true), // boundary → V at bootstrap slot → 0
+        ]);
+        let gamma = 0.9;
+        let lambda = 0.95;
+        let adv = compute_gae_advantage(&buf, 0, 3, gamma, lambda, 100.0);
+        let d0 = 1.0 + 0.9 * 0.3 - 0.5;
+        let d1 = 2.0 + 0.9 * 0.2 - 0.3;
+        // δ_2: V(s_3) treated as 0 (boundary) → 4 + 0.9·0 − 0.2 = 3.8
+        let d2 = 4.0 + 0.9 * 0.0 - 0.2;
+        let expected = d0 + gamma * lambda * (d1 + gamma * lambda * d2);
+        assert!(
+            (adv - expected).abs() < 1e-4,
+            "adv: {} vs {}",
+            adv,
+            expected
+        );
+    }
+
+    #[test]
+    fn gae_clamp_bounds_runaway_value() {
+        // V=1e6 at ripe; clamp to ±100 before computing δ.
+        let buf = mk_buffer(&[
+            (0.0, 1e6, false),
+            (0.0, 0.0, false),
+            (0.0, 0.0, false),
+        ]);
+        let gamma = 0.9;
+        let adv = compute_gae_advantage(&buf, 0, 1, gamma, 0.5, 100.0);
+        // δ_0 = 0 + 0.9·0 − 100 (V clamped) = −100. λ=0.5 has only 1 step, so Â=δ_0.
+        assert!(
+            (adv - (-100.0)).abs() < 1e-3,
+            "adv: {} (expected −100)",
+            adv
+        );
+    }
+
+    #[test]
+    fn gae_nonfinite_value_treated_as_zero() {
+        // NaN at ripe's V — treated as 0.
+        let buf = mk_buffer(&[
+            (3.0, f32::NAN, false),
+            (0.0, 2.0, false),
+            (0.0, 0.0, false),
+        ]);
+        let gamma = 0.9;
+        let adv = compute_gae_advantage(&buf, 0, 1, gamma, 0.0, 100.0);
+        // δ_0 = 3 + 0.9·2 − 0 = 4.8
+        let expected = 3.0 + 0.9 * 2.0;
+        assert!(
+            (adv - expected).abs() < 1e-5,
+            "adv: {} vs {}",
+            adv,
+            expected
+        );
+    }
+
+    #[test]
+    fn gae_gamma_zero_is_single_step_residual() {
+        // γ=0 → all later δ's have γλ=0 weight, and within each δ
+        // the γ·V(s_{t+1}) term is also zero. Â_0 = r_0 − V(s_0).
+        let buf = mk_buffer(&[
+            (5.0, 1.0, false),
+            (999.0, 999.0, false),
+            (999.0, 999.0, false),
+        ]);
+        let adv = compute_gae_advantage(&buf, 0, 2, 0.0, 0.95, 100.0);
+        assert!((adv - 4.0).abs() < 1e-5, "adv: {}", adv);
     }
 }
