@@ -491,6 +491,40 @@ pub struct AgentConfig {
     /// Default `0.05` (20-step effective window). Higher = more
     /// responsive but noisier.
     pub policy_lr_adaptive_ema: f32,
+    /// TD-bootstrap the value-head target (only affects
+    /// `policy_step_n_step`, i.e. when `n_step >= 2`).
+    ///
+    /// Default `false` — the value head trains on single-step
+    /// reward at the ripe state, which on sparse-reward envs
+    /// leaves V≈0 everywhere and the advantage signal is
+    /// sparse-but-correctly-signed.
+    ///
+    /// When `true`: value target becomes the bootstrapped n-step
+    /// return
+    /// ```text
+    /// V_target(s_ripe) = Σ_{k=0}^{n-1} γ^k r_{ripe+k}
+    ///                  + γ^n · V(s_{ripe+n})
+    /// ```
+    /// (with bootstrap suppressed when the episode terminates
+    /// inside the window or at the bootstrap point). This is the
+    /// classical n-step TD target — rewards propagate backward
+    /// through V via Bellman recursion, so every state with any
+    /// causal connection to a future reward gets a dense
+    /// non-zero V estimate and the advantage `ret - V(s_ripe)`
+    /// carries gradient at every step, not just at reward events.
+    ///
+    /// Requires `buf_len >= n_step + 1` (one extra transition for
+    /// the bootstrap). Lanes with shorter buffers fall back to
+    /// bootstrap=0 (equivalent to treating them as episode-
+    /// terminating, which is the safe conservative default).
+    ///
+    /// The bootstrap uses the STORED `τ_{ripe+n_step}.value` — a
+    /// value prediction from the policy session at the time that
+    /// transition was observed. This is a "target-network" style
+    /// stale estimate, which is stable by construction (the
+    /// bootstrap target doesn't change under the current update,
+    /// avoiding the DQN-style divergence mode).
+    pub value_bootstrap: bool,
     /// Model-based planner. When `> 0`, kindle maintains a CPU
     /// copy of the world-model weights and can simulate candidate
     /// action sequences via `plan_and_queue()` — sampling
@@ -621,6 +655,7 @@ impl Default for AgentConfig {
             policy_adv_global_clip: 0.0,
             policy_lr_adaptive_target: 0.0,
             policy_lr_adaptive_ema: 0.05,
+            value_bootstrap: false,
             planner_horizon: 0,
             planner_samples: 32,
             planner_refresh_interval: 200,
@@ -1118,6 +1153,62 @@ pub struct Agent {
 
 /// Cosine similarity between two equal-length vectors. Returns 0 when
 /// either side has zero norm (no direction defined).
+/// Compute the n-step discounted return starting at `ripe_idx` in
+/// `buffer`, with optional TD-bootstrap from the stored value at
+/// `ripe_idx + n_step`.
+///
+/// Returns `(ret, gk_at_end, terminated)`:
+/// - `ret`: the accumulated `Σ γ^k r_{ripe+k}` (0..end) plus the
+///   bootstrap `γ^n · V(s_{ripe+n_step})` when `bootstrap=true` and
+///   the trajectory didn't terminate within the window.
+/// - `gk_at_end`: `γ^k_end` — the discount factor at the point where
+///   accumulation stopped. Equals `γ^n_step` on normal completion.
+/// - `terminated`: true iff the window hit an `env_boundary` (i.e.
+///   the episode ended strictly inside the window). A bootstrap is
+///   NOT added in that case — terminal states have zero future value
+///   by definition.
+///
+/// `bootstrap_value_clamp` is the symmetric L∞ bound applied to the
+/// stored `V(s_{ripe+n_step})` before discounting — a safeguard
+/// against a drifted value head poisoning the TD target.
+///
+/// Caller guarantees `ripe_idx + n_step ≤ buffer.len()` when
+/// `bootstrap=true`; `ripe_idx + n_step - 1 ≤ buffer.len() - 1` when
+/// `bootstrap=false` (i.e. n_step rewards must all be in-buffer).
+fn compute_td_n_step_return(
+    buffer: &crate::buffer::ExperienceBuffer,
+    ripe_idx: usize,
+    n_step: usize,
+    gamma: f32,
+    bootstrap: bool,
+    bootstrap_value_clamp: f32,
+) -> (f32, f32, bool) {
+    let mut ret = 0.0f32;
+    let mut gk = 1.0f32;
+    let mut terminated = false;
+    for k in 0..n_step {
+        let idx = ripe_idx + k;
+        let tr = buffer.get(idx);
+        if k > 0 && tr.env_boundary {
+            terminated = true;
+            break;
+        }
+        ret += gk * tr.reward;
+        gk *= gamma;
+    }
+    if bootstrap && !terminated {
+        let boot_idx = ripe_idx + n_step;
+        let boot_tr = buffer.get(boot_idx);
+        if !boot_tr.env_boundary && boot_tr.value.is_finite() {
+            let boot_v = boot_tr
+                .value
+                .clamp(-bootstrap_value_clamp, bootstrap_value_clamp);
+            ret += gk * boot_v;
+        }
+    }
+    (ret, gk, terminated)
+}
+
 fn unit_cosine(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
     let a_norm: f32 = a.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -3208,34 +3299,43 @@ impl Agent {
 
         let mut any_active = false;
 
+        // Under `value_bootstrap`, shift ripe one step earlier so
+        // we reserve the last buffer slot as the bootstrap state
+        // for `V(s_{ripe+n_step})`. Without it, ripe_idx + n_step
+        // would be out of range (== buf_len).
+        let bootstrap_headroom = self.config.value_bootstrap as usize;
+
         for (i, lane) in self.lanes.iter().enumerate() {
             let buf_len = lane.buffer.len();
-            if buf_len < n_step {
+            if buf_len < n_step + bootstrap_headroom {
                 continue;
             }
-            let ripe_idx = buf_len - n_step;
+            let ripe_idx = buf_len - n_step - bootstrap_headroom;
             let ripe = lane.buffer.get(ripe_idx);
 
-            // Accumulate n-step discounted return from the ripe index,
-            // stopping at any env_boundary flag on subsequent transitions.
-            let mut ret = 0.0f32;
-            let mut gk = 1.0f32;
-            for k in 0..n_step {
-                let idx = ripe_idx + k;
-                let tr = lane.buffer.get(idx);
-                if k > 0 && tr.env_boundary {
-                    break;
-                }
-                ret += gk * tr.reward;
-                gk *= gamma;
-            }
+            // n-step TD return with optional bootstrap — factored into
+            // `compute_td_n_step_return` so the math is unit-testable
+            // without depending on the GPU session.
+            let (ret, _gk_end, _terminated) = compute_td_n_step_return(
+                &lane.buffer,
+                ripe_idx,
+                n_step,
+                gamma,
+                self.config.value_bootstrap,
+                100.0,
+            );
             let adv_clamp = self.config.advantage_clamp.max(0.0);
             let advantage = (ret - ripe.value).clamp(-adv_clamp, adv_clamp);
 
-            // Value-head target tracks the *old* single-step reward at
-            // s_old, clamped. Keeps the value head on its stable
-            // single-step objective.
-            let v_t = if ripe.reward.is_finite() {
+            // Value-head target. Default path keeps single-step
+            // `ripe.reward` for backward compatibility. With
+            // `value_bootstrap` on, target becomes the same n-step
+            // TD return the advantage was computed from — the
+            // classical actor-critic consistency condition that
+            // drives Bellman backups through V.
+            let v_t = if self.config.value_bootstrap {
+                ret.clamp(-100.0, 100.0)
+            } else if ripe.reward.is_finite() {
                 ripe.reward.clamp(-100.0, 100.0)
             } else {
                 0.0
@@ -3702,5 +3802,191 @@ fn init_parameters(session: &mut Session) {
             data.resize(num_elements, 0.0);
             session.set_parameter(name, &data);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buffer::{ExperienceBuffer, Transition};
+
+    /// Build an ExperienceBuffer with one transition per tuple
+    /// `(reward, value, env_boundary)`. Latent and other fields are
+    /// filled with zeros; they don't matter for the TD-target math.
+    fn mk_buffer(spec: &[(f32, f32, bool)]) -> ExperienceBuffer {
+        let mut buf = ExperienceBuffer::new(64, 0.5);
+        for &(reward, value, env_boundary) in spec {
+            buf.push(Transition {
+                observation: vec![0.0; 4],
+                latent: vec![0.0; 4],
+                action: vec![0.0; MAX_ACTION_DIM],
+                reward,
+                credit: 0.0,
+                pred_error: 0.0,
+                value,
+                option_idx: 0,
+                env_id: 0,
+                env_boundary,
+            });
+        }
+        buf
+    }
+
+    #[test]
+    fn td_n_step_return_no_bootstrap_matches_plain_sum() {
+        // Three rewards, no bootstrap. Expect ret = Σ γ^k r_k.
+        let buf = mk_buffer(&[(1.0, 0.0, false), (2.0, 0.0, false), (4.0, 0.0, false)]);
+        let gamma = 0.9;
+        let (ret, gk, term) = compute_td_n_step_return(&buf, 0, 3, gamma, false, 100.0);
+        let expected = 1.0 + 0.9 * 2.0 + 0.81 * 4.0;
+        assert!(
+            (ret - expected).abs() < 1e-5,
+            "ret: {} vs {}",
+            ret,
+            expected
+        );
+        assert!((gk - 0.9f32.powi(3)).abs() < 1e-5, "gk: {}", gk);
+        assert!(!term, "should not be terminated");
+    }
+
+    #[test]
+    fn td_n_step_return_bootstrap_adds_gamma_n_v() {
+        // Same three rewards + a 4th transition carrying value=10.
+        // With bootstrap, expect ret = Σ γ^k r_k + γ^3 · 10.
+        let buf = mk_buffer(&[
+            (1.0, 0.0, false),
+            (2.0, 0.0, false),
+            (4.0, 0.0, false),
+            (99.0, 10.0, false), // reward ignored; only its .value is read for bootstrap
+        ]);
+        let gamma = 0.9;
+        let (ret, _gk, term) = compute_td_n_step_return(&buf, 0, 3, gamma, true, 100.0);
+        let expected = 1.0 + 0.9 * 2.0 + 0.81 * 4.0 + 0.729 * 10.0;
+        assert!(
+            (ret - expected).abs() < 1e-4,
+            "ret: {} vs {}",
+            ret,
+            expected
+        );
+        assert!(!term);
+    }
+
+    #[test]
+    fn td_n_step_return_termination_inside_window_suppresses_bootstrap() {
+        // Transition at k=2 is env_boundary → window terminates at k=1,
+        // bootstrap suppressed even though the 4th transition has value.
+        let buf = mk_buffer(&[
+            (1.0, 0.0, false),
+            (2.0, 0.0, false),
+            (999.0, 0.0, true), // boundary
+            (99.0, 10.0, false),
+        ]);
+        let gamma = 0.9;
+        let (ret, _gk, term) = compute_td_n_step_return(&buf, 0, 3, gamma, true, 100.0);
+        // Only k=0 and k=1 rewards included; no bootstrap.
+        let expected = 1.0 + 0.9 * 2.0;
+        assert!(
+            (ret - expected).abs() < 1e-5,
+            "ret: {} vs {}",
+            ret,
+            expected
+        );
+        assert!(term, "should be terminated");
+    }
+
+    #[test]
+    fn td_n_step_return_bootstrap_state_across_boundary_suppresses_bootstrap() {
+        // Window fills cleanly (k=0..2 no boundary), but the bootstrap
+        // transition at index 3 IS a boundary — means it's the first
+        // transition of a new episode, not a continuation. Bootstrap
+        // should be dropped.
+        let buf = mk_buffer(&[
+            (1.0, 0.0, false),
+            (2.0, 0.0, false),
+            (4.0, 0.0, false),
+            (99.0, 10.0, true), // boundary at bootstrap point
+        ]);
+        let gamma = 0.9;
+        let (ret, _gk, term) = compute_td_n_step_return(&buf, 0, 3, gamma, true, 100.0);
+        let expected = 1.0 + 0.9 * 2.0 + 0.81 * 4.0;
+        assert!(
+            (ret - expected).abs() < 1e-5,
+            "ret: {} vs {}",
+            ret,
+            expected
+        );
+        // The WINDOW itself didn't terminate — we just have no bootstrap.
+        assert!(!term);
+    }
+
+    #[test]
+    fn td_n_step_return_bootstrap_clamp_bounds_runaway_value() {
+        // Value head diverged to +1e6; clamp should keep target sane.
+        let buf = mk_buffer(&[
+            (0.0, 0.0, false),
+            (0.0, 0.0, false),
+            (0.0, 0.0, false),
+            (0.0, 1.0e6, false),
+        ]);
+        let gamma = 0.9;
+        let (ret, _gk, _term) = compute_td_n_step_return(&buf, 0, 3, gamma, true, 100.0);
+        // With clamp=100 on the bootstrap, ret = γ^3 · 100 = 72.9.
+        let expected = 0.729 * 100.0;
+        assert!(
+            (ret - expected).abs() < 1e-3,
+            "ret: {} vs {}",
+            ret,
+            expected
+        );
+    }
+
+    #[test]
+    fn td_n_step_return_bootstrap_ignores_nonfinite_value() {
+        // NaN value at bootstrap position — should be skipped.
+        let buf = mk_buffer(&[
+            (1.0, 0.0, false),
+            (2.0, 0.0, false),
+            (3.0, 0.0, false),
+            (99.0, f32::NAN, false),
+        ]);
+        let gamma = 0.9;
+        let (ret, _gk, _term) = compute_td_n_step_return(&buf, 0, 3, gamma, true, 100.0);
+        let expected = 1.0 + 0.9 * 2.0 + 0.81 * 3.0;
+        assert!(
+            (ret - expected).abs() < 1e-5,
+            "ret: {} vs {}",
+            ret,
+            expected
+        );
+    }
+
+    #[test]
+    fn td_n_step_return_single_reward_bootstrap_is_td0() {
+        // n_step=1 with bootstrap = classical TD(0) target.
+        let buf = mk_buffer(&[(2.0, 0.0, false), (0.0, 5.0, false)]);
+        let gamma = 0.95;
+        let (ret, _gk, _term) = compute_td_n_step_return(&buf, 0, 1, gamma, true, 100.0);
+        let expected = 2.0 + 0.95 * 5.0;
+        assert!(
+            (ret - expected).abs() < 1e-5,
+            "ret: {} vs {}",
+            ret,
+            expected
+        );
+    }
+
+    #[test]
+    fn td_n_step_return_gamma_zero_myopic() {
+        // With γ=0, only the ripe reward counts — discount annihilates everything else.
+        let buf = mk_buffer(&[
+            (7.0, 0.0, false),
+            (999.0, 0.0, false),
+            (999.0, 0.0, false),
+            (99.0, 999.0, false),
+        ]);
+        let (ret, gk, _term) = compute_td_n_step_return(&buf, 0, 3, 0.0, true, 100.0);
+        // γ^0 · 7 + 0 · 999 + 0 · 999 + 0 · bootstrap = 7
+        assert!((ret - 7.0).abs() < 1e-5, "ret: {}", ret);
+        assert_eq!(gk, 0.0);
     }
 }

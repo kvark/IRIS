@@ -58,6 +58,11 @@ def main() -> int:
                         "exceeds it, per-step LR scales by target/EMA. Simple "
                         "TRPO-style damping. Try 0.5-2.0. 0 disables.")
     parser.add_argument("--policy-lr-adaptive-ema", type=float, default=0.05)
+    parser.add_argument("--value-bootstrap", action="store_true",
+                        help="Enable TD-bootstrap on the value-head target in "
+                        "the n-step path: V_target = Σ γ^k r_{t+k} + γ^n·V(s_{t+n}). "
+                        "Turns sparse external rewards into dense TD gradients "
+                        "via the Bellman equation. Requires n_step ≥ 2.")
     parser.add_argument("--async-envs", action="store_true")
     args = parser.parse_args()
 
@@ -98,6 +103,7 @@ def main() -> int:
         policy_adv_global_clip=args.policy_adv_global_clip if args.policy_adv_global_clip > 0 else None,
         policy_lr_adaptive_target=args.policy_lr_adaptive_target if args.policy_lr_adaptive_target > 0 else None,
         policy_lr_adaptive_ema=args.policy_lr_adaptive_ema,
+        value_bootstrap=args.value_bootstrap,
     )
     print("agent ready (MLP encoder)")
 

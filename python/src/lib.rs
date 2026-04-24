@@ -465,6 +465,7 @@ impl PyBatchAgent {
         policy_adv_global_clip = None,
         policy_lr_adaptive_target = None,
         policy_lr_adaptive_ema = None,
+        value_bootstrap = None,
         planner_horizon = None,
         planner_samples = None,
         planner_refresh_interval = None,
@@ -539,6 +540,7 @@ impl PyBatchAgent {
         policy_adv_global_clip: Option<f32>,
         policy_lr_adaptive_target: Option<f32>,
         policy_lr_adaptive_ema: Option<f32>,
+        value_bootstrap: Option<bool>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
         planner_refresh_interval: Option<usize>,
@@ -788,6 +790,9 @@ impl PyBatchAgent {
         }
         if let Some(v) = policy_lr_adaptive_ema {
             config.policy_lr_adaptive_ema = v;
+        }
+        if let Some(v) = value_bootstrap {
+            config.value_bootstrap = v;
         }
         if let Some(v) = planner_horizon {
             config.planner_horizon = v;
