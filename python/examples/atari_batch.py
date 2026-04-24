@@ -276,6 +276,11 @@ def main() -> int:
                         help="GAE λ for advantage estimation. 0 disables. "
                         "0.95 is PPO default. Decouples value target from "
                         "advantage; fights value-kills-advantage collapse.")
+    parser.add_argument("--value-loss-coef", type=float, default=1.0,
+                        help="Value-head loss coefficient (PPO vf_coef). "
+                        "1.0 = default (value dominates under shared LR on "
+                        "dense reward). 0.5 or lower rebalances policy-vs-"
+                        "value gradient weights.")
     parser.add_argument("--balance-events", action="store_true",
                         help="Harness-side rebalance per-step rewards so rare "
                         "events (positive in Pong/Breakout) get amplified to "
@@ -369,6 +374,8 @@ def main() -> int:
         agent_kwargs["value_bootstrap"] = True
     if args.gae_lambda > 0:
         agent_kwargs["gae_lambda"] = args.gae_lambda
+    if args.value_loss_coef != 1.0:
+        agent_kwargs["value_loss_coef"] = args.value_loss_coef
 
     agent = kindle.BatchAgent(**agent_kwargs)
 
