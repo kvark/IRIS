@@ -1686,12 +1686,29 @@ impl Agent {
         // step on lane-current state, not on a rollout.
         let rollout_length = config.rollout_length.max(1);
         let policy_batch = config.batch_size * rollout_length;
+        let obs_scratch_rows = if config.end_to_end_encoder {
+            policy_batch
+        } else {
+            config.batch_size
+        };
         let policy_session = {
-            let g = if is_discrete && config.end_to_end_encoder {
+            let g = if is_discrete && config.end_to_end_encoder && config.use_ppo {
                 assert!(
-                    !config.use_ppo,
-                    "end_to_end_encoder + use_ppo not implemented; pick one"
+                    config.num_options <= 1,
+                    "end_to_end_encoder not compatible with L1 options"
                 );
+                policy::build_ppo_policy_graph_e2e(
+                    OBS_TOKEN_DIM,
+                    TASK_DIM,
+                    MAX_ACTION_DIM,
+                    config.hidden_dim,
+                    config.latent_dim,
+                    policy_batch,
+                    config.ppo_clip_eps,
+                    config.value_loss_coef,
+                    config.entropy_beta,
+                )
+            } else if is_discrete && config.end_to_end_encoder {
                 assert!(
                     config.num_options <= 1,
                     "end_to_end_encoder not compatible with L1 options"
@@ -1969,13 +1986,17 @@ impl Agent {
             last_drift: 0.0,
             encoder_lr_scale: 1.0,
             batch_lr_scale: (config.batch_size as f32).sqrt(),
-            obs_token_scratch: vec![0.0; n * OBS_TOKEN_DIM],
+            // When end_to_end_encoder is on with rollout_length>1, the
+            // policy training path fills obs+task per rollout row
+            // (`policy_batch` rows), not just per lane. Size accordingly.
+            // act() and observe() still write only the first `n` rows.
+            obs_token_scratch: vec![0.0; obs_scratch_rows * OBS_TOKEN_DIM],
             visual_obs_size_bytes: n
                 * config.encoder_kind.visual_dim()
                 * std::mem::size_of::<f32>(),
             action_token_scratch: vec![0.0; n * MAX_ACTION_DIM],
             z_target_scratch: vec![0.0; n * config.latent_dim],
-            task_scratch: vec![0.0; n * TASK_DIM],
+            task_scratch: vec![0.0; obs_scratch_rows * TASK_DIM],
             // Policy-session inputs are sized for the expanded rollout
             // batch (`lanes × rollout_length`). At rollout_length=1
             // this equals `n` — pre-refactor behavior. For rollout
@@ -4274,6 +4295,11 @@ impl Agent {
 
         // Second pass: fill scratch buffers.
         let mut any_active = false;
+        let e2e = self.config.end_to_end_encoder;
+        if e2e {
+            self.obs_token_scratch.fill(0.0);
+            self.task_scratch.fill(0.0);
+        }
         for row in 0..policy_batch {
             if !row_active[row] {
                 continue;
@@ -4286,8 +4312,28 @@ impl Agent {
             };
             self.value_target_scratch[row] = value_targets[row];
 
-            // z_scratch row
+            // z_scratch row (used in non-e2e path; redundant under e2e
+            // but cheap to fill).
             self.policy_z_scratch[row * ld..(row + 1) * ld].copy_from_slice(&ripe_latent[row]);
+
+            // E2E mode: fill obs + task per row from ripe transition.
+            if e2e {
+                let lane_i = row % lanes;
+                let buf_len = self.lanes[lane_i].buffer.len();
+                let offset = row / lanes;
+                if buf_len >= n_step + bootstrap_headroom + offset {
+                    let ripe_idx = buf_len - n_step - bootstrap_headroom - offset;
+                    let ripe = self.lanes[lane_i].buffer.get(ripe_idx);
+                    let obs_dst = &mut self.obs_token_scratch
+                        [row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
+                    let copy_n = ripe.observation.len().min(OBS_TOKEN_DIM);
+                    obs_dst[..copy_n].copy_from_slice(&ripe.observation[..copy_n]);
+                    let task_dst = &mut self.task_scratch[row * TASK_DIM..(row + 1) * TASK_DIM];
+                    if let Some(emb) = self.task_embeddings.get(&ripe.env_id) {
+                        task_dst.copy_from_slice(emb);
+                    }
+                }
+            }
 
             if use_ppo {
                 let act_dst = &mut self.policy_action_scratch
@@ -4355,7 +4401,14 @@ impl Agent {
             1.0
         };
 
-        self.policy_session.set_input("z", &self.policy_z_scratch);
+        if e2e {
+            self.policy_session
+                .set_input("obs", &self.obs_token_scratch);
+            self.policy_session
+                .set_input("task", &self.task_scratch);
+        } else {
+            self.policy_session.set_input("z", &self.policy_z_scratch);
+        }
         if has_options {
             self.policy_session
                 .set_input("option_onehot", &self.option_onehot_scratch);
