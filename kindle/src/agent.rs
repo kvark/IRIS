@@ -631,6 +631,25 @@ pub struct AgentConfig {
     ///
     /// Default 0 (disabled). Try 2000–10000 on dense-reward envs.
     pub policy_warmup_steps: usize,
+    /// Recompute V on `ripe.latent` at policy-training time rather
+    /// than using the `ripe.value` stored when the action was taken.
+    /// Default `false` (use stored).
+    ///
+    /// Why this matters: kindle's encoder is updated every env-step
+    /// by the WM loss, so by the time a transition becomes "ripe"
+    /// (n_step env-steps in the past), the latent representation has
+    /// shifted. The stored `ripe.value` was computed from the act-time
+    /// latent under the act-time value head, both of which differ
+    /// from now. Recomputing V on the stored ripe.latent (with current
+    /// value head) gives an advantage signal that's consistent with
+    /// what the current policy "sees" — closer to what standard A2C
+    /// does (it computes V freshly for every rollout sample).
+    ///
+    /// Costs an extra forward-only `policy_session.step()` per
+    /// training call. Only affects the non-GAE n-step path; GAE's
+    /// advantage uses multiple stored V's that aren't all worth
+    /// recomputing without restructuring.
+    pub recompute_base_v: bool,
     /// A2C/PPO rollout buffer length. When `> 1`:
     ///   - The policy graph is built with
     ///     `batch_size = lanes × rollout_length`, so each policy
@@ -786,6 +805,7 @@ impl Default for AgentConfig {
             ppo_clip_eps: 0.2,
             ppo_n_epochs: 1,
             policy_warmup_steps: 0,
+            recompute_base_v: false,
             rollout_length: 1,
             planner_horizon: 0,
             planner_samples: 32,
@@ -3692,6 +3712,65 @@ impl Agent {
         let mut value_targets = vec![0.0f32; n];
         let mut lane_active = vec![false; n];
         let adv_clamp = self.config.advantage_clamp.max(0.0);
+
+        // Optional fresh-V forward pass: recompute V on each lane's
+        // ripe.latent using the CURRENT value head (rather than using
+        // ripe.value, which was computed n_step env-steps ago under
+        // a stale encoder + stale value head). This is what standard
+        // A2C does — computes V fresh per rollout sample. Closes the
+        // "stored vs current V" mismatch from the encoder-shift
+        // hypothesis.
+        let mut fresh_v: Option<Vec<f32>> = None;
+        if self.config.recompute_base_v && !use_gae {
+            // Build the ripe-latent stack for active lanes, padding
+            // inactives with zeros (their fresh_v is unused).
+            let mut z_pre = vec![0.0f32; n * ld];
+            for (i, lane) in self.lanes.iter().enumerate() {
+                let buf_len = lane.buffer.len();
+                if buf_len < n_step + bootstrap_headroom + ripe_back_offset {
+                    continue;
+                }
+                let ripe_idx = buf_len - n_step - bootstrap_headroom - ripe_back_offset;
+                let ripe = lane.buffer.get(ripe_idx);
+                z_pre[i * ld..(i + 1) * ld].copy_from_slice(&ripe.latent);
+            }
+            // Forward-only pass at LR=0. Need to seed all session
+            // inputs with valid-shaped zeros; the gradient won't flow.
+            self.policy_session.set_input("z", &z_pre);
+            self.policy_action_scratch.fill(0.0);
+            self.policy_session
+                .set_input("action", &self.policy_action_scratch);
+            self.value_target_scratch.fill(0.0);
+            self.policy_session
+                .set_input("value_target", &self.value_target_scratch);
+            if self.config.use_ppo {
+                self.ppo_advantage_scratch.fill(0.0);
+                for v in self.ppo_old_prob_scratch.iter_mut() {
+                    *v = 1.0;
+                }
+                self.policy_session
+                    .set_input("advantage", &self.ppo_advantage_scratch);
+                self.policy_session
+                    .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
+            }
+            if has_options {
+                self.policy_session
+                    .set_input("option_onehot", &self.option_onehot_scratch);
+            }
+            self.policy_session.set_learning_rate(0.0);
+            self.policy_session.step();
+            self.policy_session.wait();
+            // value output is at index 2 in the combined graph.
+            let mut v_out = vec![0.0f32; n];
+            self.policy_session.read_output_by_index(2, &mut v_out);
+            // Sanitize.
+            for v in v_out.iter_mut() {
+                if !v.is_finite() {
+                    *v = 0.0;
+                }
+            }
+            fresh_v = Some(v_out);
+        }
         for (i, lane) in self.lanes.iter().enumerate() {
             let buf_len = lane.buffer.len();
             if buf_len < n_step + bootstrap_headroom + ripe_back_offset {
@@ -3707,6 +3786,10 @@ impl Agent {
                 value_target_bootstrap,
                 100.0,
             );
+            let v_for_baseline = match fresh_v.as_ref() {
+                Some(fv) => fv[i],
+                None => ripe.value,
+            };
             let adv_raw = if use_gae {
                 compute_gae_advantage(
                     &lane.buffer,
@@ -3717,7 +3800,7 @@ impl Agent {
                     100.0,
                 )
             } else {
-                ret - ripe.value
+                ret - v_for_baseline
             };
             raw_advantages[i] = adv_raw;
             value_targets[i] = if value_target_bootstrap {

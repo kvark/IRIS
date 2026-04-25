@@ -130,6 +130,11 @@ def main() -> int:
                         "one policy session.step() per update covers the "
                         "whole rollout at once. Supersedes "
                         "--policy-update-interval when > 1. Try 8-32.")
+    parser.add_argument("--recompute-base-v", action="store_true",
+                        help="Recompute V on ripe.latent at training time "
+                        "instead of using stored ripe.value (which was "
+                        "computed under a stale encoder n_step env-steps "
+                        "ago). Adds one forward pass per training step.")
     parser.add_argument("--policy-warmup-steps", type=int, default=0,
                         help="Zero advantages for the first N env-steps, "
                         "so only the value head trains. Lets V catch up "
@@ -214,6 +219,7 @@ def main() -> int:
         ppo_clip_eps=args.ppo_clip_eps,
         ppo_n_epochs=args.ppo_n_epochs,
         policy_warmup_steps=args.policy_warmup_steps,
+        recompute_base_v=args.recompute_base_v,
         rollout_length=args.rollout_length,
     )
     print("agent ready (MLP encoder)")

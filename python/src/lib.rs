@@ -475,6 +475,7 @@ impl PyBatchAgent {
         ppo_clip_eps = None,
         ppo_n_epochs = None,
         policy_warmup_steps = None,
+        recompute_base_v = None,
         rollout_length = None,
         planner_horizon = None,
         planner_samples = None,
@@ -560,6 +561,7 @@ impl PyBatchAgent {
         ppo_clip_eps: Option<f32>,
         ppo_n_epochs: Option<usize>,
         policy_warmup_steps: Option<usize>,
+        recompute_base_v: Option<bool>,
         rollout_length: Option<usize>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
@@ -840,6 +842,9 @@ impl PyBatchAgent {
         }
         if let Some(v) = policy_warmup_steps {
             config.policy_warmup_steps = v;
+        }
+        if let Some(v) = recompute_base_v {
+            config.recompute_base_v = v;
         }
         if let Some(v) = rollout_length {
             config.rollout_length = v;
