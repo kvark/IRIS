@@ -141,6 +141,7 @@ pub fn build_policy_graph(
     num_options: usize,
     per_option_heads: bool,
     value_loss_coef: f32,
+    value_clip_scale: f32,
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
@@ -200,7 +201,7 @@ pub fn build_policy_graph(
     // drive the head into an overflow loop.
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
     let raw_value = value_head.forward(&mut g, z);
-    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
+    let value = scaled_tanh(&mut g, raw_value, value_clip_scale, batch_size, 1);
 
     // Policy loss: cross-entropy with one-hot action selects -log π(a|s)
     let policy_loss = g.cross_entropy_loss(logits, action);
@@ -282,6 +283,7 @@ pub fn build_ppo_policy_graph(
     clip_eps: f32,
     value_loss_coef: f32,
     entropy_beta: f32,
+    value_clip_scale: f32,
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
@@ -346,7 +348,7 @@ pub fn build_ppo_policy_graph(
     // Value head — same structure as the non-PPO path
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
     let raw_value = value_head.forward(&mut g, z);
-    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
+    let value = scaled_tanh(&mut g, raw_value, value_clip_scale, batch_size, 1);
     let value_loss_raw = g.mse_loss(value, value_target);
     let value_loss = if (value_loss_coef - 1.0).abs() < 1e-6 {
         value_loss_raw
@@ -424,6 +426,7 @@ pub fn build_policy_graph_e2e(
     batch_size: usize,
     entropy_beta: f32,
     value_loss_coef: f32,
+    value_clip_scale: f32,
 ) -> Graph {
     let mut g = Graph::new();
     let obs = g.input("obs", &[batch_size, obs_dim]);
@@ -442,7 +445,7 @@ pub fn build_policy_graph_e2e(
 
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
     let raw_value = value_head.forward(&mut g, z);
-    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
+    let value = scaled_tanh(&mut g, raw_value, value_clip_scale, batch_size, 1);
 
     let policy_loss = g.cross_entropy_loss(logits, action);
     let value_loss_raw = g.mse_loss(value, value_target);
@@ -548,6 +551,7 @@ pub fn build_ppo_policy_graph_e2e(
     clip_eps: f32,
     value_loss_coef: f32,
     entropy_beta: f32,
+    value_clip_scale: f32,
 ) -> Graph {
     let mut g = Graph::new();
     let obs = g.input("obs", &[batch_size, obs_dim]);
@@ -604,7 +608,7 @@ pub fn build_ppo_policy_graph_e2e(
     // Value head
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
     let raw_value = value_head.forward(&mut g, z);
-    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
+    let value = scaled_tanh(&mut g, raw_value, value_clip_scale, batch_size, 1);
     let value_loss_raw = g.mse_loss(value, value_target);
     let value_loss = if (value_loss_coef - 1.0).abs() < 1e-6 {
         value_loss_raw
@@ -640,6 +644,7 @@ pub fn build_continuous_policy_graph(
     num_options: usize,
     per_option_heads: bool,
     value_loss_coef: f32,
+    value_clip_scale: f32,
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
@@ -685,7 +690,7 @@ pub fn build_continuous_policy_graph(
 
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
     let raw_value = value_head.forward(&mut g, z);
-    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
+    let value = scaled_tanh(&mut g, raw_value, value_clip_scale, batch_size, 1);
 
     // Policy loss: MSE(μ, taken_action) ≡ Gaussian NLL with σ² = 1
     let policy_loss = g.mse_loss(mean, action);

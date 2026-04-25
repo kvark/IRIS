@@ -100,6 +100,11 @@ def main() -> int:
                         "on dense-reward envs). 0.5 is standard PPO. Try "
                         "0.1-0.5 to let policy gradient actually steer the "
                         "shared optimizer.")
+    parser.add_argument("--value-clip-scale", type=float, default=200.0,
+                        help="Soft-clamp range for V-head output (V ∈ "
+                        "[-scale, +scale] via scaled_tanh). Default 200 "
+                        "fits CartPole/Acrobot returns. For Pendulum "
+                        "(returns -1500..0) bump to 2000.")
     parser.add_argument("--policy-update-interval", type=int, default=1,
                         help="Update policy only every N env-steps, then do "
                         "N gradient steps on the accumulated rollout "
@@ -230,6 +235,7 @@ def main() -> int:
         recompute_base_v=args.recompute_base_v,
         end_to_end_encoder=args.end_to_end_encoder,
         rollout_length=args.rollout_length,
+        value_clip_scale=args.value_clip_scale,
     )
     print("agent ready (MLP encoder)")
 

@@ -563,6 +563,13 @@ pub struct AgentConfig {
     /// effectively learn ~50× slower than the value. Setting this
     /// to 0.1–0.5 rebalances without separate LRs or sessions.
     pub value_loss_coef: f32,
+    /// Soft-clamp range for the value head's output: V ∈ [-scale, +scale]
+    /// via `scaled_tanh`. Default 200.0 fits CartPole / Acrobot returns.
+    /// Pendulum returns are -1500..0; bump to 2000+ there. Returns are
+    /// not normalized inside kindle, so per-env value-range tuning is
+    /// the user's responsibility — the soft clamp is just a safety net
+    /// against runaway value-MSE gradients destabilizing the encoder.
+    pub value_clip_scale: f32,
     /// Update the policy only every N env-steps, then do N
     /// gradient steps in a row on the accumulated rollout.
     /// Default `1` = per-env-step update (the existing behavior).
@@ -822,6 +829,7 @@ impl Default for AgentConfig {
             value_bootstrap: false,
             gae_lambda: 0.0,
             value_loss_coef: 1.0,
+            value_clip_scale: 200.0,
             policy_update_interval: 1,
             advantage_normalize: false,
             use_ppo: false,
@@ -1707,6 +1715,7 @@ impl Agent {
                     config.ppo_clip_eps,
                     config.value_loss_coef,
                     config.entropy_beta,
+                    config.value_clip_scale,
                 )
             } else if is_discrete && config.end_to_end_encoder {
                 assert!(
@@ -1722,6 +1731,7 @@ impl Agent {
                     policy_batch,
                     config.entropy_beta,
                     config.value_loss_coef,
+                    config.value_clip_scale,
                 )
             } else if is_discrete && config.use_ppo {
                 // PPO mode does not support L1 options yet — options are
@@ -1739,6 +1749,7 @@ impl Agent {
                     config.ppo_clip_eps,
                     config.value_loss_coef,
                     config.entropy_beta,
+                    config.value_clip_scale,
                 )
             } else if is_discrete {
                 policy::build_policy_graph(
@@ -1750,6 +1761,7 @@ impl Agent {
                     config.num_options,
                     config.per_option_heads,
                     config.value_loss_coef,
+                    config.value_clip_scale,
                 )
             } else {
                 policy::build_continuous_policy_graph(
@@ -1760,6 +1772,7 @@ impl Agent {
                     config.num_options,
                     config.per_option_heads,
                     config.value_loss_coef,
+                    config.value_clip_scale,
                 )
             };
             let mut s = build_session(&g, config.opt_level);
@@ -3879,7 +3892,7 @@ impl Agent {
                 n_step,
                 gamma,
                 value_target_bootstrap,
-                100.0,
+                self.config.value_clip_scale,
             );
             let v_for_baseline = match fresh_v.as_ref() {
                 Some(fv) => fv[i],
@@ -3892,7 +3905,7 @@ impl Agent {
                     n_step,
                     gamma,
                     self.config.gae_lambda,
-                    100.0,
+                    self.config.value_clip_scale,
                 )
             } else {
                 ret - v_for_baseline
@@ -4175,7 +4188,7 @@ impl Agent {
                     n_step,
                     gamma,
                     value_target_bootstrap,
-                    100.0,
+                    self.config.value_clip_scale,
                 );
                 let adv_raw = if use_gae {
                     compute_gae_advantage(
@@ -4184,7 +4197,7 @@ impl Agent {
                         n_step,
                         gamma,
                         self.config.gae_lambda,
-                        100.0,
+                        self.config.value_clip_scale,
                     )
                 } else {
                     ret - ripe.value
