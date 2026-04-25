@@ -4034,6 +4034,12 @@ impl Agent {
         let mut ripe_prob_taken = vec![1.0f32; policy_batch];
 
         let adv_clamp = self.config.advantage_clamp.max(0.0);
+        // First pass A: collect ripe data (latent, action, option,
+        // prob, return, raw advantage) using STORED V's. This is the
+        // baseline path. The recompute pass (if enabled) overrides
+        // adv_raw next.
+        let mut ripe_returns = vec![0.0f32; policy_batch];
+        let mut ripe_stored_v = vec![0.0f32; policy_batch];
         for offset in 0..rollout_length {
             for (lane_i, lane) in self.lanes.iter().enumerate() {
                 let row = offset * lanes + lane_i;
@@ -4064,6 +4070,8 @@ impl Agent {
                     ret - ripe.value
                 };
                 raw_advantages[row] = adv_raw;
+                ripe_returns[row] = ret;
+                ripe_stored_v[row] = ripe.value;
                 value_targets[row] = if value_target_bootstrap {
                     ret.clamp(-100.0, 100.0)
                 } else if ripe.reward.is_finite() {
@@ -4077,6 +4085,61 @@ impl Agent {
                 ripe_prob_taken[row] = ripe.prob_taken.max(1e-8);
                 row_active[row] = true;
             }
+        }
+
+        // Optional fresh-V pass: forward through policy_session with
+        // z=ripe_latent (across the whole rollout), read V output,
+        // override raw_advantages = ret - V_fresh in the non-GAE
+        // path. This closes the "stored V vs current V" mismatch
+        // for the rollout batch — kindle's encoder shifts every WM
+        // step, so by the time a transition becomes ripe its stored
+        // V is computed under a different encoder than is now.
+        if self.config.recompute_base_v && !use_gae {
+            // Stage z for the forward pass.
+            for row in 0..policy_batch {
+                if row_active[row] {
+                    self.policy_z_scratch[row * ld..(row + 1) * ld]
+                        .copy_from_slice(&ripe_latent[row]);
+                }
+            }
+            self.policy_session
+                .set_input("z", &self.policy_z_scratch);
+            // Need all other inputs valid-shaped. Action / value
+            // target / PPO inputs already filled with zeros above.
+            self.policy_session
+                .set_input("action", &self.policy_action_scratch);
+            self.policy_session
+                .set_input("value_target", &self.value_target_scratch);
+            if use_ppo {
+                self.policy_session
+                    .set_input("advantage", &self.ppo_advantage_scratch);
+                self.policy_session
+                    .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
+            }
+            if has_options {
+                self.policy_session
+                    .set_input("option_onehot", &self.option_onehot_scratch);
+            }
+            self.policy_session.set_learning_rate(0.0);
+            self.policy_session.step();
+            self.policy_session.wait();
+            let mut v_fresh = vec![0.0f32; policy_batch];
+            self.policy_session.read_output_by_index(2, &mut v_fresh);
+            for v in v_fresh.iter_mut() {
+                if !v.is_finite() {
+                    *v = 0.0;
+                }
+            }
+            // Override advantages with fresh-V baseline.
+            for row in 0..policy_batch {
+                if row_active[row] {
+                    raw_advantages[row] = ripe_returns[row] - v_fresh[row];
+                }
+            }
+            // Suppress unused-warnings on ripe_stored_v in this branch.
+            let _ = &ripe_stored_v;
+        } else {
+            let _ = (&ripe_returns, &ripe_stored_v);
         }
 
         // Advantage normalization across the full rollout batch.
