@@ -631,6 +631,29 @@ pub struct AgentConfig {
     ///
     /// Default 0 (disabled). Try 2000–10000 on dense-reward envs.
     pub policy_warmup_steps: usize,
+    /// Use an end-to-end policy graph: encoder + policy + value all
+    /// in one session, trained on the combined loss. The encoder
+    /// receives gradient from BOTH the value MSE and the policy CE.
+    /// Default `false` (use the original z-as-input path where the
+    /// encoder is trained ONLY by the WM loss in `wm_session`).
+    ///
+    /// Empirically isolated as the dominant cause of kindle's
+    /// CartPole +24 ceiling: the standard "encoder trained by WM
+    /// only" structure produces features optimized for next-state
+    /// prediction, not for control discrimination. Pure-numpy A2C
+    /// with end-to-end encoder gradient hits +76 on the same env;
+    /// kindle's A2C-mimic without this flag stays at +11. The
+    /// difference is the encoder gradient flow.
+    ///
+    /// When enabled, the policy session takes raw `obs` + `task`
+    /// inputs (instead of `z`) and computes its own latent via a
+    /// dedicated encoder copy (`policy_encoder.*` weights). The
+    /// wm_session encoder continues to exist and train independently
+    /// — its z is still stored in `Transition.latent` for use by
+    /// other modules (credit, etc.) that depend on the WM-shaped
+    /// representation. Discrete-policy non-options non-PPO only;
+    /// other graph variants need their own e2e implementation.
+    pub end_to_end_encoder: bool,
     /// Recompute V on `ripe.latent` at policy-training time rather
     /// than using the `ripe.value` stored when the action was taken.
     /// Default `false` (use stored).
@@ -806,6 +829,7 @@ impl Default for AgentConfig {
             ppo_n_epochs: 1,
             policy_warmup_steps: 0,
             recompute_base_v: false,
+            end_to_end_encoder: false,
             rollout_length: 1,
             planner_horizon: 0,
             planner_samples: 32,
@@ -1663,7 +1687,26 @@ impl Agent {
         let rollout_length = config.rollout_length.max(1);
         let policy_batch = config.batch_size * rollout_length;
         let policy_session = {
-            let g = if is_discrete && config.use_ppo {
+            let g = if is_discrete && config.end_to_end_encoder {
+                assert!(
+                    !config.use_ppo,
+                    "end_to_end_encoder + use_ppo not implemented; pick one"
+                );
+                assert!(
+                    config.num_options <= 1,
+                    "end_to_end_encoder not compatible with L1 options"
+                );
+                policy::build_policy_graph_e2e(
+                    OBS_TOKEN_DIM,
+                    TASK_DIM,
+                    MAX_ACTION_DIM,
+                    config.hidden_dim,
+                    config.latent_dim,
+                    policy_batch,
+                    config.entropy_beta,
+                    config.value_loss_coef,
+                )
+            } else if is_discrete && config.use_ppo {
                 // PPO mode does not support L1 options yet — options are
                 // an orthogonal feature; the PPO graph assumes a flat
                 // policy without per-option bias heads.
@@ -2042,6 +2085,27 @@ impl Agent {
             n
         );
 
+        // E2E mode: policy_session takes raw obs + task as inputs, so
+        // populate obs_token_scratch and task_scratch with the CURRENT-
+        // step observations (the regular observe() path also fills
+        // these but only after this act() returns; without this we'd
+        // be feeding the policy session the previous step's obs).
+        if self.config.end_to_end_encoder {
+            for (i, obs) in observations.iter().enumerate() {
+                let obs_row =
+                    &mut self.obs_token_scratch[i * OBS_TOKEN_DIM..(i + 1) * OBS_TOKEN_DIM];
+                self.lanes[i].adapter.obs_to_token(obs, obs_row);
+            }
+            for (i, lane) in self.lanes.iter().enumerate() {
+                let task_row = &mut self.task_scratch[i * TASK_DIM..(i + 1) * TASK_DIM];
+                if let Some(emb) = self.task_embeddings.get(&lane.adapter.id()) {
+                    task_row.copy_from_slice(emb);
+                } else {
+                    task_row.fill(0.0);
+                }
+            }
+        }
+
         // Stack per-lane previous latents.
         let ld = self.latent_dim;
         let od = self.option_dim;
@@ -2226,11 +2290,21 @@ impl Agent {
                 .set_input("option_onehot", &self.option_onehot_scratch);
         } else {
             // L0-only path — feed z directly (padded).
-            self.policy_z_scratch[..n * ld].copy_from_slice(&z_stack);
-            for v in self.policy_z_scratch[n * ld..].iter_mut() {
-                *v = 0.0;
+            if self.config.end_to_end_encoder {
+                // E2E mode: policy_session takes raw obs + task instead
+                // of z. obs_token_scratch and task_scratch are already
+                // populated above with current-step values.
+                self.policy_session
+                    .set_input("obs", &self.obs_token_scratch);
+                self.policy_session
+                    .set_input("task", &self.task_scratch);
+            } else {
+                self.policy_z_scratch[..n * ld].copy_from_slice(&z_stack);
+                for v in self.policy_z_scratch[n * ld..].iter_mut() {
+                    *v = 0.0;
+                }
+                self.policy_session.set_input("z", &self.policy_z_scratch);
             }
-            self.policy_session.set_input("z", &self.policy_z_scratch);
         }
 
         self.action_token_scratch.fill(0.0);
@@ -3875,6 +3949,24 @@ impl Agent {
 
             old_z_stack[i * ld..(i + 1) * ld].copy_from_slice(&ripe.latent);
 
+            // E2E mode: also fill obs + task scratch from ripe.
+            if self.config.end_to_end_encoder {
+                let obs_dst =
+                    &mut self.obs_token_scratch[i * OBS_TOKEN_DIM..(i + 1) * OBS_TOKEN_DIM];
+                // Pad short observations with zeros, copy what we have.
+                let copy_n = ripe.observation.len().min(OBS_TOKEN_DIM);
+                obs_dst[..copy_n].copy_from_slice(&ripe.observation[..copy_n]);
+                for v in obs_dst[copy_n..].iter_mut() {
+                    *v = 0.0;
+                }
+                let task_dst = &mut self.task_scratch[i * TASK_DIM..(i + 1) * TASK_DIM];
+                if let Some(emb) = self.task_embeddings.get(&ripe.env_id) {
+                    task_dst.copy_from_slice(emb);
+                } else {
+                    task_dst.fill(0.0);
+                }
+            }
+
             if use_ppo {
                 // PPO feeds: plain one-hot `action` (sum=1), scalar
                 // `advantage`, scalar `old_prob_taken`. The clip and
@@ -3942,7 +4034,14 @@ impl Agent {
             1.0
         };
 
-        self.policy_session.set_input("z", &old_z_stack);
+        if self.config.end_to_end_encoder {
+            self.policy_session
+                .set_input("obs", &self.obs_token_scratch);
+            self.policy_session
+                .set_input("task", &self.task_scratch);
+        } else {
+            self.policy_session.set_input("z", &old_z_stack);
+        }
         if has_options {
             self.policy_session
                 .set_input("option_onehot", &self.option_onehot_scratch);

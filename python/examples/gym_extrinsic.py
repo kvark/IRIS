@@ -130,6 +130,14 @@ def main() -> int:
                         "one policy session.step() per update covers the "
                         "whole rollout at once. Supersedes "
                         "--policy-update-interval when > 1. Try 8-32.")
+    parser.add_argument("--end-to-end-encoder", action="store_true",
+                        help="Use end-to-end encoder + policy + value graph "
+                        "(policy_encoder.* params, separate from wm_session). "
+                        "Encoder receives gradient from both value MSE and "
+                        "policy CE. Required to actually solve CartPole — "
+                        "without this, kindle's encoder is trained only by "
+                        "WM next-state-prediction loss and produces features "
+                        "that aren't policy-discriminative.")
     parser.add_argument("--recompute-base-v", action="store_true",
                         help="Recompute V on ripe.latent at training time "
                         "instead of using stored ripe.value (which was "
@@ -220,6 +228,7 @@ def main() -> int:
         ppo_n_epochs=args.ppo_n_epochs,
         policy_warmup_steps=args.policy_warmup_steps,
         recompute_base_v=args.recompute_base_v,
+        end_to_end_encoder=args.end_to_end_encoder,
         rollout_length=args.rollout_length,
     )
     print("agent ready (MLP encoder)")

@@ -389,6 +389,121 @@ pub fn build_ppo_policy_graph(
 /// action is `0.5·(a − μ)² / σ² + const`. With σ² = 1 this reduces to the
 /// MSE between predicted mean and taken action, up to a constant — the
 /// same advantage-weighted LR trick applies.
+/// End-to-end discrete policy graph: encoder + policy + value all in
+/// one graph, trained on the combined loss. Owns its own copy of the
+/// encoder weights (under `policy_encoder.*` names so they don't
+/// collide with the wm_session encoder).
+///
+/// Inputs:
+/// - `"obs"`: `[batch_size, obs_dim]` — raw observation tokens
+/// - `"task"`: `[batch_size, task_dim]` — task embedding
+/// - `"action"`: `[batch_size, action_dim]` — advantage-weighted one-hot
+///   (same shape as `build_policy_graph`)
+/// - `"value_target"`: `[batch_size, 1]` — TD target
+///
+/// Outputs: `[loss, logits, value]` (same indexing as combined graph).
+///
+/// Why this exists: the standard `build_policy_graph` takes `z` as
+/// an input (the encoder output computed elsewhere by `wm_session`).
+/// That setup means the policy/value loss gradient stops at z and
+/// never reaches the encoder weights. The encoder is then trained
+/// only by WM next-state-prediction loss, which produces features
+/// optimized for prediction, not for control. Empirically this
+/// caps CartPole at +24 (random baseline).
+///
+/// This e2e variant lets the policy/value gradient flow into a
+/// dedicated encoder copy, matching what a standard A2C/PPO
+/// implementation does. The wm_session continues to train its own
+/// independent encoder copy on the WM loss; the two encoders coexist.
+pub fn build_policy_graph_e2e(
+    obs_dim: usize,
+    task_dim: usize,
+    action_dim: usize,
+    hidden_dim: usize,
+    latent_dim: usize,
+    batch_size: usize,
+    entropy_beta: f32,
+    value_loss_coef: f32,
+) -> Graph {
+    let mut g = Graph::new();
+    let obs = g.input("obs", &[batch_size, obs_dim]);
+    let task = g.input("task", &[batch_size, task_dim]);
+    let action = g.input("action", &[batch_size, action_dim]);
+    let value_target = g.input("value_target", &[batch_size, 1]);
+
+    // Dedicated policy-side encoder. Same arch as the WM-side encoder
+    // (so an A/B that swaps weights is meaningful), but separate
+    // parameter names → independent gradient state.
+    let encoder = build_named_encoder(&mut g, obs_dim, task_dim, latent_dim, hidden_dim);
+    let z = encoder_forward(&mut g, &encoder, obs, task);
+
+    let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+    let logits = policy.forward(&mut g, z);
+
+    let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
+    let raw_value = value_head.forward(&mut g, z);
+    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
+
+    let policy_loss = g.cross_entropy_loss(logits, action);
+    let value_loss_raw = g.mse_loss(value, value_target);
+    let value_loss = if (value_loss_coef - 1.0).abs() < 1e-6 {
+        value_loss_raw
+    } else {
+        let coef = g.scalar(value_loss_coef);
+        g.mul(value_loss_raw, coef)
+    };
+    let base_loss = g.add(policy_loss, value_loss);
+
+    let total_loss = if entropy_beta == 0.0 {
+        base_loss
+    } else {
+        let sm = g.softmax(logits);
+        let lsm = g.log_softmax(logits);
+        let p_log_p = g.mul(sm, lsm);
+        let mean_ent = g.mean_all(p_log_p);
+        let beta_node = g.scalar(entropy_beta);
+        let ent_penalty = g.mul(mean_ent, beta_node);
+        g.add(base_loss, ent_penalty)
+    };
+
+    g.set_outputs(vec![total_loss, logits, value]);
+    g
+}
+
+/// Helper: build a named encoder so the policy-side copy doesn't
+/// collide parameter-names with the wm_session encoder. Uses
+/// `policy_encoder.*` prefix.
+fn build_named_encoder(
+    g: &mut Graph,
+    obs_dim: usize,
+    task_dim: usize,
+    latent_dim: usize,
+    hidden_dim: usize,
+) -> EncoderE2E {
+    EncoderE2E {
+        obs_proj: nn::Linear::new(g, "policy_encoder.obs_proj", obs_dim, hidden_dim),
+        task_proj: nn::Linear::no_bias(g, "policy_encoder.task_proj", task_dim, hidden_dim),
+        norm: nn::RmsNorm::new(g, "policy_encoder.norm.weight", hidden_dim, 1e-5),
+        fc2: nn::Linear::no_bias(g, "policy_encoder.fc2", hidden_dim, latent_dim),
+    }
+}
+
+struct EncoderE2E {
+    obs_proj: nn::Linear,
+    task_proj: nn::Linear,
+    norm: nn::RmsNorm,
+    fc2: nn::Linear,
+}
+
+fn encoder_forward(g: &mut Graph, e: &EncoderE2E, obs: NodeId, task: NodeId) -> NodeId {
+    let h_obs = e.obs_proj.forward(g, obs);
+    let h_task = e.task_proj.forward(g, task);
+    let h = g.add(h_obs, h_task);
+    let h = g.relu(h);
+    let h = e.norm.forward(g, h);
+    e.fc2.forward(g, h)
+}
+
 pub fn build_continuous_policy_graph(
     latent_dim: usize,
     action_dim: usize,

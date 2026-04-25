@@ -476,6 +476,7 @@ impl PyBatchAgent {
         ppo_n_epochs = None,
         policy_warmup_steps = None,
         recompute_base_v = None,
+        end_to_end_encoder = None,
         rollout_length = None,
         planner_horizon = None,
         planner_samples = None,
@@ -562,6 +563,7 @@ impl PyBatchAgent {
         ppo_n_epochs: Option<usize>,
         policy_warmup_steps: Option<usize>,
         recompute_base_v: Option<bool>,
+        end_to_end_encoder: Option<bool>,
         rollout_length: Option<usize>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
@@ -845,6 +847,9 @@ impl PyBatchAgent {
         }
         if let Some(v) = recompute_base_v {
             config.recompute_base_v = v;
+        }
+        if let Some(v) = end_to_end_encoder {
+            config.end_to_end_encoder = v;
         }
         if let Some(v) = rollout_length {
             config.rollout_length = v;
