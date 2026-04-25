@@ -457,8 +457,20 @@ pub fn build_policy_graph_e2e(
     let total_loss = if entropy_beta == 0.0 {
         base_loss
     } else {
-        let sm = g.softmax(logits);
-        let lsm = g.log_softmax(logits);
+        // Detach z before the entropy branch (re-running the policy head
+        // on stop_gradient(z)). Without this, the entropy bonus's
+        // gradient (which prefers uniform) flows back through the
+        // encoder, pushing it toward outputting *constant* z (because
+        // constant z trivially gives uniform logits regardless of state
+        // — the degenerate maximum-entropy fixed point). The result is
+        // encoder collapse to z=0, V=0, π=uniform after a few hundred
+        // steps. Detaching z keeps the entropy gradient flowing to the
+        // policy head (still useful — pushes policy toward uniform) but
+        // not to the encoder.
+        let z_det = g.stop_gradient(z);
+        let logits_for_ent = policy.forward(&mut g, z_det);
+        let sm = g.softmax(logits_for_ent);
+        let lsm = g.log_softmax(logits_for_ent);
         let p_log_p = g.mul(sm, lsm);
         let mean_ent = g.mean_all(p_log_p);
         let beta_node = g.scalar(entropy_beta);
