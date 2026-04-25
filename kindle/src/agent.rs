@@ -4161,6 +4161,18 @@ impl Agent {
         self.lanes.iter().map(|l| l.last_r_hat).collect()
     }
 
+    /// Per-lane value baseline V(s_t) cached from the most recent act().
+    /// Used for diagnosing whether the value head is discriminating
+    /// across states or just predicting the mean return everywhere.
+    pub fn values(&self) -> Vec<f32> {
+        self.lanes.iter().map(|l| l.last_value).collect()
+    }
+
+    /// Per-lane policy entropy from the most recent act().
+    pub fn entropies(&self) -> Vec<f32> {
+        self.lanes.iter().map(|l| l.last_entropy).collect()
+    }
+
     /// Current M7 confidence ∈ [0, 1]. Zero until warmup is met;
     /// ramps linearly to 1 over `approach_confidence_saturation`
     /// episodes. 1 once warmup is met if saturation = 0. Always 0

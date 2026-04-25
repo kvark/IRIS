@@ -256,12 +256,20 @@ def main() -> int:
             avg_ret = sum(all_recent) / max(1, len(all_recent))
             elapsed = time.time() - t0
             sps = step * args.lanes / max(1e-3, elapsed)
+            # Per-lane V and entropy distribution: V std across lanes
+            # tells us whether the value head is discriminating between
+            # different states (high std) or predicting the mean
+            # everywhere (std ≈ 0). Same for entropy.
+            vs = np.array(agent.values(), dtype=np.float32)
+            ents = np.array(agent.entropies(), dtype=np.float32)
             print(
                 f"step={step:>6} eps={ep_count:>3} avg_ret={avg_ret:+7.1f} "
                 f"| wm={float(d['loss_world_model']):.3f} "
                 f"pi={float(d['loss_policy']):+6.2f} "
                 f"ent={float(d['policy_entropy']):.2f} "
                 f"r={float(d['reward_mean']):+5.2f} "
+                f"| V[{vs.min():+5.2f}, {vs.max():+5.2f}] σV={vs.std():.2f} "
+                f"σE={ents.std():.2f} "
                 f"| {sps:5.0f} env-steps/s"
             )
 

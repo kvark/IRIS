@@ -1016,6 +1016,19 @@ impl PyBatchAgent {
         self.agent.r_hats()
     }
 
+    /// Per-lane value baseline V(s_t) from the most recent act().
+    /// Used for diagnosing whether the value head is discriminating
+    /// across states or just predicting the mean return everywhere
+    /// (degenerate case → advantage ≈ 0 → policy can't learn).
+    fn values(&self) -> Vec<f32> {
+        self.agent.values()
+    }
+
+    /// Per-lane policy entropy from the most recent act().
+    fn entropies(&self) -> Vec<f32> {
+        self.agent.entropies()
+    }
+
     /// Visual-encoder input setter for `encoder_kind='cnn'` agents.
     /// Accepts a 1-D sequence of length `batch_size · channels · height · width`
     /// laid out as flat NCHW. Must be called before each
