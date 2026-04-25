@@ -413,6 +413,7 @@ impl PyBatchAgent {
         entropy_floor = None,
         advantage_clamp = None,
         policy_loss_watchdog_threshold = None,
+        replay_ratio = None,
         label_smoothing = None,
         num_options = None,
         option_horizon = None,
@@ -497,6 +498,7 @@ impl PyBatchAgent {
         entropy_floor: Option<f32>,
         advantage_clamp: Option<f32>,
         policy_loss_watchdog_threshold: Option<f32>,
+        replay_ratio: Option<f32>,
         label_smoothing: Option<f32>,
         num_options: Option<usize>,
         option_horizon: Option<usize>,
@@ -635,6 +637,9 @@ impl PyBatchAgent {
         }
         if let Some(wd) = policy_loss_watchdog_threshold {
             config.policy_loss_watchdog_threshold = wd;
+        }
+        if let Some(rr) = replay_ratio {
+            config.replay_ratio = rr;
         }
         if let Some(eb) = entropy_beta {
             config.entropy_beta = eb;

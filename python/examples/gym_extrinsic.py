@@ -56,6 +56,12 @@ def main() -> int:
     parser.add_argument("--reward-novelty", type=float, default=0.1)
     parser.add_argument("--reward-order", type=float, default=0.1)
     parser.add_argument("--entropy-beta", type=float, default=0.01)
+    parser.add_argument("--replay-ratio", type=float, default=0.2,
+                        help="Probability per env-step that a replay WM "
+                        "step fires (samples a random transition from buffer "
+                        "and runs WM forward+backward at half LR). Default "
+                        "0.2 in core. Set to 0 to disable replay and check "
+                        "whether it's destabilizing the encoder.")
     parser.add_argument("--watchdog", type=float, default=1000.0,
                         help="policy_loss_watchdog_threshold. When the "
                         "combined policy+value loss magnitude exceeds this, "
@@ -190,6 +196,7 @@ def main() -> int:
         entropy_beta=args.entropy_beta,
         entropy_floor=args.entropy_floor,
         policy_loss_watchdog_threshold=args.watchdog,
+        replay_ratio=args.replay_ratio,
         reward_homeostatic=args.reward_homeostatic,
         reward_surprise=args.reward_surprise,
         reward_novelty=args.reward_novelty,
