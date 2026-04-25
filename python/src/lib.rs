@@ -479,6 +479,7 @@ impl PyBatchAgent {
         end_to_end_encoder = None,
         rollout_length = None,
         value_clip_scale = None,
+        bootstrap_value_clamp = None,
         planner_horizon = None,
         planner_samples = None,
         planner_refresh_interval = None,
@@ -567,6 +568,7 @@ impl PyBatchAgent {
         end_to_end_encoder: Option<bool>,
         rollout_length: Option<usize>,
         value_clip_scale: Option<f32>,
+        bootstrap_value_clamp: Option<f32>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
         planner_refresh_interval: Option<usize>,
@@ -858,6 +860,9 @@ impl PyBatchAgent {
         }
         if let Some(v) = value_clip_scale {
             config.value_clip_scale = v;
+        }
+        if let Some(v) = bootstrap_value_clamp {
+            config.bootstrap_value_clamp = v;
         }
         if let Some(v) = planner_horizon {
             config.planner_horizon = v;

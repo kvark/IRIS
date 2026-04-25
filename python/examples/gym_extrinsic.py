@@ -105,6 +105,15 @@ def main() -> int:
                         "[-scale, +scale] via scaled_tanh). Default 200 "
                         "fits CartPole/Acrobot returns. For Pendulum "
                         "(returns -1500..0) bump to 2000.")
+    parser.add_argument("--bootstrap-value-clamp", type=float, default=100.0,
+                        help="Symmetric clamp on V(s_{t+n}) inside n-step "
+                        "bootstrap and on V used as GAE baseline. Default "
+                        "100 — kindle's pre-config value. Lower than "
+                        "--value-clip-scale because stale stored V values "
+                        "lag the current head. Bump for envs whose returns "
+                        "exceed ±100, but expect more violent post-solve "
+                        "crashes (CartPole regresses peak +329 → +64 if "
+                        "raised to 200 unilaterally).")
     parser.add_argument("--policy-update-interval", type=int, default=1,
                         help="Update policy only every N env-steps, then do "
                         "N gradient steps on the accumulated rollout "
@@ -236,6 +245,7 @@ def main() -> int:
         end_to_end_encoder=args.end_to_end_encoder,
         rollout_length=args.rollout_length,
         value_clip_scale=args.value_clip_scale,
+        bootstrap_value_clamp=args.bootstrap_value_clamp,
     )
     print("agent ready (MLP encoder)")
 

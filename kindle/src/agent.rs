@@ -570,6 +570,18 @@ pub struct AgentConfig {
     /// the user's responsibility — the soft clamp is just a safety net
     /// against runaway value-MSE gradients destabilizing the encoder.
     pub value_clip_scale: f32,
+    /// Symmetric clamp applied to V(s_{t+n}) inside the n-step bootstrap
+    /// (`R_n + γ^n·clamp(V_next)`) and to V used as the GAE baseline.
+    /// Independent of `value_clip_scale` — this is a *training-stability*
+    /// clamp on stale stored V values, not the V-head's output range.
+    /// Default 100.0 (kindle's pre-config-knob hardcoded value). Lower
+    /// than `value_clip_scale` because stored V values from earlier
+    /// updates can lag the current V-head significantly. For envs whose
+    /// returns exceed ±100 (Pendulum), bump along with `value_clip_scale`
+    /// — but expect post-solve crashes to grow more violent on dense-
+    /// reward envs (CartPole regresses from peak +329 to peak +64 if
+    /// you raise this to 200 unilaterally).
+    pub bootstrap_value_clamp: f32,
     /// Update the policy only every N env-steps, then do N
     /// gradient steps in a row on the accumulated rollout.
     /// Default `1` = per-env-step update (the existing behavior).
@@ -830,6 +842,7 @@ impl Default for AgentConfig {
             gae_lambda: 0.0,
             value_loss_coef: 1.0,
             value_clip_scale: 200.0,
+            bootstrap_value_clamp: 100.0,
             policy_update_interval: 1,
             advantage_normalize: false,
             use_ppo: false,
@@ -3892,7 +3905,7 @@ impl Agent {
                 n_step,
                 gamma,
                 value_target_bootstrap,
-                self.config.value_clip_scale,
+                self.config.bootstrap_value_clamp,
             );
             let v_for_baseline = match fresh_v.as_ref() {
                 Some(fv) => fv[i],
@@ -3905,7 +3918,7 @@ impl Agent {
                     n_step,
                     gamma,
                     self.config.gae_lambda,
-                    self.config.value_clip_scale,
+                    self.config.bootstrap_value_clamp,
                 )
             } else {
                 ret - v_for_baseline
@@ -4188,7 +4201,7 @@ impl Agent {
                     n_step,
                     gamma,
                     value_target_bootstrap,
-                    self.config.value_clip_scale,
+                    self.config.bootstrap_value_clamp,
                 );
                 let adv_raw = if use_gae {
                     compute_gae_advantage(
@@ -4197,7 +4210,7 @@ impl Agent {
                         n_step,
                         gamma,
                         self.config.gae_lambda,
-                        self.config.value_clip_scale,
+                        self.config.bootstrap_value_clamp,
                     )
                 } else {
                     ret - ripe.value
