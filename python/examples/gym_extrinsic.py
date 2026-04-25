@@ -56,6 +56,13 @@ def main() -> int:
     parser.add_argument("--reward-novelty", type=float, default=0.1)
     parser.add_argument("--reward-order", type=float, default=0.1)
     parser.add_argument("--entropy-beta", type=float, default=0.01)
+    parser.add_argument("--watchdog", type=float, default=1000.0,
+                        help="policy_loss_watchdog_threshold. When the "
+                        "combined policy+value loss magnitude exceeds this, "
+                        "kindle silently re-inits all policy params. Default "
+                        "1000 in core, but value-MSE on dense-reward envs can "
+                        "approach this — set to 1e9 to disable and check "
+                        "whether the watchdog is masking an actual signal.")
     parser.add_argument("--entropy-floor", type=float, default=0.1,
                         help="Below this entropy, kindle injects a "
                         "synthetic positive advantage with uniform-smoothed "
@@ -123,9 +130,35 @@ def main() -> int:
                         "to reward scale before policy starts committing. "
                         "Try 2000-10000 on dense-reward envs.")
     parser.add_argument("--async-envs", action="store_true")
+    parser.add_argument("--discretize-buckets", type=int, default=5,
+                        help="For continuous-action envs (Pendulum, etc.), "
+                        "discretize the action space into N evenly-spaced "
+                        "buckets so PyBatchAgent's discrete adapter can drive "
+                        "them. Pendulum needs ≥5 to be solvable.")
     args = parser.parse_args()
 
-    thunks = [lambda i=i: gym.make(args.env) for i in range(args.lanes)]
+    # PyBatchAgent forces discrete actions. For continuous envs
+    # (Pendulum, etc.), wrap them with a Discretize wrapper that
+    # buckets the action space into N evenly-spaced points.
+    class Discretize(gym.ActionWrapper):
+        def __init__(self, env, n_buckets):
+            super().__init__(env)
+            self.n_buckets = n_buckets
+            self.action_space = gym.spaces.Discrete(n_buckets)
+            low = env.action_space.low
+            high = env.action_space.high
+            self._lookup = np.linspace(low, high, n_buckets)
+
+        def action(self, act):
+            return self._lookup[int(act)].astype(np.float32)
+
+    def make_env():
+        e = gym.make(args.env)
+        if not isinstance(e.action_space, gym.spaces.Discrete):
+            e = Discretize(e, args.discretize_buckets)
+        return e
+
+    thunks = [lambda i=i: make_env() for i in range(args.lanes)]
     if args.async_envs:
         envs = gym.vector.AsyncVectorEnv(thunks, shared_memory=True)
     else:
@@ -156,6 +189,7 @@ def main() -> int:
         advantage_clamp=args.advantage_clamp,
         entropy_beta=args.entropy_beta,
         entropy_floor=args.entropy_floor,
+        policy_loss_watchdog_threshold=args.watchdog,
         reward_homeostatic=args.reward_homeostatic,
         reward_surprise=args.reward_surprise,
         reward_novelty=args.reward_novelty,
