@@ -619,6 +619,32 @@ pub struct AgentConfig {
     /// Only has effect when `use_ppo = true`. Default 1 (equivalent
     /// to the no-clip baseline for single-epoch runs).
     pub ppo_n_epochs: usize,
+    /// Run the value head in its own meganeura session with its own
+    /// Adam optimizer state and its own learning rate (`lr_value`).
+    /// Default `false` (combined session — pre-decoupling behavior).
+    ///
+    /// Why this matters and `value_loss_coef` doesn't: under Adam,
+    /// the per-parameter second-moment normalization roughly cancels
+    /// the loss-magnitude scaling that `value_loss_coef` imposes, so
+    /// value and policy params end up updating at similar effective
+    /// rates regardless of the coefficient. With separate Adam
+    /// instances and separate LRs, the value head can actually learn
+    /// faster than the policy head — which is the standard A2C/PPO
+    /// recipe and what gives V time to fit the reward scale before
+    /// the policy commits to random-majority actions on dense-reward
+    /// envs.
+    ///
+    /// When enabled, the policy graph is built with a value-less
+    /// variant (`build_policy_only_graph` / `build_ppo_policy_only_graph`)
+    /// and a separate value session uses `build_value_only_graph`.
+    /// Outputs read back from the policy session are `[loss, logits]`
+    /// (no value at index 2); value comes from the value session.
+    pub decoupled_value: bool,
+    /// Learning rate for the value-only session when
+    /// `decoupled_value = true`. When ≤ 0 (default), falls back to
+    /// `lr_policy`. Standard A2C uses `lr_value > lr_policy` (often
+    /// 5–10×) to let V lead.
+    pub lr_value: f32,
     /// Zero all advantages (and therefore the policy-gradient
     /// signal) for the first `policy_warmup_steps` env-steps.
     /// The value head still trains — only the policy-gradient
@@ -785,6 +811,8 @@ impl Default for AgentConfig {
             use_ppo: false,
             ppo_clip_eps: 0.2,
             ppo_n_epochs: 1,
+            decoupled_value: false,
+            lr_value: 0.0,
             policy_warmup_steps: 0,
             rollout_length: 1,
             planner_horizon: 0,
@@ -1143,6 +1171,10 @@ pub struct Agent {
     /// means). For discrete envs, the adapter softmax+samples over the
     /// first `n` head dims. This gives one universal policy graph.
     policy_session: Session,
+    /// Value-only session (separate Adam state, separate LR), built
+    /// when `AgentConfig::decoupled_value` is on. `None` otherwise —
+    /// in the combined path the policy session owns the value head.
+    value_session: Option<Session>,
     /// L1 option-policy session. `None` when `num_options <= 1` (L0-only).
     option_session: Option<Session>,
     /// L1 credit-assigner session. `None` when L1 is off or when
@@ -1643,10 +1675,21 @@ impl Agent {
         let rollout_length = config.rollout_length.max(1);
         let policy_batch = config.batch_size * rollout_length;
         let policy_session = {
-            let g = if is_discrete && config.use_ppo {
-                // PPO mode does not support L1 options yet — options are
-                // an orthogonal feature; the PPO graph assumes a flat
-                // policy without per-option bias heads.
+            let g = if is_discrete && config.use_ppo && config.decoupled_value {
+                assert!(
+                    config.num_options <= 1,
+                    "use_ppo is not compatible with num_options > 1 (L1 options)"
+                );
+                policy::build_ppo_policy_only_graph(
+                    config.latent_dim,
+                    MAX_ACTION_DIM,
+                    config.hidden_dim,
+                    policy_batch,
+                    config.ppo_clip_eps,
+                    config.entropy_beta,
+                )
+            } else if is_discrete && config.use_ppo {
+                // PPO mode does not support L1 options yet.
                 assert!(
                     config.num_options <= 1,
                     "use_ppo is not compatible with num_options > 1 (L1 options)"
@@ -1660,6 +1703,16 @@ impl Agent {
                     config.value_loss_coef,
                     config.entropy_beta,
                 )
+            } else if is_discrete && config.decoupled_value {
+                policy::build_policy_only_graph(
+                    config.latent_dim,
+                    MAX_ACTION_DIM,
+                    config.hidden_dim,
+                    policy_batch,
+                    config.entropy_beta,
+                    config.num_options,
+                    config.per_option_heads,
+                )
             } else if is_discrete {
                 policy::build_policy_graph(
                     config.latent_dim,
@@ -1672,6 +1725,10 @@ impl Agent {
                     config.value_loss_coef,
                 )
             } else {
+                assert!(
+                    !config.decoupled_value,
+                    "decoupled_value not yet supported on the continuous-action policy graph"
+                );
                 policy::build_continuous_policy_graph(
                     config.latent_dim,
                     MAX_ACTION_DIM,
@@ -1685,6 +1742,23 @@ impl Agent {
             let mut s = build_session(&g, config.opt_level);
             init_parameters(&mut s);
             s
+        };
+
+        // Optional: separate value session with its own Adam state.
+        // When enabled, the policy session above is built without
+        // the value head, and value training/inference flows through
+        // this dedicated session at its own LR (`lr_value`).
+        let value_session = if config.decoupled_value {
+            let g = policy::build_value_only_graph(
+                config.latent_dim,
+                config.hidden_dim,
+                policy_batch,
+            );
+            let mut s = build_session(&g, config.opt_level);
+            init_parameters(&mut s);
+            Some(s)
+        } else {
+            None
         };
 
         // L1 credit-assigner session — only built when L1 is active
@@ -1889,6 +1963,7 @@ impl Agent {
             wm_session,
             credit_session,
             policy_session,
+            value_session,
             option_session,
             option_credit_session,
             latent_dim: config.latent_dim,
@@ -2216,19 +2291,52 @@ impl Agent {
         self.action_token_scratch.fill(0.0);
         self.policy_session
             .set_input("action", &self.action_token_scratch);
-        self.value_target_scratch.fill(0.0);
-        self.policy_session
-            .set_input("value_target", &self.value_target_scratch);
+        // PPO mode requires the `advantage` and `old_prob_taken` graph
+        // inputs to be set before any step(); during act() they're
+        // unused (LR=0 means no gradient flows), but the session still
+        // needs validly-sized buffers. The zero-fill of the scratch
+        // buffers in the constructor is the source of truth here;
+        // they remain zero until policy_step.
+        if self.config.use_ppo {
+            self.policy_session
+                .set_input("advantage", &self.ppo_advantage_scratch);
+            self.policy_session
+                .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
+        }
+        let combined = self.value_session.is_none();
+        if combined {
+            self.value_target_scratch.fill(0.0);
+            self.policy_session
+                .set_input("value_target", &self.value_target_scratch);
+        }
         self.policy_session.set_learning_rate(0.0);
         self.policy_session.step();
         self.policy_session.wait();
 
-        // Read stacked outputs: head is [N, MAX_ACTION_DIM], value is [N, 1].
+        // Read stacked outputs: head is [N, MAX_ACTION_DIM]; in the
+        // combined-session graph value is at output index 2. Under
+        // `decoupled_value`, the policy graph has no value head — we
+        // forward through `value_session` for the value read instead.
         let mut head_stack = vec![0.0f32; n * MAX_ACTION_DIM];
         self.policy_session.read_output_by_index(1, &mut head_stack);
         let mut value_stack = vec![0.0f32; n];
-        self.policy_session
-            .read_output_by_index(2, &mut value_stack);
+        if combined {
+            self.policy_session
+                .read_output_by_index(2, &mut value_stack);
+        } else if let Some(ref mut vs) = self.value_session {
+            // Independent value forward at LR=0. Same z-padding rule
+            // as the policy session.
+            vs.set_input("z", &self.policy_z_scratch);
+            self.value_target_scratch.fill(0.0);
+            vs.set_input("value_target", &self.value_target_scratch);
+            vs.set_learning_rate(0.0);
+            vs.step();
+            vs.wait();
+            // Output index 1 in build_value_only_graph is `value`.
+            let mut full = vec![0.0f32; self.policy_z_scratch.len() / ld]; // policy_batch
+            vs.read_output_by_index(1, &mut full);
+            value_stack.copy_from_slice(&full[..n]);
+        }
         // Stability guard: sanitize any NaN and clamp extreme logits so
         // softmax(head) stays finite. Combined with the graph-internal
         // soft-tanh-clamp (see `policy.rs::scaled_tanh`) this forms a
@@ -3585,8 +3693,11 @@ impl Agent {
         }
         self.policy_session
             .set_input("action", &self.policy_action_scratch);
-        self.policy_session
-            .set_input("value_target", &self.value_target_scratch);
+        let combined = self.value_session.is_none();
+        if combined {
+            self.policy_session
+                .set_input("value_target", &self.value_target_scratch);
+        }
         self.policy_session
             .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
         self.policy_session.step();
@@ -3612,6 +3723,29 @@ impl Agent {
             self.last_policy_loss = loss;
             let rate = self.config.policy_lr_adaptive_ema.clamp(0.001, 1.0);
             self.policy_loss_ema = (1.0 - rate) * self.policy_loss_ema + rate * loss.abs();
+        }
+
+        // Decoupled value step on the same z + value_target.
+        if let Some(ref mut vs) = self.value_session {
+            vs.set_input("z", z_stack);
+            vs.set_input("value_target", &self.value_target_scratch);
+            let lr = if self.config.lr_value > 0.0 {
+                self.config.lr_value
+            } else {
+                self.config.lr_policy
+            };
+            vs.set_learning_rate(lr * self.batch_lr_scale);
+            vs.step();
+            vs.wait();
+            let vloss = vs.read_loss();
+            if !vloss.is_finite() || vloss.abs() > self.config.policy_loss_watchdog_threshold {
+                init_parameters(vs);
+                log::warn!(
+                    "value loss {:.1} unstable at step {} (1-step decoupled), re-initialized value params",
+                    vloss,
+                    self.step_count
+                );
+            }
         }
     }
 
@@ -3859,6 +3993,7 @@ impl Agent {
             1.0
         };
 
+        let combined = self.value_session.is_none();
         self.policy_session.set_input("z", &old_z_stack);
         if has_options {
             self.policy_session
@@ -3866,8 +4001,10 @@ impl Agent {
         }
         self.policy_session
             .set_input("action", &self.policy_action_scratch);
-        self.policy_session
-            .set_input("value_target", &self.value_target_scratch);
+        if combined {
+            self.policy_session
+                .set_input("value_target", &self.value_target_scratch);
+        }
         if use_ppo {
             self.policy_session
                 .set_input("advantage", &self.ppo_advantage_scratch);
@@ -3893,6 +4030,32 @@ impl Agent {
             self.last_policy_loss = loss;
             let rate = self.config.policy_lr_adaptive_ema.clamp(0.001, 1.0);
             self.policy_loss_ema = (1.0 - rate) * self.policy_loss_ema + rate * loss.abs();
+        }
+
+        // Decoupled value step. Same z + value_target inputs the
+        // combined session would have used, but with its own LR
+        // (`lr_value`, falling back to `lr_policy` if unset) and its
+        // own Adam moments — which is the entire point of the split.
+        if let Some(ref mut vs) = self.value_session {
+            vs.set_input("z", &old_z_stack);
+            vs.set_input("value_target", &self.value_target_scratch);
+            let lr = if self.config.lr_value > 0.0 {
+                self.config.lr_value
+            } else {
+                self.config.lr_policy
+            };
+            vs.set_learning_rate(lr * self.batch_lr_scale);
+            vs.step();
+            vs.wait();
+            let vloss = vs.read_loss();
+            if !vloss.is_finite() || vloss.abs() > self.config.policy_loss_watchdog_threshold {
+                init_parameters(vs);
+                log::warn!(
+                    "value loss {:.1} unstable at step {} (decoupled), re-initialized value params",
+                    vloss,
+                    self.step_count
+                );
+            }
         }
     }
 
@@ -4110,6 +4273,7 @@ impl Agent {
             1.0
         };
 
+        let combined = self.value_session.is_none();
         self.policy_session.set_input("z", &self.policy_z_scratch);
         if has_options {
             self.policy_session
@@ -4117,8 +4281,10 @@ impl Agent {
         }
         self.policy_session
             .set_input("action", &self.policy_action_scratch);
-        self.policy_session
-            .set_input("value_target", &self.value_target_scratch);
+        if combined {
+            self.policy_session
+                .set_input("value_target", &self.value_target_scratch);
+        }
         if use_ppo {
             self.policy_session
                 .set_input("advantage", &self.ppo_advantage_scratch);
@@ -4147,6 +4313,29 @@ impl Agent {
             self.last_policy_loss = loss;
             let rate = self.config.policy_lr_adaptive_ema.clamp(0.001, 1.0);
             self.policy_loss_ema = (1.0 - rate) * self.policy_loss_ema + rate * loss.abs();
+        }
+
+        // Decoupled value step on the same big batch.
+        if let Some(ref mut vs) = self.value_session {
+            vs.set_input("z", &self.policy_z_scratch);
+            vs.set_input("value_target", &self.value_target_scratch);
+            let lr = if self.config.lr_value > 0.0 {
+                self.config.lr_value
+            } else {
+                self.config.lr_policy
+            };
+            vs.set_learning_rate(lr * self.batch_lr_scale);
+            vs.step();
+            vs.wait();
+            let vloss = vs.read_loss();
+            if !vloss.is_finite() || vloss.abs() > self.config.policy_loss_watchdog_threshold {
+                init_parameters(vs);
+                log::warn!(
+                    "value loss {:.1} unstable at step {} (rollout decoupled), re-initialized value params",
+                    vloss,
+                    self.step_count
+                );
+            }
         }
     }
 

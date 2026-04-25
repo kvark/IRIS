@@ -110,6 +110,16 @@ def main() -> int:
                         "so only the value head trains. Lets V catch up "
                         "to reward scale before policy starts committing. "
                         "Try 2000-10000 on dense-reward envs.")
+    parser.add_argument("--decoupled-value", action="store_true",
+                        help="Run the value head in its own session with "
+                        "its own Adam state. Pair with --lr-value to set "
+                        "an independent value LR (under shared session "
+                        "value_loss_coef can't actually do this — Adam's "
+                        "second-moment normalization cancels it).")
+    parser.add_argument("--lr-value", type=float, default=0.0,
+                        help="Value session LR when --decoupled-value is "
+                        "on. 0 = use --lr. Standard A2C uses 5-10× the "
+                        "policy LR.")
     parser.add_argument("--async-envs", action="store_true")
     args = parser.parse_args()
 
@@ -158,6 +168,8 @@ def main() -> int:
         use_ppo=args.use_ppo,
         ppo_clip_eps=args.ppo_clip_eps,
         ppo_n_epochs=args.ppo_n_epochs,
+        decoupled_value=args.decoupled_value,
+        lr_value=args.lr_value,
         policy_warmup_steps=args.policy_warmup_steps,
         rollout_length=args.rollout_length,
     )
