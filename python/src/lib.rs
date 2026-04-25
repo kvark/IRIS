@@ -473,6 +473,8 @@ impl PyBatchAgent {
         use_ppo = None,
         ppo_clip_eps = None,
         ppo_n_epochs = None,
+        decoupled_value = None,
+        lr_value = None,
         policy_warmup_steps = None,
         rollout_length = None,
         planner_horizon = None,
@@ -557,6 +559,8 @@ impl PyBatchAgent {
         use_ppo: Option<bool>,
         ppo_clip_eps: Option<f32>,
         ppo_n_epochs: Option<usize>,
+        decoupled_value: Option<bool>,
+        lr_value: Option<f32>,
         policy_warmup_steps: Option<usize>,
         rollout_length: Option<usize>,
         planner_horizon: Option<usize>,
@@ -832,6 +836,12 @@ impl PyBatchAgent {
         }
         if let Some(v) = ppo_n_epochs {
             config.ppo_n_epochs = v;
+        }
+        if let Some(v) = decoupled_value {
+            config.decoupled_value = v;
+        }
+        if let Some(v) = lr_value {
+            config.lr_value = v;
         }
         if let Some(v) = policy_warmup_steps {
             config.policy_warmup_steps = v;

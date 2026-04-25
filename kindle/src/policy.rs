@@ -105,6 +105,171 @@ impl ValueHead {
     }
 }
 
+/// Value-only training graph for the decoupled session split.
+///
+/// Inputs:
+/// - `"z"`: `[batch_size, latent_dim]` — latent (input, detached)
+/// - `"value_target"`: `[batch_size, 1]` — TD target
+///
+/// Outputs: `[loss, value]`. Loss is mean MSE over the batch
+/// between `scaled_tanh(raw_value)` and the TD target.
+///
+/// Used together with `build_policy_only_graph` (or its PPO variant)
+/// when `AgentConfig::decoupled_value` is on. Each runs in its own
+/// meganeura session with its own Adam state and its own LR
+/// (`lr_value` vs `lr_policy`). This is what makes value catch up
+/// to the reward scale faster than policy moves — the standard A2C/
+/// PPO setup that the shared-session combined-loss path can't
+/// emulate (Adam's per-parameter second-moment normalization mostly
+/// cancels `value_loss_coef`).
+pub fn build_value_only_graph(
+    latent_dim: usize,
+    hidden_dim: usize,
+    batch_size: usize,
+) -> Graph {
+    let mut g = Graph::new();
+    let z = g.input("z", &[batch_size, latent_dim]);
+    let value_target = g.input("value_target", &[batch_size, 1]);
+    let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
+    let raw_value = value_head.forward(&mut g, z);
+    let value = scaled_tanh(&mut g, raw_value, 200.0, batch_size, 1);
+    let loss = g.mse_loss(value, value_target);
+    g.set_outputs(vec![loss, value]);
+    g
+}
+
+/// Policy-only discrete graph (no value head). Mirror of
+/// `build_policy_graph` minus the value branch. Outputs `[loss, logits]`.
+///
+/// Same `entropy_beta` semantics as the combined graph.
+pub fn build_policy_only_graph(
+    latent_dim: usize,
+    action_dim: usize,
+    hidden_dim: usize,
+    batch_size: usize,
+    entropy_beta: f32,
+    num_options: usize,
+    per_option_heads: bool,
+) -> Graph {
+    let mut g = Graph::new();
+    let z = g.input("z", &[batch_size, latent_dim]);
+    let action = g.input("action", &[batch_size, action_dim]);
+
+    let raw_logits = if num_options > 1 && per_option_heads {
+        let option_onehot = g.input("option_onehot", &[batch_size, num_options]);
+        let fc1 = nn::Linear::new(&mut g, "policy.fc1", latent_dim, hidden_dim);
+        let h = fc1.forward(&mut g, z);
+        let h = g.relu(h);
+        per_option_fc2(
+            &mut g,
+            h,
+            option_onehot,
+            num_options,
+            hidden_dim,
+            action_dim,
+        )
+    } else if num_options > 1 {
+        let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+        let trunk_logits = policy.forward(&mut g, z);
+        let option_onehot = g.input("option_onehot", &[batch_size, num_options]);
+        let option_bias =
+            nn::Linear::no_bias(&mut g, "policy.option_bias", num_options, action_dim);
+        let bias_out = option_bias.forward(&mut g, option_onehot);
+        g.add(trunk_logits, bias_out)
+    } else {
+        let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+        policy.forward(&mut g, z)
+    };
+    let logits = raw_logits;
+
+    let policy_loss = g.cross_entropy_loss(logits, action);
+    let total_loss = if entropy_beta == 0.0 {
+        policy_loss
+    } else {
+        let sm = g.softmax(logits);
+        let lsm = g.log_softmax(logits);
+        let p_log_p = g.mul(sm, lsm);
+        let mean_ent = g.mean_all(p_log_p);
+        let beta_node = g.scalar(entropy_beta);
+        let ent_penalty = g.mul(mean_ent, beta_node);
+        g.add(policy_loss, ent_penalty)
+    };
+    g.set_outputs(vec![total_loss, logits]);
+    g
+}
+
+/// Policy-only PPO graph (no value head). Mirror of
+/// `build_ppo_policy_graph` minus the value branch.
+pub fn build_ppo_policy_only_graph(
+    latent_dim: usize,
+    action_dim: usize,
+    hidden_dim: usize,
+    batch_size: usize,
+    clip_eps: f32,
+    entropy_beta: f32,
+) -> Graph {
+    let mut g = Graph::new();
+    let z = g.input("z", &[batch_size, latent_dim]);
+    let action = g.input("action", &[batch_size, action_dim]);
+    let advantage = g.input("advantage", &[batch_size, 1]);
+    let old_prob_taken = g.input("old_prob_taken", &[batch_size, 1]);
+
+    let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+    let logits = policy.forward(&mut g, z);
+
+    let sm_new = g.softmax(logits);
+    let p_per_class = g.mul(sm_new, action);
+    let ones_k1 = g.constant(vec![1.0; action_dim], &[action_dim, 1]);
+    let new_prob_taken = g.matmul(p_per_class, ones_k1);
+
+    let ratio = g.div(new_prob_taken, old_prob_taken);
+
+    let one_plus_eps = g.constant(vec![1.0 + clip_eps; batch_size], &[batch_size, 1]);
+    let one_minus_eps = g.constant(vec![1.0 - clip_eps; batch_size], &[batch_size, 1]);
+    let ones_bx1 = g.constant(vec![1.0; batch_size], &[batch_size, 1]);
+
+    let gate_over = g.greater(ratio, one_plus_eps);
+    let neg_gate_over = g.neg(gate_over);
+    let inv_gate_over = g.add(ones_bx1, neg_gate_over);
+    let term1 = g.mul(ratio, inv_gate_over);
+    let term2 = g.mul(one_plus_eps, gate_over);
+    let ratio_hi = g.add(term1, term2);
+
+    let gate_under = g.greater(one_minus_eps, ratio_hi);
+    let neg_gate_under = g.neg(gate_under);
+    let inv_gate_under = g.add(ones_bx1, neg_gate_under);
+    let cterm1 = g.mul(ratio_hi, inv_gate_under);
+    let cterm2 = g.mul(one_minus_eps, gate_under);
+    let ratio_clip = g.add(cterm1, cterm2);
+
+    let surr1 = g.mul(ratio, advantage);
+    let surr2 = g.mul(ratio_clip, advantage);
+
+    let gate_min = g.greater(surr1, surr2);
+    let neg_gate_min = g.neg(gate_min);
+    let inv_gate_min = g.add(ones_bx1, neg_gate_min);
+    let smin1 = g.mul(surr1, inv_gate_min);
+    let smin2 = g.mul(surr2, gate_min);
+    let surr_min = g.add(smin1, smin2);
+
+    let neg_surr_min = g.neg(surr_min);
+    let policy_loss = g.mean_all(neg_surr_min);
+
+    let total_loss = if entropy_beta == 0.0 {
+        policy_loss
+    } else {
+        let sm = g.softmax(logits);
+        let lsm = g.log_softmax(logits);
+        let p_log_p = g.mul(sm, lsm);
+        let mean_ent = g.mean_all(p_log_p);
+        let beta_node = g.scalar(entropy_beta);
+        let ent_penalty = g.mul(mean_ent, beta_node);
+        g.add(policy_loss, ent_penalty)
+    };
+    g.set_outputs(vec![total_loss, logits]);
+    g
+}
+
 /// Build the discrete policy + value training graph.
 ///
 /// Inputs:
