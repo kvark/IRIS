@@ -36,7 +36,14 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=30000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-every", type=int, default=2000)
-    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--lr", type=float, default=3e-4,
+                        help="Base learning rate. Drives WM/encoder; the "
+                        "Python binding also auto-derives lr_policy = lr/2 "
+                        "and lr_credit = lr·0.3 unless overridden.")
+    parser.add_argument("--lr-policy", type=float, default=0.0,
+                        help="Override the auto-derived policy LR. 0 = use "
+                        "the auto-derived value (lr/2). Useful for freezing "
+                        "the encoder (set --lr 0) while training the policy.")
     parser.add_argument("--latent-dim", type=int, default=16)
     parser.add_argument("--hidden-dim", type=int, default=32)
     parser.add_argument("--history-len", type=int, default=32)
@@ -49,6 +56,11 @@ def main() -> int:
     parser.add_argument("--reward-novelty", type=float, default=0.1)
     parser.add_argument("--reward-order", type=float, default=0.1)
     parser.add_argument("--entropy-beta", type=float, default=0.01)
+    parser.add_argument("--entropy-floor", type=float, default=0.1,
+                        help="Below this entropy, kindle injects a "
+                        "synthetic positive advantage with uniform-smoothed "
+                        "labels — forces an uncommit. Set to 0 to disable "
+                        "(lets a confidently-correct policy stay committed).")
     parser.add_argument("--policy-adv-global-clip", type=float, default=0.0,
                         help="L2 norm clip on the batch-wide advantage vector "
                         "before the policy update — the policy-gradient analog "
@@ -145,6 +157,7 @@ def main() -> int:
         env_ids=[1 + i for i in range(args.lanes)],
         seed=args.seed,
         learning_rate=args.lr,
+        lr_policy=args.lr_policy if args.lr_policy > 0 else None,
         latent_dim=args.latent_dim,
         hidden_dim=args.hidden_dim,
         history_len=args.history_len,
@@ -152,6 +165,7 @@ def main() -> int:
         gamma=args.gamma,
         advantage_clamp=args.advantage_clamp,
         entropy_beta=args.entropy_beta,
+        entropy_floor=args.entropy_floor,
         reward_homeostatic=args.reward_homeostatic,
         reward_surprise=args.reward_surprise,
         reward_novelty=args.reward_novelty,
