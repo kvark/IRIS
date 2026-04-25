@@ -5,8 +5,3 @@ members = ["kindle", "kindle-gym"]
 # It isn't part of the `cargo build --workspace` flow because the
 # `extension-module` feature requires linking against libpython.
 exclude = ["python"]
-
-# Local meganeura patch for stop_gradient op while it's iterating
-# locally; revert when the upstream rev bumps.
-[patch."https://github.com/kvark/meganeura"]
-meganeura = { path = "../meganeura" }
