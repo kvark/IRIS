@@ -20,8 +20,3 @@ kindle = { path = "../kindle", version = "0.1" }
 pyo3 = { version = "0.28", features = ["extension-module"] }
 rand = "0.9"
 serde_json = "1"
-
-# Match the workspace [patch] so `python` resolves the same meganeura as
-# `kindle`. Revert when the upstream rev bumps.
-[patch."https://github.com/kvark/meganeura"]
-meganeura = { path = "../../meganeura" }
