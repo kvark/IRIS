@@ -1157,6 +1157,19 @@ impl PyBatchAgent {
         self.agent.set_entropy_beta(beta);
     }
 
+    /// Update KL-PPO trust-region weight at runtime. Use Schulman 2017's
+    /// adaptive rule: read `last_kl()`, double β if KL > target × 1.5,
+    /// halve if KL < target / 1.5.
+    fn set_kl_beta(&mut self, beta: f32) {
+        self.agent.set_kl_beta(beta);
+    }
+
+    /// Most recent observed KL(π_new ‖ π_old) from the last training
+    /// step. 0.0 when KL-PPO is off.
+    fn last_kl(&self) -> f32 {
+        self.agent.last_kl()
+    }
+
     /// Print a summary of the largest policy-session gradient norms
     /// (descending), with grad/weight ratios. Diagnostic for which
     /// parameter is driving instability. Print goes to stderr.

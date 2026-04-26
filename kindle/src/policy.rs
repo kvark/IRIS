@@ -646,7 +646,7 @@ pub fn build_kl_policy_graph_e2e(
     // including the old_logits input — preserves byte-identical behavior
     // with build_policy_graph_e2e in that case (kl_beta=0 should be
     // equivalent to plain e2e).
-    let total_loss = if let Some(old_logits) = old_logits_opt {
+    let (total_loss, kl_output) = if let Some(old_logits) = old_logits_opt {
         let sm_new = g.softmax(logits);
         let lsm_new = g.log_softmax(logits);
         let lsm_old = g.log_softmax(old_logits);
@@ -655,14 +655,27 @@ pub fn build_kl_policy_graph_e2e(
         let log_diff = g.add(lsm_new, neg_lsm_old);
         let kl_per_action = g.mul(sm_new, log_diff);
         let kl_mean = g.mean_all(kl_per_action);
-        let kl_beta_scalar = g.scalar(kl_beta);
-        let kl_term = g.mul(kl_mean, kl_beta_scalar);
-        g.add(pv, kl_term)
+        // Runtime-mutable beta input (shape [1]) so the harness can
+        // adaptively schedule KL strength per Schulman 2017's rule:
+        // observe KL, double β if KL > target·1.5, halve β if
+        // KL < target/1.5. Avoids the problem of finding the right
+        // fixed β at compile time.
+        let kl_beta_input = g.input("kl_beta", &[1]);
+        let kl_term = g.mul(kl_mean, kl_beta_input);
+        (g.add(pv, kl_term), Some(kl_mean))
     } else {
-        pv
+        (pv, None)
     };
 
-    g.set_outputs(vec![total_loss, logits, value]);
+    // Outputs: [loss, logits, value, kl_mean] — kl_mean output
+    // exposed when KL branch is on so the harness can read the
+    // actual observed KL for adaptive β scheduling. When KL branch is
+    // elided, only [loss, logits, value].
+    if let Some(kl) = kl_output {
+        g.set_outputs(vec![total_loss, logits, value, kl]);
+    } else {
+        g.set_outputs(vec![total_loss, logits, value]);
+    }
     g
 }
 

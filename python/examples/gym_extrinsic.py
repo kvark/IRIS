@@ -242,6 +242,12 @@ def main() -> int:
     parser.add_argument("--kl-beta", type=float, default=0.05,
                         help="KL penalty weight for --use-kl-ppo. Larger "
                         "= tighter trust region. Try 0.01-0.5.")
+    parser.add_argument("--kl-target", type=float, default=0.0,
+                        help="If > 0, enable Schulman 2017's adaptive β: "
+                        "after each training step read observed KL, "
+                        "double β if KL > target·1.5, halve if "
+                        "KL < target/1.5. Bounds β to [1e-4, 10]. "
+                        "Standard target value 0.01-0.05.")
     parser.add_argument("--ppo-n-epochs", type=int, default=1,
                         help="Number of epochs to replay each rollout "
                         "through the PPO update. Only matters with "
@@ -376,7 +382,19 @@ def main() -> int:
     ep_count = 0
     t0 = time.time()
 
+    # Track running KL beta when adaptive mode is on.
+    kl_beta_state = [args.kl_beta]
+
     for step in range(args.steps):
+        # Adaptive KL-β schedule (Schulman 2017).
+        if args.kl_target > 0 and args.use_kl_ppo and step > 100:
+            kl_obs = float(agent.last_kl())
+            if kl_obs > args.kl_target * 1.5:
+                kl_beta_state[0] = min(10.0, kl_beta_state[0] * 1.5)
+                agent.set_kl_beta(kl_beta_state[0])
+            elif kl_obs < args.kl_target / 1.5:
+                kl_beta_state[0] = max(1e-4, kl_beta_state[0] / 1.5)
+                agent.set_kl_beta(kl_beta_state[0])
         # Linear entropy_beta schedule.
         if (args.entropy_beta_final is not None
                 and args.entropy_decay_steps > 0):
@@ -474,6 +492,10 @@ def main() -> int:
             # everywhere (std ≈ 0). Same for entropy.
             vs = np.array(agent.values(), dtype=np.float32)
             ents = np.array(agent.entropies(), dtype=np.float32)
+            kl_str = ""
+            if args.use_kl_ppo:
+                kl_str = (f" | KL={float(agent.last_kl()):.4f} "
+                          f"β={kl_beta_state[0]:.4f}")
             print(
                 f"step={step:>6} eps={ep_count:>3} avg_ret={avg_ret:+7.1f} "
                 f"| wm={float(d['loss_world_model']):.3f} "
@@ -481,8 +503,9 @@ def main() -> int:
                 f"ent={float(d['policy_entropy']):.2f} "
                 f"r={float(d['reward_mean']):+5.2f} "
                 f"| V[{vs.min():+5.2f}, {vs.max():+5.2f}] σV={vs.std():.2f} "
-                f"σE={ents.std():.2f} "
-                f"| {sps:5.0f} env-steps/s"
+                f"σE={ents.std():.2f}"
+                f"{kl_str}"
+                f" | {sps:5.0f} env-steps/s"
             )
 
     envs.close()
