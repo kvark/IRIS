@@ -606,9 +606,17 @@ pub fn build_ppo_policy_graph_e2e(
     let neg_surr_min = g.neg(surr_min);
     let policy_loss = g.mean_all(neg_surr_min);
 
-    // Value head
+    // Value head — detach z from the value-loss gradient. Without this,
+    // the value MSE pushes the encoder toward whatever shape minimizes
+    // V-target prediction error, which on dense-reward envs (LunarLander)
+    // can saturate the encoder logits and kill the PPO surrogate's
+    // recovery gradient. With stop_gradient(z), the encoder is shaped
+    // ONLY by the policy surrogate. Value head still trains its own
+    // weights through `value_head.params() ⊕ raw_value`, just doesn't
+    // backprop into z.
+    let z_for_value = g.stop_gradient(z);
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
-    let raw_value = value_head.forward(&mut g, z);
+    let raw_value = value_head.forward(&mut g, z_for_value);
     let value = scaled_tanh(&mut g, raw_value, value_clip_scale, batch_size, 1);
     let value_loss_raw = g.mse_loss(value, value_target);
     let value_loss = if (value_loss_coef - 1.0).abs() < 1e-6 {
@@ -619,6 +627,8 @@ pub fn build_ppo_policy_graph_e2e(
     };
     let base_loss = g.add(policy_loss, value_loss);
 
+    // Same input-mode entropy term as build_policy_graph_e2e — runtime-
+    // mutable beta when initial > 0, fully elided when initial == 0.
     let total_loss = if entropy_beta == 0.0 {
         base_loss
     } else {
@@ -628,8 +638,8 @@ pub fn build_ppo_policy_graph_e2e(
         let lsm = g.log_softmax(logits_for_ent);
         let p_log_p = g.mul(sm, lsm);
         let mean_ent = g.mean_all(p_log_p);
-        let beta_node = g.scalar(entropy_beta);
-        let ent_penalty = g.mul(mean_ent, beta_node);
+        let beta_input = g.input("entropy_beta", &[1]);
+        let ent_penalty = g.mul(mean_ent, beta_input);
         g.add(base_loss, ent_penalty)
     };
 
