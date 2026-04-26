@@ -47,6 +47,15 @@ def main() -> int:
     parser.add_argument("--latent-dim", type=int, default=16)
     parser.add_argument("--hidden-dim", type=int, default=32)
     parser.add_argument("--history-len", type=int, default=32)
+    parser.add_argument("--action-repeat", type=int, default=1,
+                        help="Repeat each chosen action for N env-steps. "
+                        "Effective macro-action exploration: at N=5 random "
+                        "policy produces (a,a,a,a,a)(b,b,b,b,b)... patterns "
+                        "that build momentum, vs N=1 which mostly cancels "
+                        "out. Try on action-sequence-bound envs "
+                        "(MountainCar, Pendulum) where random per-step "
+                        "actions never produce the motor sequence the env "
+                        "requires.")
     parser.add_argument("--n-step", type=int, default=8)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--advantage-clamp", type=float, default=2.0)
@@ -266,6 +275,7 @@ def main() -> int:
         latent_dim=args.latent_dim,
         hidden_dim=args.hidden_dim,
         history_len=args.history_len,
+        action_repeat=args.action_repeat,
         n_step=args.n_step,
         gamma=args.gamma,
         advantage_clamp=args.advantage_clamp,
