@@ -56,6 +56,19 @@ def main() -> int:
                         "(MountainCar, Pendulum) where random per-step "
                         "actions never produce the motor sequence the env "
                         "requires.")
+    parser.add_argument("--num-options", type=int, default=1,
+                        help="L1 option count. >1 enables hierarchical "
+                        "policy where each option is conditioned on a "
+                        "different bias. Now compatible with "
+                        "--end-to-end-encoder.")
+    parser.add_argument("--option-horizon", type=int, default=10,
+                        help="Steps an option runs before potential "
+                        "termination (the L1 option_session selects a "
+                        "new option every horizon steps).")
+    parser.add_argument("--per-option-heads", action="store_true",
+                        help="Use per-option fc2 layer instead of "
+                        "shared trunk + per-option bias. Heavier but "
+                        "fully decoupled per-option policies.")
     parser.add_argument("--n-step", type=int, default=8)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--advantage-clamp", type=float, default=2.0)
@@ -276,6 +289,9 @@ def main() -> int:
         hidden_dim=args.hidden_dim,
         history_len=args.history_len,
         action_repeat=args.action_repeat,
+        num_options=args.num_options,
+        option_horizon=args.option_horizon,
+        per_option_heads=args.per_option_heads,
         n_step=args.n_step,
         gamma=args.gamma,
         advantage_clamp=args.advantage_clamp,

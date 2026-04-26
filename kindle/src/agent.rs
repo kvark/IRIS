@@ -1733,10 +1733,11 @@ impl Agent {
                  fails to converge; see docs/failed_experiments.md)"
             );
             let g = if is_discrete && config.end_to_end_encoder {
-                assert!(
-                    config.num_options <= 1,
-                    "end_to_end_encoder not compatible with L1 options"
-                );
+                // L1 options + e2e: now supported. The e2e graph routes
+                // option_onehot through per_option_fc2 (when
+                // per_option_heads=true) or shared-trunk + per-option
+                // bias (when false), matching the non-e2e
+                // build_policy_graph routing.
                 policy::build_policy_graph_e2e(
                     OBS_TOKEN_DIM,
                     TASK_DIM,
@@ -1747,6 +1748,8 @@ impl Agent {
                     config.entropy_beta,
                     config.value_loss_coef,
                     config.value_clip_scale,
+                    config.num_options,
+                    config.per_option_heads,
                 )
             } else if is_discrete && config.use_ppo {
                 // PPO mode does not support L1 options yet — options are
@@ -2326,18 +2329,30 @@ impl Agent {
                 let row = &mut self.option_onehot_scratch[i * num_options..(i + 1) * num_options];
                 row[lane.current_option as usize] = 1.0;
             }
-            // Pad z_stack from [lanes × ld] to the policy graph's
-            // expected [policy_batch × ld]. With rollout_length=1
-            // these are the same size. With rollout_length>1, rows
-            // beyond `lanes` are zeros — their forward outputs are
-            // garbage that we throw away (act() only reads the first
-            // `lanes` output rows), but the session still requires a
-            // valid-sized input.
-            self.policy_z_scratch[..n * ld].copy_from_slice(&z_stack);
-            for v in self.policy_z_scratch[n * ld..].iter_mut() {
-                *v = 0.0;
+            // L1 + e2e: feed obs/task to the e2e graph directly (encoder
+            // is built inside the policy graph). The obs_token_scratch
+            // and task_scratch were already populated above when
+            // end_to_end_encoder is on.
+            // L1 + non-e2e: feed z_stack as before.
+            if self.config.end_to_end_encoder {
+                self.policy_session
+                    .set_input("obs", &self.obs_token_scratch);
+                self.policy_session
+                    .set_input("task", &self.task_scratch);
+            } else {
+                // Pad z_stack from [lanes × ld] to the policy graph's
+                // expected [policy_batch × ld]. With rollout_length=1
+                // these are the same size. With rollout_length>1, rows
+                // beyond `lanes` are zeros — their forward outputs are
+                // garbage that we throw away (act() only reads the first
+                // `lanes` output rows), but the session still requires a
+                // valid-sized input.
+                self.policy_z_scratch[..n * ld].copy_from_slice(&z_stack);
+                for v in self.policy_z_scratch[n * ld..].iter_mut() {
+                    *v = 0.0;
+                }
+                self.policy_session.set_input("z", &self.policy_z_scratch);
             }
-            self.policy_session.set_input("z", &self.policy_z_scratch);
             self.policy_session
                 .set_input("option_onehot", &self.option_onehot_scratch);
         } else {
