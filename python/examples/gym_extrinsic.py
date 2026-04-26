@@ -114,6 +114,15 @@ def main() -> int:
                         "exceed ±100, but expect more violent post-solve "
                         "crashes (CartPole regresses peak +329 → +64 if "
                         "raised to 200 unilaterally).")
+    parser.add_argument("--lr-drop-on-solve", type=float, default=0.0,
+                        help="If > 0, drop learning_rate AND lr_policy by "
+                        "this factor (e.g. 10.0 for 10× drop) once "
+                        "avg_ret over the recent window exceeds "
+                        "--solve-threshold. One-shot per run. Targets the "
+                        "post-solve crash by lowering update magnitude "
+                        "after solve detected.")
+    parser.add_argument("--solve-threshold", type=float, default=200.0,
+                        help="avg_ret value triggering --lr-drop-on-solve.")
     parser.add_argument("--policy-update-interval", type=int, default=1,
                         help="Update policy only every N env-steps, then do "
                         "N gradient steps on the accumulated rollout "
@@ -285,6 +294,18 @@ def main() -> int:
             d = diags[0]
             all_recent = [r for lane_rets in ep_returns for r in lane_rets[-5:]]
             avg_ret = sum(all_recent) / max(1, len(all_recent))
+            # One-shot LR drop on sustained solve detection.
+            if (args.lr_drop_on_solve > 0
+                    and not getattr(main, "_lr_dropped", False)
+                    and avg_ret >= args.solve_threshold):
+                new_lr = args.lr / args.lr_drop_on_solve
+                new_lr_policy = args.lr_policy / args.lr_drop_on_solve
+                agent.set_learning_rate(new_lr)
+                agent.set_lr_policy(new_lr_policy)
+                main._lr_dropped = True
+                print(f"[lr-drop] step={step} avg_ret={avg_ret:+.1f} "
+                      f"→ lr {args.lr:.1e} → {new_lr:.1e}, "
+                      f"lr_policy {args.lr_policy:.1e} → {new_lr_policy:.1e}")
             elapsed = time.time() - t0
             sps = step * args.lanes / max(1e-3, elapsed)
             # Per-lane V and entropy distribution: V std across lanes

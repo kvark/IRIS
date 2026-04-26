@@ -3064,6 +3064,25 @@ impl Agent {
         self.extrinsic_reward.copy_from_slice(rewards);
     }
 
+    /// Mutate the base learning rate at runtime. Picked up by every
+    /// per-step `set_learning_rate` call across all sessions on the
+    /// next `observe`. Use case: drop LR once a sustained-solve
+    /// threshold is reached, to prevent the on-policy AC post-solve
+    /// crash. Does NOT modify `lr_policy`/`lr_credit`/etc — those have
+    /// their own setters since they may need independent tuning.
+    pub fn set_learning_rate(&mut self, lr: f32) {
+        self.config.learning_rate = lr;
+    }
+
+    /// Mutate the policy-session learning rate at runtime. See
+    /// `set_learning_rate` for the post-solve-crash use case; the
+    /// policy LR is the dominant lever for this since the e2e encoder
+    /// gradient flow makes the policy and value updates the primary
+    /// destabilizers post-solve.
+    pub fn set_lr_policy(&mut self, lr: f32) {
+        self.config.lr_policy = lr;
+    }
+
     /// Must be called by the harness when `encoder_kind = Cnn` and
     /// the input shape is flat NCHW of size `batch · channels · h · w`.
     /// No-op when the encoder is `Mlp`.

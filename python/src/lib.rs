@@ -1099,6 +1099,21 @@ impl PyBatchAgent {
         Ok(())
     }
 
+    /// Update the base learning rate at runtime. Picked up by every
+    /// per-step `set_learning_rate` across all sessions on the next
+    /// `observe()`. Use case: drop LR after sustained-solve detected,
+    /// to head off the on-policy AC post-solve crash.
+    fn set_learning_rate(&mut self, lr: f32) {
+        self.agent.set_learning_rate(lr);
+    }
+
+    /// Update the policy-session learning rate at runtime. Independent
+    /// of `set_learning_rate`. Most direct lever for stabilizing a
+    /// committed-good policy.
+    fn set_lr_policy(&mut self, lr: f32) {
+        self.agent.set_lr_policy(lr);
+    }
+
     /// Writable `memoryview` over the world-model session's
     /// `visual_obs` input buffer. Meganeura allocates that buffer
     /// as `Memory::Shared` (device-local + host-visible + host-
