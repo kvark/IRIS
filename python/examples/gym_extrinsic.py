@@ -74,6 +74,14 @@ def main() -> int:
                         "option-choice distribution. > 0 prevents L1 "
                         "collapse to one option, keeps each option "
                         "exercised. Try 0.05-0.2 with --num-options >= 2.")
+    parser.add_argument("--policy-head-lr-mul", type=float, default=1.0,
+                        help="Multiplier on the policy.* parameter LRs "
+                        "in the policy session (per-parameter LR via "
+                        "meganeura's set_lr_multiplier). > 1 boosts the "
+                        "actual policy head (z→logits MLP) relative to "
+                        "the policy_encoder.*. Use when grad inspection "
+                        "shows the encoder absorbing most gradient "
+                        "while the policy head barely moves. Try 5.0-20.0.")
     parser.add_argument("--grad-debug-every", type=int, default=0,
                         help="If > 0, dump the top-5 policy-session "
                         "gradient norms (with grad/weight ratios) every "
@@ -345,6 +353,10 @@ def main() -> int:
         bootstrap_value_clamp=args.bootstrap_value_clamp,
     )
     print("agent ready (MLP encoder)")
+
+    if args.policy_head_lr_mul != 1.0:
+        agent.set_policy_lr_multiplier("policy.", args.policy_head_lr_mul)
+        print(f"[policy-head LR multiplier] policy.* params × {args.policy_head_lr_mul}")
 
     ep_returns = [[] for _ in range(args.lanes)]
     cur_ret = np.zeros(args.lanes, dtype=np.float64)

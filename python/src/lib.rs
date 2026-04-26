@@ -1165,6 +1165,19 @@ impl PyBatchAgent {
         self.agent.policy_weight_norms()
     }
 
+    /// Set a per-parameter LR multiplier on the policy session by
+    /// name prefix. Use to rebalance asymmetric gradient flow between
+    /// encoder and policy head — see Agent::set_policy_lr_multiplier
+    /// for the diagnostic context.
+    fn set_policy_lr_multiplier(&mut self, prefix: &str, mul: f32) {
+        self.agent.set_policy_lr_multiplier(prefix, mul);
+    }
+
+    /// Clear all per-parameter LR multipliers on the policy session.
+    fn clear_policy_lr_multipliers(&mut self) {
+        self.agent.clear_policy_lr_multipliers();
+    }
+
     /// Writable `memoryview` over the world-model session's
     /// `visual_obs` input buffer. Meganeura allocates that buffer
     /// as `Memory::Shared` (device-local + host-visible + host-
