@@ -204,6 +204,13 @@ pub struct AgentConfig {
     pub option_dim: usize,
     /// Fixed number of env steps per option (v1: no learned termination).
     pub option_horizon: usize,
+    /// Entropy bonus weight on the option_session's option-choice
+    /// distribution. > 0 prevents L1 from collapsing to picking only
+    /// one option (the early-best one); each option then gets exercised
+    /// regularly, which matters when per_option_heads is on (each option
+    /// owns its own policy head). Default 0.0 (no bonus, current
+    /// behavior preserved).
+    pub option_entropy_beta: f32,
     /// L1 option-policy learning rate.
     pub lr_option: f32,
     /// Phase G v5: number of recent options held in the L1 credit
@@ -794,6 +801,7 @@ impl Default for AgentConfig {
             num_options: 1,
             option_dim: 0, // 0 = use latent_dim
             option_horizon: 10,
+            option_entropy_beta: 0.0,
             lr_option: 2.5e-4,
             option_history_len: 8,
             lr_option_credit: 7.5e-5,
@@ -1932,6 +1940,7 @@ impl Agent {
                 config.num_options,
                 config.hidden_dim,
                 config.batch_size,
+                config.option_entropy_beta,
             );
             let mut s = build_session(&g, config.opt_level);
             init_parameters(&mut s);

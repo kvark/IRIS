@@ -43,6 +43,11 @@ pub fn build_option_graph(
     num_options: usize,
     hidden_dim: usize,
     batch_size: usize,
+    option_entropy_beta: f32,  // > 0 adds entropy bonus to option choice
+                                // (push option_session toward picking
+                                // diverse options instead of collapsing
+                                // to one). Standard A2C entropy regularizer
+                                // applied to the option logits.
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
@@ -80,7 +85,29 @@ pub fn build_option_graph(
     let value_loss = g.mse_loss(option_value, option_return);
     let term_loss = g.bce_loss(term_prob, termination_target);
     let pv_loss = g.add(policy_loss, value_loss);
-    let total_loss = g.add(pv_loss, term_loss);
+    let pv_term_loss = g.add(pv_loss, term_loss);
+
+    // Optional entropy bonus on option choice. Without this, the
+    // option_session can collapse to picking only one option (the one
+    // with the best early reward) and the L1 hierarchy stops being
+    // hierarchical. With option_entropy_beta > 0, an entropy term on
+    // the option logits keeps option choice diverse — meaningful when
+    // combined with `--end-to-end-encoder + per_option_heads`, where
+    // each option has its own policy head and benefits from being
+    // exercised regularly. Built as a graph constant rather than a
+    // runtime input since option diversity rarely needs annealing
+    // (unlike action entropy).
+    let total_loss = if option_entropy_beta == 0.0 {
+        pv_term_loss
+    } else {
+        let sm = g.softmax(option_logits);
+        let lsm = g.log_softmax(option_logits);
+        let p_log_p = g.mul(sm, lsm);
+        let mean_ent = g.mean_all(p_log_p);
+        let beta_node = g.scalar(option_entropy_beta);
+        let ent_penalty = g.mul(mean_ent, beta_node);
+        g.add(pv_term_loss, ent_penalty)
+    };
 
     g.set_outputs(vec![total_loss, option_logits, option_value, term_prob]);
     g

@@ -69,6 +69,11 @@ def main() -> int:
                         help="Use per-option fc2 layer instead of "
                         "shared trunk + per-option bias. Heavier but "
                         "fully decoupled per-option policies.")
+    parser.add_argument("--option-entropy-beta", type=float, default=0.0,
+                        help="Entropy bonus on the option_session's "
+                        "option-choice distribution. > 0 prevents L1 "
+                        "collapse to one option, keeps each option "
+                        "exercised. Try 0.05-0.2 with --num-options >= 2.")
     parser.add_argument("--n-step", type=int, default=8)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--advantage-clamp", type=float, default=2.0)
@@ -292,6 +297,7 @@ def main() -> int:
         num_options=args.num_options,
         option_horizon=args.option_horizon,
         per_option_heads=args.per_option_heads,
+        option_entropy_beta=args.option_entropy_beta,
         n_step=args.n_step,
         gamma=args.gamma,
         advantage_clamp=args.advantage_clamp,
