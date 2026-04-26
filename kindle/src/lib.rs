@@ -28,6 +28,7 @@ pub mod buffer;
 pub mod coord;
 pub mod credit;
 pub mod delta_goals;
+pub mod diayn;
 pub mod encoder;
 pub mod env;
 pub mod option;

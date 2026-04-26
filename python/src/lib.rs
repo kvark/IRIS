@@ -419,6 +419,9 @@ impl PyBatchAgent {
         option_horizon = None,
         per_option_heads = None,
         option_entropy_beta = None,
+        diayn_reward_alpha = None,
+        diayn_hidden_dim = None,
+        diayn_lr = None,
         history_len = None,
         gamma = None,
         n_step = None,
@@ -510,6 +513,9 @@ impl PyBatchAgent {
         option_horizon: Option<usize>,
         per_option_heads: Option<bool>,
         option_entropy_beta: Option<f32>,
+        diayn_reward_alpha: Option<f32>,
+        diayn_hidden_dim: Option<usize>,
+        diayn_lr: Option<f32>,
         history_len: Option<usize>,
         gamma: Option<f32>,
         n_step: Option<usize>,
@@ -670,6 +676,15 @@ impl PyBatchAgent {
         }
         if let Some(b) = option_entropy_beta {
             config.option_entropy_beta = b;
+        }
+        if let Some(a) = diayn_reward_alpha {
+            config.diayn_reward_alpha = a;
+        }
+        if let Some(h) = diayn_hidden_dim {
+            config.diayn_hidden_dim = h;
+        }
+        if let Some(lr) = diayn_lr {
+            config.diayn_lr = Some(lr);
         }
         if let Some(h) = history_len {
             config.history_len = h;

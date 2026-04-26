@@ -74,6 +74,13 @@ def main() -> int:
                         "option-choice distribution. > 0 prevents L1 "
                         "collapse to one option, keeps each option "
                         "exercised. Try 0.05-0.2 with --num-options >= 2.")
+    parser.add_argument("--diayn-reward-alpha", type=float, default=0.0,
+                        help="DIAYN intrinsic reward weight (Eysenbach "
+                        "2018). Trains a discriminator q(option|z) and "
+                        "adds α·(log q(option|z) − log(1/K)) to the "
+                        "reward stream. Pushes options to produce "
+                        "mutually-distinguishable z trajectories. "
+                        "Requires --num-options >= 2. Try 0.1-1.0.")
     parser.add_argument("--n-step", type=int, default=8)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--advantage-clamp", type=float, default=2.0)
@@ -298,6 +305,7 @@ def main() -> int:
         option_horizon=args.option_horizon,
         per_option_heads=args.per_option_heads,
         option_entropy_beta=args.option_entropy_beta,
+        diayn_reward_alpha=args.diayn_reward_alpha,
         n_step=args.n_step,
         gamma=args.gamma,
         advantage_clamp=args.advantage_clamp,

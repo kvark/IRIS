@@ -41,6 +41,7 @@ use crate::credit;
 use crate::delta_goals;
 use crate::encoder::{CnnEncoder, Encoder};
 use crate::env::{Action, ActionKind, Environment, Observation};
+use crate::diayn;
 use crate::option;
 use crate::outcome;
 use crate::planner;
@@ -211,6 +212,19 @@ pub struct AgentConfig {
     /// owns its own policy head). Default 0.0 (no bonus, current
     /// behavior preserved).
     pub option_entropy_beta: f32,
+    /// DIAYN intrinsic reward weight. > 0 enables a discriminator
+    /// `q(option | z)` and adds the per-step bonus
+    /// `α · (log q(option_t | z_t) - log(1/num_options))` to the
+    /// reward stream. Trains options to produce z trajectories that
+    /// are mutually distinguishable. Requires `num_options >= 2`.
+    /// Standard DIAYN uses α = 1.0; smaller (0.1-0.3) reduces the
+    /// intrinsic vs extrinsic balance for envs with strong extrinsic
+    /// signal. Default 0.0 (no DIAYN, parity preserved).
+    pub diayn_reward_alpha: f32,
+    /// DIAYN discriminator hidden width. Default 32.
+    pub diayn_hidden_dim: usize,
+    /// DIAYN discriminator learning rate. None = `lr_option`.
+    pub diayn_lr: Option<f32>,
     /// L1 option-policy learning rate.
     pub lr_option: f32,
     /// Phase G v5: number of recent options held in the L1 credit
@@ -802,6 +816,9 @@ impl Default for AgentConfig {
             option_dim: 0, // 0 = use latent_dim
             option_horizon: 10,
             option_entropy_beta: 0.0,
+            diayn_reward_alpha: 0.0,
+            diayn_hidden_dim: 32,
+            diayn_lr: None,
             lr_option: 2.5e-4,
             option_history_len: 8,
             lr_option_credit: 7.5e-5,
@@ -1326,6 +1343,12 @@ pub struct Agent {
     /// Most recent RND per-step MSE across lanes, averaged.
     /// Diagnostic only.
     last_rnd_mse: f32,
+    /// DIAYN discriminator state. `None` when `diayn_reward_alpha == 0.0`
+    /// or `num_options < 2`. CPU implementation per `kindle::diayn`.
+    diayn_state: Option<diayn::DiaynState>,
+    /// Most recent DIAYN per-step intrinsic reward across lanes,
+    /// averaged. Diagnostic only.
+    last_diayn_reward: f32,
     /// Continuous coord-action head. `None` when
     /// `coord_action_alpha == 0.0`.
     coord_head: Option<coord::CoordHead>,
@@ -1858,6 +1881,22 @@ impl Agent {
             None
         };
 
+        // DIAYN discriminator: built when intrinsic reward weight > 0
+        // AND L1 has at least 2 options (the discriminator predicts
+        // option-from-z, so 1 option would be degenerate).
+        let diayn_state = if config.diayn_reward_alpha > 0.0 && config.num_options >= 2 {
+            let lr = config.diayn_lr.unwrap_or(config.lr_option);
+            Some(diayn::DiaynState::new(
+                config.latent_dim,
+                config.num_options,
+                config.diayn_hidden_dim,
+                lr,
+                0xD1AB_1234_5678_9ABCu64 ^ (config.batch_size as u64).wrapping_mul(0x9E37_79B9),
+            ))
+        } else {
+            None
+        };
+
         let approach_state = if config.approach_reward_alpha > 0.0 {
             Some(approach::ApproachState::new(
                 config.latent_dim,
@@ -2065,6 +2104,8 @@ impl Agent {
             approach_distances: vec![0.0; n],
             rnd_state,
             last_rnd_mse: 0.0,
+            diayn_state,
+            last_diayn_reward: 0.0,
             coord_head,
             coord_last_reward: vec![0.0; n],
             coord_reward_baseline: 0.0,
@@ -2590,6 +2631,10 @@ impl Agent {
         let mut rnd_state = self.rnd_state.take();
         let mut rnd_mse_sum = 0.0f32;
         let mut rnd_mse_count = 0usize;
+        let diayn_alpha = self.config.diayn_reward_alpha;
+        let mut diayn_state = self.diayn_state.take();
+        let mut diayn_reward_sum = 0.0f32;
+        let mut diayn_reward_count = 0usize;
         let dg_alpha = self.config.delta_goal_alpha;
         let dg_clamp = self.config.delta_goal_distance_clamp;
         let dg_surprise_gate = self.config.delta_goal_surprise_threshold;
@@ -2872,6 +2917,21 @@ impl Agent {
                 0.0
             };
 
+            // DIAYN bonus: log q(option | z) - log(1/K). Trains the
+            // discriminator on (current z, current option index)
+            // simultaneously. Only fires when L1 is active (option_idx
+            // is meaningful). The reward pushes options to produce
+            // mutually-distinguishable z trajectories.
+            let diayn_reward = if let Some(state) = diayn_state.as_mut() {
+                let opt_idx = lane.current_option as usize;
+                let r = state.step(z_row, opt_idx);
+                diayn_reward_sum += r;
+                diayn_reward_count += 1;
+                diayn_alpha * r
+            } else {
+                0.0
+            };
+
             // M8 delta-goal reward. First, consider recording a new
             // goal from the (prev, cur) OBS pair — gated by
             // `pred_error >= surprise_threshold` so only
@@ -2946,6 +3006,7 @@ impl Agent {
                 + m6_bonus
                 + m7_reward
                 + rnd_reward
+                + diayn_reward
                 + dg_reward
                 + xeps_reward
                 + ext_reward;
@@ -2995,6 +3056,12 @@ impl Agent {
         self.rnd_state = rnd_state;
         self.last_rnd_mse = if rnd_mse_count > 0 {
             rnd_mse_sum / rnd_mse_count as f32
+        } else {
+            0.0
+        };
+        self.diayn_state = diayn_state;
+        self.last_diayn_reward = if diayn_reward_count > 0 {
+            diayn_reward_sum / diayn_reward_count as f32
         } else {
             0.0
         };
