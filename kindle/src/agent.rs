@@ -1718,24 +1718,21 @@ impl Agent {
             config.batch_size
         };
         let policy_session = {
-            let g = if is_discrete && config.end_to_end_encoder && config.use_ppo {
-                assert!(
-                    config.num_options <= 1,
-                    "end_to_end_encoder not compatible with L1 options"
-                );
-                policy::build_ppo_policy_graph_e2e(
-                    OBS_TOKEN_DIM,
-                    TASK_DIM,
-                    MAX_ACTION_DIM,
-                    config.hidden_dim,
-                    config.latent_dim,
-                    policy_batch,
-                    config.ppo_clip_eps,
-                    config.value_loss_coef,
-                    config.entropy_beta,
-                    config.value_clip_scale,
-                )
-            } else if is_discrete && config.end_to_end_encoder {
+            // PPO + end_to_end_encoder is not currently supported. The
+            // PPO+e2e graph (build_ppo_policy_graph_e2e) was attempted
+            // across multiple debug rounds and never converged on
+            // CartPole; see docs/failed_experiments.md for the
+            // diagnostic trail. Future work would need per-op gradient
+            // inspection in meganeura or a KL-penalty PPO rewrite —
+            // outside session scope. The plain-PG e2e path is the
+            // working sustained-solve recipe; PPO without e2e remains
+            // available for envs where the WM-trained encoder suffices.
+            assert!(
+                !(is_discrete && config.end_to_end_encoder && config.use_ppo),
+                "end_to_end_encoder + use_ppo is not supported (PPO+e2e graph \
+                 fails to converge; see docs/failed_experiments.md)"
+            );
+            let g = if is_discrete && config.end_to_end_encoder {
                 assert!(
                     config.num_options <= 1,
                     "end_to_end_encoder not compatible with L1 options"
