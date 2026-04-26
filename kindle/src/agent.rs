@@ -3206,6 +3206,32 @@ impl Agent {
         self.config.lr_policy = lr;
     }
 
+    /// Print a summary of the largest policy-session gradient norms
+    /// (descending), with grad/weight ratios. Diagnostic for "which
+    /// layer is the gradient exploding/vanishing through". Use after
+    /// a `policy_session.step()` so the gradient buffers contain
+    /// fresh values from the last backward pass.
+    ///
+    /// Backed by `meganeura::Session::dump_grad_summary`.
+    pub fn dump_policy_grad_summary(&self, top_n: usize) {
+        self.policy_session.dump_grad_summary(top_n);
+    }
+
+    /// Bulk read of policy-session per-parameter gradient norms.
+    /// Returns (name, ‖grad‖₂) pairs in compile order, for every
+    /// parameter that has a gradient. Useful for programmatic
+    /// instability detection (e.g., trigger LR drop when a specific
+    /// layer's grad norm exceeds a threshold).
+    pub fn policy_grad_norms(&self) -> Vec<(String, f32)> {
+        self.policy_session.read_all_param_grad_norms()
+    }
+
+    /// Bulk read of policy-session per-parameter weight norms.
+    /// Same shape as `policy_grad_norms`.
+    pub fn policy_weight_norms(&self) -> Vec<(String, f32)> {
+        self.policy_session.read_all_param_norms()
+    }
+
     /// Must be called by the harness when `encoder_kind = Cnn` and
     /// the input shape is flat NCHW of size `batch · channels · h · w`.
     /// No-op when the encoder is `Mlp`.

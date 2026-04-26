@@ -74,6 +74,13 @@ def main() -> int:
                         "option-choice distribution. > 0 prevents L1 "
                         "collapse to one option, keeps each option "
                         "exercised. Try 0.05-0.2 with --num-options >= 2.")
+    parser.add_argument("--grad-debug-every", type=int, default=0,
+                        help="If > 0, dump the top-5 policy-session "
+                        "gradient norms (with grad/weight ratios) every "
+                        "N agent-steps. Diagnostic for which parameter "
+                        "is driving training instability — uses meganeura's "
+                        "Session::dump_grad_summary which became available "
+                        "with the grad-inspection branch.")
     parser.add_argument("--diayn-reward-alpha", type=float, default=0.0,
                         help="DIAYN intrinsic reward weight (Eysenbach "
                         "2018). Trains a discriminator q(option|z) and "
@@ -376,6 +383,11 @@ def main() -> int:
                 agent.mark_boundary(i)
         obs_batch = next_obs
 
+        if (args.grad_debug_every > 0
+                and step > 0
+                and step % args.grad_debug_every == 0):
+            print(f"[grad-debug step={step}]")
+            agent.dump_policy_grad_summary(5)
         if args.log_every and step > 0 and step % args.log_every == 0:
             diags = agent.diagnostics()
             d = diags[0]

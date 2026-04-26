@@ -1147,6 +1147,24 @@ impl PyBatchAgent {
         self.agent.set_entropy_beta(beta);
     }
 
+    /// Print a summary of the largest policy-session gradient norms
+    /// (descending), with grad/weight ratios. Diagnostic for which
+    /// parameter is driving instability. Print goes to stderr.
+    fn dump_policy_grad_summary(&self, top_n: usize) {
+        self.agent.dump_policy_grad_summary(top_n);
+    }
+
+    /// Bulk read of (param_name, grad_norm) pairs from the policy session.
+    /// Useful for plotting or anomaly detection without printing.
+    fn policy_grad_norms(&self) -> Vec<(String, f32)> {
+        self.agent.policy_grad_norms()
+    }
+
+    /// Bulk read of (param_name, weight_norm) pairs from the policy session.
+    fn policy_weight_norms(&self) -> Vec<(String, f32)> {
+        self.agent.policy_weight_norms()
+    }
+
     /// Writable `memoryview` over the world-model session's
     /// `visual_obs` input buffer. Meganeura allocates that buffer
     /// as `Memory::Shared` (device-local + host-visible + host-

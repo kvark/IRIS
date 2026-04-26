@@ -20,3 +20,7 @@ kindle = { path = "../kindle", version = "0.1" }
 pyo3 = { version = "0.28", features = ["extension-module"] }
 rand = "0.9"
 serde_json = "1"
+
+# Same local override as workspace Cargo.toml.
+[patch."https://github.com/kvark/meganeura"]
+meganeura = { path = "../../meganeura" }
