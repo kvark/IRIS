@@ -130,6 +130,18 @@ def main() -> int:
                         "firing the LR drop. Default 1 (immediate). Set "
                         "2-3 to wait for sustained solve and avoid firing "
                         "on a noisy first-time peak.")
+    parser.add_argument("--solve-auto-multiple", type=float, default=0.0,
+                        help="Auto-threshold: when > 0, ignore "
+                        "--solve-threshold and instead trigger LR-drop "
+                        "when avg_ret >= multiple × early-baseline (mean "
+                        "of first 3 log windows after warmup). Robust "
+                        "across envs since it's relative to the env's own "
+                        "random-policy floor. Try 5.0 — fires when agent "
+                        "is doing 5× better than random.")
+    parser.add_argument("--solve-auto-warmup-windows", type=int, default=2,
+                        help="Number of initial log windows to skip when "
+                        "computing the auto-threshold baseline (lets the "
+                        "agent settle past the noisy first-tick state).")
     parser.add_argument("--policy-update-interval", type=int, default=1,
                         help="Update policy only every N env-steps, then do "
                         "N gradient steps on the accumulated rollout "
@@ -307,7 +319,34 @@ def main() -> int:
             # (which can lock in a transient policy that's about to
             # uncommit on its own).
             if args.lr_drop_on_solve > 0 and not getattr(main, "_lr_dropped", False):
-                if avg_ret >= args.solve_threshold:
+                # Auto-threshold: build baseline from first
+                # `solve_auto_warmup_windows` post-warmup logs, then
+                # trigger when avg_ret >= multiple × baseline.
+                if args.solve_auto_multiple > 0:
+                    main._auto_baseline_window_returns = (
+                        getattr(main, "_auto_baseline_window_returns", []) + [avg_ret]
+                    )
+                    auto_warmup = args.solve_auto_warmup_windows
+                    baseline_n = auto_warmup
+                    if len(main._auto_baseline_window_returns) <= baseline_n:
+                        # Still building baseline; can't fire yet.
+                        threshold = float("inf")
+                    else:
+                        baseline = (
+                            sum(main._auto_baseline_window_returns[:baseline_n])
+                            / baseline_n
+                        )
+                        # Use abs() so negative-reward envs (Acrobot,
+                        # Pendulum) work too. "Multiple × random" means
+                        # the agent's avg has shrunk in absolute distance
+                        # from 0 by that factor.
+                        if baseline >= 0:
+                            threshold = args.solve_auto_multiple * baseline
+                        else:
+                            threshold = baseline / args.solve_auto_multiple
+                else:
+                    threshold = args.solve_threshold
+                if avg_ret >= threshold:
                     main._solve_streak = getattr(main, "_solve_streak", 0) + 1
                 else:
                     main._solve_streak = 0
@@ -318,6 +357,7 @@ def main() -> int:
                     agent.set_lr_policy(new_lr_policy)
                     main._lr_dropped = True
                     print(f"[lr-drop] step={step} avg_ret={avg_ret:+.1f} "
+                          f"threshold={threshold:+.1f} "
                           f"streak={main._solve_streak} "
                           f"→ lr {args.lr:.1e} → {new_lr:.1e}, "
                           f"lr_policy {args.lr_policy:.1e} → {new_lr_policy:.1e}")
