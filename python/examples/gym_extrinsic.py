@@ -55,6 +55,14 @@ def main() -> int:
     parser.add_argument("--reward-surprise", type=float, default=0.1)
     parser.add_argument("--reward-novelty", type=float, default=0.1)
     parser.add_argument("--reward-order", type=float, default=0.1)
+    parser.add_argument("--rnd-reward-alpha", type=float, default=0.0,
+                        help="Random Network Distillation curiosity bonus "
+                        "weight. Frozen target network + trained predictor; "
+                        "intrinsic reward = ||f_T(z) − f_P(z)||² / k. "
+                        "Independent of WM convergence. Use for "
+                        "exploration-bound envs (MountainCar, Pendulum) "
+                        "where the agent never reaches the goal under random "
+                        "actions. Try 0.1–1.0.")
     parser.add_argument("--entropy-beta", type=float, default=0.01)
     parser.add_argument("--replay-ratio", type=float, default=0.2,
                         help="Probability per env-step that a replay WM "
@@ -256,6 +264,7 @@ def main() -> int:
         reward_surprise=args.reward_surprise,
         reward_novelty=args.reward_novelty,
         reward_order=args.reward_order,
+        rnd_reward_alpha=args.rnd_reward_alpha,
         extrinsic_reward_alpha=args.extrinsic_alpha,
         policy_adv_global_clip=args.policy_adv_global_clip if args.policy_adv_global_clip > 0 else None,
         policy_lr_adaptive_target=args.policy_lr_adaptive_target if args.policy_lr_adaptive_target > 0 else None,
