@@ -417,6 +417,7 @@ pub fn build_ppo_policy_graph(
 /// dedicated encoder copy, matching what a standard A2C/PPO
 /// implementation does. The wm_session continues to train its own
 /// independent encoder copy on the WM loss; the two encoders coexist.
+#[allow(clippy::too_many_arguments)]
 pub fn build_policy_graph_e2e(
     obs_dim: usize,
     task_dim: usize,
@@ -429,6 +430,8 @@ pub fn build_policy_graph_e2e(
                         // If == 0, branch is fully elided (parity).
     value_loss_coef: f32,
     value_clip_scale: f32,
+    num_options: usize,       // L1 options support: 0/1 = flat, >1 = options
+    per_option_heads: bool,   // when num_options > 1: per-option fc2 vs shared+bias
 ) -> Graph {
     let mut g = Graph::new();
     let obs = g.input("obs", &[batch_size, obs_dim]);
@@ -442,8 +445,42 @@ pub fn build_policy_graph_e2e(
     let encoder = build_named_encoder(&mut g, obs_dim, task_dim, latent_dim, hidden_dim);
     let z = encoder_forward(&mut g, &encoder, obs, task);
 
-    let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
-    let logits = policy.forward(&mut g, z);
+    // Build option-conditional policy if num_options > 1, else flat.
+    // The option_onehot input is used twice (logits forward + entropy
+    // forward on stop_gradient(z)), but both forwards share the same
+    // option choice — i.e., the policy graph is conditioned on the L1
+    // option selected by the option_session. Same routing as
+    // build_policy_graph: per_option_heads gives full per-option fc2
+    // matrices; the cheaper shared-trunk + per-option-bias path is
+    // used when per_option_heads=false.
+    let (logits, option_onehot) = if num_options > 1 && per_option_heads {
+        let option_onehot = g.input("option_onehot", &[batch_size, num_options]);
+        let fc1 = nn::Linear::new(&mut g, "policy.fc1", latent_dim, hidden_dim);
+        let h = fc1.forward(&mut g, z);
+        let h = g.relu(h);
+        (
+            per_option_fc2(
+                &mut g,
+                h,
+                option_onehot,
+                num_options,
+                hidden_dim,
+                action_dim,
+            ),
+            Some(option_onehot),
+        )
+    } else if num_options > 1 {
+        let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+        let trunk_logits = policy.forward(&mut g, z);
+        let option_onehot = g.input("option_onehot", &[batch_size, num_options]);
+        let option_bias =
+            nn::Linear::no_bias(&mut g, "policy.option_bias", num_options, action_dim);
+        let bias_out = option_bias.forward(&mut g, option_onehot);
+        (g.add(trunk_logits, bias_out), Some(option_onehot))
+    } else {
+        let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+        (policy.forward(&mut g, z), None)
+    };
 
     let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
     let raw_value = value_head.forward(&mut g, z);
@@ -468,11 +505,46 @@ pub fn build_policy_graph_e2e(
     // flows back through the encoder, pushing it toward outputting
     // *constant* z (the degenerate maximum-entropy fixed point), which
     // collapses V→0 and π→uniform within a few hundred steps.
+    //
+    // For options graphs we re-run the option-conditional forward on
+    // z_det. This shares the same parameter weights, so meganeura's
+    // autodiff sees both forwards reusing the same params; the
+    // entropy gradient hits the policy-side params (intentional —
+    // pushes policy head toward uniform) but not the encoder
+    // (intentional — stop_gradient).
     let total_loss = if entropy_beta == 0.0 {
         base_loss
     } else {
         let z_det = g.stop_gradient(z);
-        let logits_for_ent = policy.forward(&mut g, z_det);
+        let logits_for_ent = if num_options > 1 && per_option_heads {
+            // Reuse the same fc1 + per_option_fc2 structure on z_det.
+            // Per-option fc2 weights are addressed by name inside
+            // `per_option_fc2`, so calling it again with the same args
+            // creates duplicate ops on the same params.
+            let option_onehot = option_onehot.expect("set above");
+            let fc1 = nn::Linear::new(&mut g, "policy.fc1", latent_dim, hidden_dim);
+            let h = fc1.forward(&mut g, z_det);
+            let h = g.relu(h);
+            per_option_fc2(
+                &mut g,
+                h,
+                option_onehot,
+                num_options,
+                hidden_dim,
+                action_dim,
+            )
+        } else if num_options > 1 {
+            let option_onehot = option_onehot.expect("set above");
+            let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+            let trunk_logits = policy.forward(&mut g, z_det);
+            let option_bias =
+                nn::Linear::no_bias(&mut g, "policy.option_bias", num_options, action_dim);
+            let bias_out = option_bias.forward(&mut g, option_onehot);
+            g.add(trunk_logits, bias_out)
+        } else {
+            let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+            policy.forward(&mut g, z_det)
+        };
         let sm = g.softmax(logits_for_ent);
         let lsm = g.log_softmax(logits_for_ent);
         let p_log_p = g.mul(sm, lsm);

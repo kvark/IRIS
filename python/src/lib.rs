@@ -417,6 +417,7 @@ impl PyBatchAgent {
         label_smoothing = None,
         num_options = None,
         option_horizon = None,
+        per_option_heads = None,
         history_len = None,
         gamma = None,
         n_step = None,
@@ -506,6 +507,7 @@ impl PyBatchAgent {
         label_smoothing: Option<f32>,
         num_options: Option<usize>,
         option_horizon: Option<usize>,
+        per_option_heads: Option<bool>,
         history_len: Option<usize>,
         gamma: Option<f32>,
         n_step: Option<usize>,
@@ -660,6 +662,9 @@ impl PyBatchAgent {
         }
         if let Some(oh) = option_horizon {
             config.option_horizon = oh;
+        }
+        if let Some(p) = per_option_heads {
+            config.per_option_heads = p;
         }
         if let Some(h) = history_len {
             config.history_len = h;
