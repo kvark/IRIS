@@ -3232,6 +3232,26 @@ impl Agent {
         self.policy_session.read_all_param_norms()
     }
 
+    /// Set a per-parameter LR multiplier on the policy session, by
+    /// name prefix. Effective LR for params matching the prefix is
+    /// `lr_policy * batch_lr_scale * lr_scale * mul`. Longest-prefix-
+    /// match wins; default 1.0 if no prefix matches.
+    ///
+    /// Use case from kindle: gradient inspection on LunarLander showed
+    /// the policy_encoder.* params get 50-100× the gradient of policy.*
+    /// (the actual policy head). Calling
+    /// `set_policy_lr_multiplier("policy.", 5.0)` boosts the policy
+    /// head's effective LR without changing the encoder's, rebalancing
+    /// the asymmetric gradient flow.
+    pub fn set_policy_lr_multiplier(&mut self, prefix: &str, mul: f32) {
+        self.policy_session.set_lr_multiplier(prefix, mul);
+    }
+
+    /// Clear all per-parameter LR multipliers on the policy session.
+    pub fn clear_policy_lr_multipliers(&mut self) {
+        self.policy_session.clear_lr_multipliers();
+    }
+
     /// Must be called by the harness when `encoder_kind = Cnn` and
     /// the input shape is flat NCHW of size `batch · channels · h · w`.
     /// No-op when the encoder is `Mlp`.
