@@ -424,7 +424,9 @@ pub fn build_policy_graph_e2e(
     hidden_dim: usize,
     latent_dim: usize,
     batch_size: usize,
-    entropy_beta: f32,
+    entropy_beta: f32,  // If > 0 at construction, builds entropy branch
+                        // with a runtime-mutable input "entropy_beta".
+                        // If == 0, branch is fully elided (parity).
     value_loss_coef: f32,
     value_clip_scale: f32,
 ) -> Graph {
@@ -457,27 +459,26 @@ pub fn build_policy_graph_e2e(
     };
     let base_loss = g.add(policy_loss, value_loss);
 
+    // Entropy term: if construction-time beta > 0, include the branch
+    // with a runtime-mutable input "entropy_beta" (so the harness can
+    // anneal it over training). If beta == 0, fully elide the branch —
+    // preserves byte-identical behavior with pre-input-mode runs.
+    // Detach z before re-running the policy head on stop_gradient(z) —
+    // without this, the entropy bonus's gradient (which prefers uniform)
+    // flows back through the encoder, pushing it toward outputting
+    // *constant* z (the degenerate maximum-entropy fixed point), which
+    // collapses V→0 and π→uniform within a few hundred steps.
     let total_loss = if entropy_beta == 0.0 {
         base_loss
     } else {
-        // Detach z before the entropy branch (re-running the policy head
-        // on stop_gradient(z)). Without this, the entropy bonus's
-        // gradient (which prefers uniform) flows back through the
-        // encoder, pushing it toward outputting *constant* z (because
-        // constant z trivially gives uniform logits regardless of state
-        // — the degenerate maximum-entropy fixed point). The result is
-        // encoder collapse to z=0, V=0, π=uniform after a few hundred
-        // steps. Detaching z keeps the entropy gradient flowing to the
-        // policy head (still useful — pushes policy toward uniform) but
-        // not to the encoder.
         let z_det = g.stop_gradient(z);
         let logits_for_ent = policy.forward(&mut g, z_det);
         let sm = g.softmax(logits_for_ent);
         let lsm = g.log_softmax(logits_for_ent);
         let p_log_p = g.mul(sm, lsm);
         let mean_ent = g.mean_all(p_log_p);
-        let beta_node = g.scalar(entropy_beta);
-        let ent_penalty = g.mul(mean_ent, beta_node);
+        let beta_input = g.input("entropy_beta", &[1]);
+        let ent_penalty = g.mul(mean_ent, beta_input);
         g.add(base_loss, ent_penalty)
     };
 

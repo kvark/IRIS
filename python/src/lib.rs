@@ -1114,6 +1114,14 @@ impl PyBatchAgent {
         self.agent.set_lr_policy(lr);
     }
 
+    /// Update entropy bonus weight at runtime. Currently only effective
+    /// for the e2e graph (where entropy_beta is a graph input). Use case:
+    /// anneal entropy from high → 0 over training to maintain exploration
+    /// early then commit late. Standard PPO/A2C entropy schedule.
+    fn set_entropy_beta(&mut self, beta: f32) {
+        self.agent.set_entropy_beta(beta);
+    }
+
     /// Writable `memoryview` over the world-model session's
     /// `visual_obs` input buffer. Meganeura allocates that buffer
     /// as `Memory::Shared` (device-local + host-visible + host-

@@ -150,6 +150,19 @@ def main() -> int:
                         help="Number of initial log windows to skip when "
                         "computing the auto-threshold baseline (lets the "
                         "agent settle past the noisy first-tick state).")
+    parser.add_argument("--entropy-beta-final", type=float, default=None,
+                        help="If set, linearly anneal --entropy-beta from "
+                        "its initial value to this final value over "
+                        "--entropy-decay-steps env-steps. Targets local-"
+                        "optimum policy plateaus (LunarLander) — high "
+                        "early entropy keeps exploration alive past the "
+                        "plateau, decay to 0 lets the policy commit late. "
+                        "Only effective with --end-to-end-encoder (where "
+                        "entropy_beta is a graph input).")
+    parser.add_argument("--entropy-decay-steps", type=int, default=0,
+                        help="Number of agent-steps over which to linearly "
+                        "decay entropy_beta to --entropy-beta-final. Set "
+                        "to ~half of --steps for a typical schedule.")
     parser.add_argument("--policy-update-interval", type=int, default=1,
                         help="Update policy only every N env-steps, then do "
                         "N gradient steps on the accumulated rollout "
@@ -292,6 +305,12 @@ def main() -> int:
     t0 = time.time()
 
     for step in range(args.steps):
+        # Linear entropy_beta schedule.
+        if (args.entropy_beta_final is not None
+                and args.entropy_decay_steps > 0):
+            t = min(1.0, step / args.entropy_decay_steps)
+            beta_t = (1.0 - t) * args.entropy_beta + t * args.entropy_beta_final
+            agent.set_entropy_beta(float(beta_t))
         # Normalize obs lists to list-of-lists for kindle.act()
         obs_lists = [obs_batch[i].astype(np.float32).tolist() for i in range(args.lanes)]
         actions = agent.act(obs_lists)

@@ -1277,6 +1277,11 @@ pub struct Agent {
     /// PPO mode: per-row `π_old(a | s)` for the taken action
     /// `[N, 1]`. Positive, non-zero.
     ppo_old_prob_scratch: Vec<f32>,
+    /// True iff the policy graph has the runtime-mutable
+    /// "entropy_beta" input (built only when construction-time
+    /// entropy_beta > 0 in the e2e graph). Used by
+    /// `feed_entropy_beta_input` to gate set_input safely.
+    entropy_beta_input_present: bool,
     /// Effective option_dim (resolved from config: 0 → latent_dim). The
     /// goal vector width used by the goal-alignment reward bonus.
     option_dim: usize,
@@ -2035,6 +2040,9 @@ impl Agent {
             policy_z_scratch: vec![0.0; policy_batch * config.latent_dim],
             ppo_advantage_scratch: vec![0.0; policy_batch],
             ppo_old_prob_scratch: vec![1.0; policy_batch],
+            // Input is built only when e2e + initial entropy_beta > 0.
+            entropy_beta_input_present: config.end_to_end_encoder
+                && config.entropy_beta > 0.0,
             option_dim,
             option_onehot_scratch: vec![0.0; policy_batch * config.num_options.max(1)],
             option_taken_scratch: vec![0.0; n * config.num_options],
@@ -2360,6 +2368,7 @@ impl Agent {
         self.value_target_scratch.fill(0.0);
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
+        self.feed_entropy_beta_input();
         self.policy_session.set_learning_rate(0.0);
         self.policy_session.step();
         self.policy_session.wait();
@@ -3074,6 +3083,32 @@ impl Agent {
         self.config.learning_rate = lr;
     }
 
+    /// Mutate the entropy bonus weight at runtime. Currently only
+    /// effective for the end_to_end_encoder graph (entropy_beta is a
+    /// graph input there, set per-step by `feed_entropy_beta_input`).
+    /// Other graphs bake entropy_beta as a compile-time constant.
+    /// Use case: anneal entropy from a high initial value down to 0
+    /// over training, to maintain exploration early then commit late
+    /// — the standard PPO/A2C entropy schedule that helps escape
+    /// local-optimum policy plateaus on dense-reward envs like
+    /// LunarLander.
+    pub fn set_entropy_beta(&mut self, beta: f32) {
+        self.config.entropy_beta = beta;
+    }
+
+    /// Feed the current `config.entropy_beta` into the e2e policy
+    /// graph as input "entropy_beta". No-op when e2e is off OR when
+    /// the construction-time entropy_beta was 0 (in which case the
+    /// entropy branch was fully elided and the input doesn't exist
+    /// in the graph). Called before every `policy_session.step()` in
+    /// the e2e path.
+    fn feed_entropy_beta_input(&mut self) {
+        if self.config.end_to_end_encoder && self.entropy_beta_input_present {
+            let buf = [self.config.entropy_beta];
+            self.policy_session.set_input("entropy_beta", &buf);
+        }
+    }
+
     /// Mutate the policy-session learning rate at runtime. See
     /// `set_learning_rate` for the post-solve-crash use case; the
     /// policy LR is the dominant lever for this since the e2e encoder
@@ -3747,6 +3782,7 @@ impl Agent {
             .set_input("action", &self.policy_action_scratch);
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
+        self.feed_entropy_beta_input();
         self.policy_session
             .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
         self.policy_session.step();
@@ -3897,6 +3933,7 @@ impl Agent {
                 self.policy_session
                     .set_input("option_onehot", &self.option_onehot_scratch);
             }
+            self.feed_entropy_beta_input();
             self.policy_session.set_learning_rate(0.0);
             self.policy_session.step();
             self.policy_session.wait();
@@ -4122,6 +4159,7 @@ impl Agent {
             self.policy_session
                 .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
         }
+        self.feed_entropy_beta_input();
         self.policy_session
             .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
         self.policy_session.step();
@@ -4285,6 +4323,7 @@ impl Agent {
                 self.policy_session
                     .set_input("option_onehot", &self.option_onehot_scratch);
             }
+            self.feed_entropy_beta_input();
             self.policy_session.set_learning_rate(0.0);
             self.policy_session.step();
             self.policy_session.wait();
@@ -4468,6 +4507,7 @@ impl Agent {
             self.policy_session
                 .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
         }
+        self.feed_entropy_beta_input();
         // LR is not scaled down by rollout_length — the loss is already
         // mean-reduced over `policy_batch` rows, so gradient magnitude
         // per parameter is comparable to a `lanes`-batch update.
