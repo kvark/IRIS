@@ -118,11 +118,18 @@ def main() -> int:
                         help="If > 0, drop learning_rate AND lr_policy by "
                         "this factor (e.g. 10.0 for 10× drop) once "
                         "avg_ret over the recent window exceeds "
-                        "--solve-threshold. One-shot per run. Targets the "
+                        "--solve-threshold for --solve-windows consecutive "
+                        "log windows. One-shot per run. Targets the "
                         "post-solve crash by lowering update magnitude "
                         "after solve detected.")
     parser.add_argument("--solve-threshold", type=float, default=200.0,
                         help="avg_ret value triggering --lr-drop-on-solve.")
+    parser.add_argument("--solve-windows", type=int, default=1,
+                        help="Number of CONSECUTIVE log windows where "
+                        "avg_ret >= --solve-threshold required before "
+                        "firing the LR drop. Default 1 (immediate). Set "
+                        "2-3 to wait for sustained solve and avoid firing "
+                        "on a noisy first-time peak.")
     parser.add_argument("--policy-update-interval", type=int, default=1,
                         help="Update policy only every N env-steps, then do "
                         "N gradient steps on the accumulated rollout "
@@ -295,17 +302,25 @@ def main() -> int:
             all_recent = [r for lane_rets in ep_returns for r in lane_rets[-5:]]
             avg_ret = sum(all_recent) / max(1, len(all_recent))
             # One-shot LR drop on sustained solve detection.
-            if (args.lr_drop_on_solve > 0
-                    and not getattr(main, "_lr_dropped", False)
-                    and avg_ret >= args.solve_threshold):
-                new_lr = args.lr / args.lr_drop_on_solve
-                new_lr_policy = args.lr_policy / args.lr_drop_on_solve
-                agent.set_learning_rate(new_lr)
-                agent.set_lr_policy(new_lr_policy)
-                main._lr_dropped = True
-                print(f"[lr-drop] step={step} avg_ret={avg_ret:+.1f} "
-                      f"→ lr {args.lr:.1e} → {new_lr:.1e}, "
-                      f"lr_policy {args.lr_policy:.1e} → {new_lr_policy:.1e}")
+            # Requires `--solve-windows` consecutive windows above
+            # threshold to avoid firing on a noisy first-time peak
+            # (which can lock in a transient policy that's about to
+            # uncommit on its own).
+            if args.lr_drop_on_solve > 0 and not getattr(main, "_lr_dropped", False):
+                if avg_ret >= args.solve_threshold:
+                    main._solve_streak = getattr(main, "_solve_streak", 0) + 1
+                else:
+                    main._solve_streak = 0
+                if main._solve_streak >= args.solve_windows:
+                    new_lr = args.lr / args.lr_drop_on_solve
+                    new_lr_policy = args.lr_policy / args.lr_drop_on_solve
+                    agent.set_learning_rate(new_lr)
+                    agent.set_lr_policy(new_lr_policy)
+                    main._lr_dropped = True
+                    print(f"[lr-drop] step={step} avg_ret={avg_ret:+.1f} "
+                          f"streak={main._solve_streak} "
+                          f"→ lr {args.lr:.1e} → {new_lr:.1e}, "
+                          f"lr_policy {args.lr_policy:.1e} → {new_lr_policy:.1e}")
             elapsed = time.time() - t0
             sps = step * args.lanes / max(1e-3, elapsed)
             # Per-lane V and entropy distribution: V std across lanes
