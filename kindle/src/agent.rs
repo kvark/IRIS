@@ -1335,6 +1335,10 @@ pub struct Agent {
     /// KL branch is fully elided and set_input("old_logits", …)
     /// would error.
     old_logits_input_present: bool,
+    /// Most recent observed KL(π_new ‖ π_old) from the policy
+    /// session, read from output index 3 after each training step
+    /// when KL-PPO is on. Used by the harness for adaptive β.
+    last_kl: f32,
     /// Effective option_dim (resolved from config: 0 → latent_dim). The
     /// goal vector width used by the goal-alignment reward bonus.
     option_dim: usize,
@@ -2151,6 +2155,7 @@ impl Agent {
                 && config.entropy_beta > 0.0,
             // Input is built only when use_kl_ppo + kl_beta > 0.
             old_logits_input_present: config.use_kl_ppo && config.kl_beta > 0.0,
+            last_kl: 0.0,
             option_dim,
             option_onehot_scratch: vec![0.0; policy_batch * config.num_options.max(1)],
             option_taken_scratch: vec![0.0; n * config.num_options],
@@ -2503,6 +2508,7 @@ impl Agent {
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
         self.feed_entropy_beta_input();
+        self.feed_kl_beta_input();
         self.policy_session.set_learning_rate(0.0);
         self.policy_session.step();
         self.policy_session.wait();
@@ -3286,6 +3292,31 @@ impl Agent {
         }
     }
 
+    /// Feed `config.kl_beta` into the KL-PPO graph as input "kl_beta".
+    /// No-op when use_kl_ppo is off OR the KL branch was elided.
+    fn feed_kl_beta_input(&mut self) {
+        if self.old_logits_input_present {
+            let buf = [self.config.kl_beta];
+            self.policy_session.set_input("kl_beta", &buf);
+        }
+    }
+
+    /// Runtime setter for KL-PPO's β. Picked up on next training step.
+    /// Use case: Schulman 2017's adaptive β schedule — read observed
+    /// KL via `last_kl`, double β if KL > target × 1.5, halve if
+    /// KL < target / 1.5. Avoids the difficulty of finding the right
+    /// fixed β at compile time.
+    pub fn set_kl_beta(&mut self, beta: f32) {
+        self.config.kl_beta = beta;
+    }
+
+    /// Most recent observed KL(π_new ‖ π_old) from the last training
+    /// step (averaged over the policy_batch). Returns 0.0 when KL-PPO
+    /// is off or no training step has run.
+    pub fn last_kl(&self) -> f32 {
+        self.last_kl
+    }
+
     /// Mutate the policy-session learning rate at runtime. See
     /// `set_learning_rate` for the post-solve-crash use case; the
     /// policy LR is the dominant lever for this since the e2e encoder
@@ -4006,6 +4037,7 @@ impl Agent {
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
         self.feed_entropy_beta_input();
+        self.feed_kl_beta_input();
         self.policy_session
             .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
         self.policy_session.step();
@@ -4157,6 +4189,7 @@ impl Agent {
                     .set_input("option_onehot", &self.option_onehot_scratch);
             }
             self.feed_entropy_beta_input();
+        self.feed_kl_beta_input();
             self.policy_session.set_learning_rate(0.0);
             self.policy_session.step();
             self.policy_session.wait();
@@ -4383,6 +4416,7 @@ impl Agent {
                 .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
         }
         self.feed_entropy_beta_input();
+        self.feed_kl_beta_input();
         self.policy_session
             .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
         self.policy_session.step();
@@ -4556,6 +4590,7 @@ impl Agent {
                     .set_input("option_onehot", &self.option_onehot_scratch);
             }
             self.feed_entropy_beta_input();
+        self.feed_kl_beta_input();
             self.policy_session.set_learning_rate(0.0);
             self.policy_session.step();
             self.policy_session.wait();
@@ -4744,6 +4779,7 @@ impl Agent {
                 .set_input("old_logits", &self.kl_old_logits_scratch);
         }
         self.feed_entropy_beta_input();
+        self.feed_kl_beta_input();
         // LR is not scaled down by rollout_length — the loss is already
         // mean-reduced over `policy_batch` rows, so gradient magnitude
         // per parameter is comparable to a `lanes`-batch update.
@@ -4753,6 +4789,13 @@ impl Agent {
         self.policy_session.wait();
 
         let loss = self.policy_session.read_loss();
+        // Read KL diagnostic from output index 3 (only present when
+        // KL-PPO is on with kl_beta > 0 at construction).
+        if self.old_logits_input_present {
+            let mut kl_buf = [0.0f32; 1];
+            self.policy_session.read_output_by_index(3, &mut kl_buf);
+            self.last_kl = kl_buf[0];
+        }
         let wd = self.config.policy_loss_watchdog_threshold;
         if !loss.is_finite() || loss.abs() > wd {
             init_parameters(&mut self.policy_session);
