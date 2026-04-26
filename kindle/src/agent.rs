@@ -649,6 +649,18 @@ pub struct AgentConfig {
     /// PPO clip radius ε. Standard value `0.2`. Ratio is clipped to
     /// `[1 − ε, 1 + ε]`.
     pub ppo_clip_eps: f32,
+    /// Use the KL-penalty PPO graph variant (e2e only — non-e2e KL
+    /// path not implemented). Mutually exclusive with `use_ppo`
+    /// (which selects the clipped surrogate that has been documented
+    /// as failing — see docs/failed_experiments.md). The KL variant
+    /// uses plain-PG cross-entropy + β·KL(π_new ‖ π_old) for
+    /// trust-region behavior with well-defined gradient everywhere
+    /// (no dead clip zones). Requires `end_to_end_encoder = true`.
+    pub use_kl_ppo: bool,
+    /// KL penalty weight β for the use_kl_ppo path. Standard initial
+    /// value 0.01-0.1. Adaptive scheduling left to the harness for
+    /// now (set higher for stronger trust region / smaller updates).
+    pub kl_beta: f32,
     /// Number of epochs to replay each rollout through the PPO
     /// update. On epoch 1 the ratio is ≈ 1 everywhere (policy
     /// hasn't moved since collection), so the clip does nothing —
@@ -872,6 +884,8 @@ impl Default for AgentConfig {
             advantage_normalize: false,
             use_ppo: false,
             ppo_clip_eps: 0.2,
+            use_kl_ppo: false,
+            kl_beta: 0.05,
             ppo_n_epochs: 1,
             policy_warmup_steps: 0,
             recompute_base_v: false,
@@ -1167,6 +1181,11 @@ struct Lane {
     /// compute importance ratios. In (0, 1]; default 1.0 before first
     /// `act()`.
     last_prob_taken: f32,
+    /// Full logits (pre-softmax, length MAX_ACTION_DIM) at action time —
+    /// used by the KL-penalty PPO path to compute KL(π_new ‖ π_old)
+    /// exactly. Stored in `Transition.logits_at_action` on observe.
+    /// Only populated when `use_kl_ppo` is on; empty otherwise.
+    last_logits: Vec<f32>,
     last_entropy: f32,
     last_surprise: f32,
     last_novelty: f32,
@@ -1302,11 +1321,20 @@ pub struct Agent {
     /// PPO mode: per-row `π_old(a | s)` for the taken action
     /// `[N, 1]`. Positive, non-zero.
     ppo_old_prob_scratch: Vec<f32>,
+    /// KL-PPO mode: per-row stored old_logits `[batch, action_dim]`.
+    /// Filled from `ripe.logits_at_action` in policy_step_rollout_batch
+    /// when `use_kl_ppo` is on. Empty otherwise.
+    kl_old_logits_scratch: Vec<f32>,
     /// True iff the policy graph has the runtime-mutable
     /// "entropy_beta" input (built only when construction-time
     /// entropy_beta > 0 in the e2e graph). Used by
     /// `feed_entropy_beta_input` to gate set_input safely.
     entropy_beta_input_present: bool,
+    /// True iff the policy graph has the "old_logits" input
+    /// (built only when use_kl_ppo + kl_beta > 0). Otherwise the
+    /// KL branch is fully elided and set_input("old_logits", …)
+    /// would error.
+    old_logits_input_present: bool,
     /// Effective option_dim (resolved from config: 0 → latent_dim). The
     /// goal vector width used by the goal-alignment reward bonus.
     option_dim: usize,
@@ -1763,7 +1791,31 @@ impl Agent {
                 "end_to_end_encoder + use_ppo is not supported (PPO+e2e graph \
                  fails to converge; see docs/failed_experiments.md)"
             );
-            let g = if is_discrete && config.end_to_end_encoder {
+            assert!(
+                !(config.use_kl_ppo && !config.end_to_end_encoder),
+                "use_kl_ppo currently requires end_to_end_encoder = true"
+            );
+            assert!(
+                !(config.use_kl_ppo && config.use_ppo),
+                "use_kl_ppo and use_ppo are mutually exclusive"
+            );
+            assert!(
+                !(config.use_kl_ppo && config.num_options > 1),
+                "use_kl_ppo + L1 options not implemented"
+            );
+            let g = if is_discrete && config.end_to_end_encoder && config.use_kl_ppo {
+                policy::build_kl_policy_graph_e2e(
+                    OBS_TOKEN_DIM,
+                    TASK_DIM,
+                    MAX_ACTION_DIM,
+                    config.hidden_dim,
+                    config.latent_dim,
+                    policy_batch,
+                    config.kl_beta,
+                    config.value_loss_coef,
+                    config.value_clip_scale,
+                )
+            } else if is_discrete && config.end_to_end_encoder {
                 // L1 options + e2e: now supported. The e2e graph routes
                 // option_onehot through per_option_fc2 (when
                 // per_option_heads=true) or shared-trunk + per-option
@@ -2024,6 +2076,7 @@ impl Agent {
                 option_history: OptionHistory::new(config.option_history_len.max(1)),
                 last_value: 0.0,
                 last_prob_taken: 1.0,
+                last_logits: vec![0.0; MAX_ACTION_DIM],
                 last_entropy: 0.0,
                 last_surprise: 0.0,
                 last_novelty: 0.0,
@@ -2088,9 +2141,16 @@ impl Agent {
             policy_z_scratch: vec![0.0; policy_batch * config.latent_dim],
             ppo_advantage_scratch: vec![0.0; policy_batch],
             ppo_old_prob_scratch: vec![1.0; policy_batch],
+            kl_old_logits_scratch: if config.use_kl_ppo {
+                vec![0.0; policy_batch * MAX_ACTION_DIM]
+            } else {
+                Vec::new()
+            },
             // Input is built only when e2e + initial entropy_beta > 0.
             entropy_beta_input_present: config.end_to_end_encoder
                 && config.entropy_beta > 0.0,
+            // Input is built only when use_kl_ppo + kl_beta > 0.
+            old_logits_input_present: config.use_kl_ppo && config.kl_beta > 0.0,
             option_dim,
             option_onehot_scratch: vec![0.0; policy_batch * config.num_options.max(1)],
             option_taken_scratch: vec![0.0; n * config.num_options],
@@ -2427,6 +2487,18 @@ impl Agent {
         self.action_token_scratch.fill(0.0);
         self.policy_session
             .set_input("action", &self.action_token_scratch);
+        // KL-PPO graph requires `old_logits` input to compute the loss.
+        // act() doesn't read the loss output, but the input must exist
+        // for the forward pass to run. Zero out — KL contribution is
+        // discarded anyway. Only fires when the input was actually
+        // built (kl_beta > 0 at construction).
+        if self.old_logits_input_present {
+            for v in self.kl_old_logits_scratch.iter_mut() {
+                *v = 0.0;
+            }
+            self.policy_session
+                .set_input("old_logits", &self.kl_old_logits_scratch);
+        }
         self.value_target_scratch.fill(0.0);
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
@@ -2504,6 +2576,18 @@ impl Agent {
             // an extra array out of the batched forward. Continuous
             // actions use a Gaussian with fixed scale, we approximate
             // their π_old as 1.0 (the MSE surrogate is scale-invariant).
+            //
+            // Also cache the full logits for the KL-PPO path (when
+            // use_kl_ppo is on, the rollout-batch training feeds these
+            // as `old_logits` graph input to compute KL(π_new ‖ π_old)
+            // exactly).
+            if self.config.use_kl_ppo {
+                let n = head.len().min(lane.last_logits.len());
+                lane.last_logits[..n].copy_from_slice(&head[..n]);
+                for v in &mut lane.last_logits[n..] {
+                    *v = 0.0;
+                }
+            }
             lane.last_prob_taken = match &action {
                 Action::Discrete(a) => {
                     let probs = crate::policy::softmax_probs(head);
@@ -3029,6 +3113,11 @@ impl Agent {
                 pred_error,
                 value: lane.last_value,
                 prob_taken: lane.last_prob_taken,
+                logits_at_action: if self.config.use_kl_ppo {
+                    lane.last_logits.clone()
+                } else {
+                    Vec::new()
+                },
                 option_idx: lane.current_option,
                 env_id: lane.adapter.id(),
                 env_boundary,
@@ -3726,7 +3815,7 @@ impl Agent {
                 // This is what actually lowers the per-update gradient
                 // variance and makes the PPO clip fire on genuine trust-
                 // region excursions rather than on noise.
-                let n_epochs = if self.config.use_ppo {
+                let n_epochs = if self.config.use_ppo || self.config.use_kl_ppo {
                     self.config.ppo_n_epochs.max(1)
                 } else {
                     1
@@ -4420,6 +4509,15 @@ impl Agent {
                 ripe_action[row].copy_from_slice(&ripe.action);
                 ripe_option[row] = ripe.option_idx;
                 ripe_prob_taken[row] = ripe.prob_taken.max(1e-8);
+                if self.config.use_kl_ppo && !ripe.logits_at_action.is_empty() {
+                    let dst = &mut self.kl_old_logits_scratch
+                        [row * MAX_ACTION_DIM..(row + 1) * MAX_ACTION_DIM];
+                    let n = ripe.logits_at_action.len().min(MAX_ACTION_DIM);
+                    dst[..n].copy_from_slice(&ripe.logits_at_action[..n]);
+                    for v in dst[n..].iter_mut() {
+                        *v = 0.0;
+                    }
+                }
                 row_active[row] = true;
             }
         }
@@ -4640,6 +4738,10 @@ impl Agent {
                 .set_input("advantage", &self.ppo_advantage_scratch);
             self.policy_session
                 .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
+        }
+        if self.old_logits_input_present {
+            self.policy_session
+                .set_input("old_logits", &self.kl_old_logits_scratch);
         }
         self.feed_entropy_beta_input();
         // LR is not scaled down by rollout_length — the loss is already
@@ -5064,6 +5166,7 @@ mod tests {
                 pred_error: 0.0,
                 value,
                 prob_taken: 1.0,
+                logits_at_action: Vec::new(),
                 option_idx: 0,
                 env_id: 0,
                 env_boundary,

@@ -478,6 +478,8 @@ impl PyBatchAgent {
         advantage_normalize = None,
         use_ppo = None,
         ppo_clip_eps = None,
+        use_kl_ppo = None,
+        kl_beta = None,
         ppo_n_epochs = None,
         policy_warmup_steps = None,
         recompute_base_v = None,
@@ -572,6 +574,8 @@ impl PyBatchAgent {
         advantage_normalize: Option<bool>,
         use_ppo: Option<bool>,
         ppo_clip_eps: Option<f32>,
+        use_kl_ppo: Option<bool>,
+        kl_beta: Option<f32>,
         ppo_n_epochs: Option<usize>,
         policy_warmup_steps: Option<usize>,
         recompute_base_v: Option<bool>,
@@ -867,6 +871,12 @@ impl PyBatchAgent {
         }
         if let Some(v) = ppo_clip_eps {
             config.ppo_clip_eps = v;
+        }
+        if let Some(v) = use_kl_ppo {
+            config.use_kl_ppo = v;
+        }
+        if let Some(v) = kl_beta {
+            config.kl_beta = v;
         }
         if let Some(v) = ppo_n_epochs {
             config.ppo_n_epochs = v;

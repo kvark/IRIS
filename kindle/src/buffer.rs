@@ -102,6 +102,11 @@ pub struct Transition {
     /// as the denominator in PPO's importance ratio; unused by the plain
     /// policy-gradient path. Always in (0, 1].
     pub prob_taken: f32,
+    /// Full pre-softmax logits at action time (length MAX_ACTION_DIM).
+    /// Populated only when AgentConfig::use_kl_ppo is on; otherwise empty.
+    /// Used by the KL-penalty PPO path to compute KL(π_new ‖ π_old)
+    /// exactly via softmax(old_logits) at training time.
+    pub logits_at_action: Vec<f32>,
     /// L1 option index active at this step. Mirrors `lane.current_option`
     /// at push time; needed so the n-step training forward can feed the
     /// option_onehot that matches the old state (options can change
