@@ -231,6 +231,17 @@ def main() -> int:
     parser.add_argument("--ppo-clip-eps", type=float, default=0.2,
                         help="PPO clip radius ε; ratio is clamped to "
                         "[1-ε, 1+ε]. Standard 0.2.")
+    parser.add_argument("--use-kl-ppo", action="store_true",
+                        help="Use the KL-penalty PPO graph (e2e only). "
+                        "Plain-PG cross-entropy + β·KL(π_new ‖ π_old). "
+                        "Replaces the failed clipped-surrogate PPO+e2e "
+                        "(see docs/failed_experiments.md). KL has well-"
+                        "defined gradient everywhere — no dead clip zones. "
+                        "Requires --end-to-end-encoder; mutually exclusive "
+                        "with --use-ppo and L1 options.")
+    parser.add_argument("--kl-beta", type=float, default=0.05,
+                        help="KL penalty weight for --use-kl-ppo. Larger "
+                        "= tighter trust region. Try 0.01-0.5.")
     parser.add_argument("--ppo-n-epochs", type=int, default=1,
                         help="Number of epochs to replay each rollout "
                         "through the PPO update. Only matters with "
@@ -344,6 +355,8 @@ def main() -> int:
         advantage_normalize=args.advantage_normalize,
         use_ppo=args.use_ppo,
         ppo_clip_eps=args.ppo_clip_eps,
+        use_kl_ppo=args.use_kl_ppo,
+        kl_beta=args.kl_beta,
         ppo_n_epochs=args.ppo_n_epochs,
         policy_warmup_steps=args.policy_warmup_steps,
         recompute_base_v=args.recompute_base_v,

@@ -558,6 +558,114 @@ pub fn build_policy_graph_e2e(
     g
 }
 
+/// KL-penalty PPO graph with end-to-end encoder.
+///
+/// Replaces the clipped-surrogate of `build_ppo_policy_graph_e2e` (removed
+/// in `docs/failed_experiments.md` — never converged) with a KL-divergence
+/// trust-region penalty: standard plain-PG cross-entropy loss for the
+/// policy gradient, plus β·KL(π_new ‖ π_old) to keep updates bounded.
+///
+/// Why KL instead of clip:
+/// - The clipped surrogate has DEAD GRADIENT regions (when ratio is outside
+///   [1-ε, 1+ε], the `greater` op's zero backward zeros the policy gradient
+///   for that sample). Once a sample's ratio leaves the clip range, no
+///   recovery gradient — and on kindle's small per-step batches with
+///   normalized advantages, ratios drift quickly.
+/// - The KL penalty has well-defined gradient EVERYWHERE; the further
+///   π_new drifts from π_old, the larger the corrective force back. No
+///   dead zones.
+/// - Plain-PG CE loss provides the strong, well-conditioned policy
+///   gradient that the clipped surrogate's `mean(min(ratio·A, clip·A))`
+///   loses when normalized advantages have mean ≈ 0.
+///
+/// The KL is computed exactly using stored old_logits (`[batch, action_dim]`
+/// input) — full distribution, not the single-sample approximation.
+/// Detaches z from the value head (same fix as the failed PPO+e2e
+/// debug round) to prevent value-loss-dominated encoder saturation.
+///
+/// Inputs:
+/// - `"obs"`, `"task"`, `"action"` (advantage·one_hot): same as plain e2e.
+/// - `"old_logits"`: `[batch_size, action_dim]` — π_old's pre-softmax
+///   logits at action-time. Stored per-lane in the agent's transition
+///   buffer alongside `prob_taken`.
+/// - `"value_target"`: same as plain e2e.
+///
+/// Outputs: `[loss, logits, value]`.
+#[allow(clippy::too_many_arguments)]
+pub fn build_kl_policy_graph_e2e(
+    obs_dim: usize,
+    task_dim: usize,
+    action_dim: usize,
+    hidden_dim: usize,
+    latent_dim: usize,
+    batch_size: usize,
+    kl_beta: f32,
+    value_loss_coef: f32,
+    value_clip_scale: f32,
+) -> Graph {
+    let mut g = Graph::new();
+    let obs = g.input("obs", &[batch_size, obs_dim]);
+    let task = g.input("task", &[batch_size, task_dim]);
+    let action = g.input("action", &[batch_size, action_dim]);
+    // old_logits input is only declared when kl_beta > 0 — meganeura
+    // optimizer would prune unused inputs and break set_input calls.
+    let old_logits_opt = if kl_beta > 0.0 {
+        Some(g.input("old_logits", &[batch_size, action_dim]))
+    } else {
+        None
+    };
+    let value_target = g.input("value_target", &[batch_size, 1]);
+
+    let encoder = build_named_encoder(&mut g, obs_dim, task_dim, latent_dim, hidden_dim);
+    let z = encoder_forward(&mut g, &encoder, obs, task);
+
+    let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+    let logits = policy.forward(&mut g, z);
+
+    // Plain PG cross-entropy loss — the proven-working policy gradient
+    // signal. Action input is `advantage · one_hot(taken)`, same convention
+    // as build_policy_graph_e2e.
+    let policy_loss = g.cross_entropy_loss(logits, action);
+
+    // Value head — let the value gradient flow into encoder, matching
+    // what the working `build_policy_graph_e2e` does.
+    let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
+    let raw_value = value_head.forward(&mut g, z);
+    let value = scaled_tanh(&mut g, raw_value, value_clip_scale, batch_size, 1);
+    let value_loss_raw = g.mse_loss(value, value_target);
+    let value_loss = if (value_loss_coef - 1.0).abs() < 1e-6 {
+        value_loss_raw
+    } else {
+        let coef = g.scalar(value_loss_coef);
+        g.mul(value_loss_raw, coef)
+    };
+    let pv = g.add(policy_loss, value_loss);
+
+    // KL(π_new ‖ π_old) = Σ_a π_new(a) · (log π_new(a) − log π_old(a)).
+    // When kl_beta == 0 at construction, fully elide the KL branch
+    // including the old_logits input — preserves byte-identical behavior
+    // with build_policy_graph_e2e in that case (kl_beta=0 should be
+    // equivalent to plain e2e).
+    let total_loss = if let Some(old_logits) = old_logits_opt {
+        let sm_new = g.softmax(logits);
+        let lsm_new = g.log_softmax(logits);
+        let lsm_old = g.log_softmax(old_logits);
+        // log_diff = lsm_new − lsm_old via add(neg(...)) (no sub op).
+        let neg_lsm_old = g.neg(lsm_old);
+        let log_diff = g.add(lsm_new, neg_lsm_old);
+        let kl_per_action = g.mul(sm_new, log_diff);
+        let kl_mean = g.mean_all(kl_per_action);
+        let kl_beta_scalar = g.scalar(kl_beta);
+        let kl_term = g.mul(kl_mean, kl_beta_scalar);
+        g.add(pv, kl_term)
+    } else {
+        pv
+    };
+
+    g.set_outputs(vec![total_loss, logits, value]);
+    g
+}
+
 /// Helper: build a named encoder so the policy-side copy doesn't
 /// collide parameter-names with the wm_session encoder. Uses
 /// `policy_encoder.*` prefix.
