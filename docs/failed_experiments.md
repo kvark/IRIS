@@ -80,6 +80,80 @@ solved) and Acrobot-v1 to mean -128 (sustained improvement).
 The PPO surrogate's gradient pathology in our setup is documented
 here as a known issue that future PPO work would need to address.
 
+## Frozen π_old snapshot for KL-PPO
+
+**Removed** 2026-04-26 (implemented + reverted same day). Designed to
+address the empirical finding that kindle's KL-PPO has near-zero KL
+between π_new and π_old — the per-transition `logits_at_action` stored
+at action-time is too close to the current policy (only a few env-steps
+of drift), so the KL trust region never activates.
+
+### Architecture
+A `capture_kl_snapshot_logits` method that ran a forward-only pass
+(LR=0) on the current rollout's obs/task using the current policy
+weights, capturing the resulting logits as a "frozen snapshot." The
+K subsequent training-epoch calls then used this snapshot as the
+old_logits input, so KL would grow monotonically as the policy
+drifted from the captured point — what standard PPO does.
+
+### Implementation sketch
+- New method `capture_kl_snapshot_logits(n_step, rollout_length)` that
+  set a `kl_snapshot_capture_pending` flag and re-entered
+  `policy_step_rollout_batch` with the flag on.
+- Inside `policy_step_rollout_batch`, when the flag was set: LR forced
+  to 0, weights didn't move, but the forward pass produced logits.
+- After the call: `read_output_by_index(1, &mut kl_old_logits_scratch)`
+  to capture the snapshot.
+- Inside the K-epoch dispatch, called the snapshot capture once before
+  the K-loop. Removed the per-row refill of kl_old_logits_scratch from
+  ripe.logits_at_action (the snapshot replaced it).
+
+### Symptoms
+Tested on CartPole seed=42, KL-PPO config (vlc=0.1, β=0.05,
+rollout=5, epochs=4):
+- Steps 5k-25k: V learns normally (V[+0.18, +27]), ent oscillates
+  0.01-0.69, KL stays at 0.0001-0.004 (still tiny — snapshot didn't
+  produce expected KL growth).
+- Step 35k+: V drops to exactly 0.00, ent locks at 0.69 (uniform max),
+  pi loss has small spikes. Mean +17.
+
+V going to exactly 0.00 indicates either the value head's output
+saturates at the scaled_tanh's zero crossing, OR the encoder produces
+z=0 (degenerate). Couldn't quickly diagnose which.
+
+### Hypotheses for the bug
+1. The forward-only "snapshot" pass still triggers the SGD update at
+   LR=0; meganeura's update path does the dispatch even with
+   learning_rate=0.0. Adam's m/v moments may still update (need to
+   verify). If m/v drift during snapshot passes, then on real training
+   passes Adam's effective LR is wrong.
+2. The early-return after snapshot capture skips loss bookkeeping
+   (read_loss, last_policy_loss EMA update, watchdog). The watchdog
+   tracks policy_loss_ema and re-inits the policy if loss explodes.
+   Skipping the read + EMA update could mask a bad loss.
+3. The kl_old_logits_scratch buffer was being read mid-step in the
+   capture pass; possible race with the GPU-side scratch.
+
+### Why we stopped
+The bug needs grad-inspection iteration that adds another 1-2 hours.
+Plus, even if the snapshot mechanism worked, the deeper architectural
+issue is that kindle's training cadence (per-step or 5-step rollout
+with 1-4 epochs) is fundamentally different from standard PPO's
+"collect 2048 steps with frozen policy, then train 10 epochs of
+mini-batches." The snapshot would help, but a full PPO refactor
+(separate collect phase from train phase) is the principled fix.
+
+### What replaces it in practice
+Nothing — KL-PPO without the snapshot remains in the codebase
+(behaves like plain PG with a tiny KL nudge). The frozen-snapshot
+mechanism is documented here for future attempt.
+
+### Files removed
+- `Agent::capture_kl_snapshot_logits` (~30 lines)
+- `Agent::kl_snapshot_capture_pending` field
+- The conditional snapshot capture call in the K-epoch dispatch in
+  `policy_step_batched`
+
 ## Auxiliary CE loss alongside PPO surrogate
 
 Tried adding `cross_entropy_loss(logits, A·one_hot)` to the PPO

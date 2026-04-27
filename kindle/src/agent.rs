@@ -3851,6 +3851,9 @@ impl Agent {
                 } else {
                     1
                 };
+                // KL-PPO frozen-π_old snapshot mechanism was implemented
+                // here and reverted — caused value-head collapse at
+                // step ~35k on CartPole. See docs/failed_experiments.md.
                 for _ in 0..n_epochs {
                     self.policy_step_rollout_batch(n_step, rollout_length);
                 }
@@ -4543,6 +4546,13 @@ impl Agent {
                 ripe_action[row].copy_from_slice(&ripe.action);
                 ripe_option[row] = ripe.option_idx;
                 ripe_prob_taken[row] = ripe.prob_taken.max(1e-8);
+                // KL-PPO: refill from per-transition action-time logits.
+                // Note this keeps π_old close to π_new (only a few env-
+                // steps of drift per transition), so KL stays small and
+                // the trust region rarely activates. The frozen snapshot
+                // mechanism (capture_kl_snapshot_logits) addresses this
+                // but is currently disabled due to a value-head collapse
+                // bug — see docs/failed_experiments.md.
                 if self.config.use_kl_ppo && !ripe.logits_at_action.is_empty() {
                     let dst = &mut self.kl_old_logits_scratch
                         [row * MAX_ACTION_DIM..(row + 1) * MAX_ACTION_DIM];
