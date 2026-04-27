@@ -143,6 +143,28 @@ with 1-4 epochs) is fundamentally different from standard PPO's
 mini-batches." The snapshot would help, but a full PPO refactor
 (separate collect phase from train phase) is the principled fix.
 
+### Update 2026-04-27 — bug confirmed as NaN cascade in encoder
+With the snapshot mechanism re-enabled and `--grad-debug-every 5000`,
+the failure mode is precisely localized: between step 40k and 45k
+on CartPole, ALL `policy_encoder.*` parameters become NaN (verified
+via grad-inspection's bulk weight-norm read). The KL gradient flowing
+through stop_gradient(z) → policy_encoder pushes the weights into
+overflow within a few hundred K-cycles.
+
+Tried adding NaN/Inf guard + soft clamp (±20) on captured logits in
+`capture_kl_snapshot_logits`; result was V collapse moved EARLIER
+to step 15k (the clamp itself caused gradient pathology — clamping
+old_logits to ±20 made KL gradient larger for non-clamped new_logits).
+
+Real fix likely needs one of:
+- Stop-gradient on z for the KL term too (currently only for entropy)
+- Numerically-stable KL formulation that doesn't blow up on
+  near-deterministic π_old
+- Frozen-weights snapshot in a SEPARATE session (not a shared-weights
+  forward pass), so capturing doesn't perturb gradients
+
+All require multi-day diagnostic work. Documented and parked.
+
 ### What replaces it in practice
 Nothing — KL-PPO without the snapshot remains in the codebase
 (behaves like plain PG with a tiny KL nudge). The frozen-snapshot

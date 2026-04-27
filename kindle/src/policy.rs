@@ -647,8 +647,21 @@ pub fn build_kl_policy_graph_e2e(
     // with build_policy_graph_e2e in that case (kl_beta=0 should be
     // equivalent to plain e2e).
     let (total_loss, kl_output) = if let Some(old_logits) = old_logits_opt {
-        let sm_new = g.softmax(logits);
-        let lsm_new = g.log_softmax(logits);
+        // Detach z before re-running the policy head for the KL term
+        // (same fix as the entropy branch in build_policy_graph_e2e).
+        // Without this, the KL gradient flows back through the encoder.
+        // For near-deterministic π_old (peaked snapshot), log_softmax
+        // can have very negative values for rare classes; the KL
+        // gradient through these is amplified through the encoder's
+        // small weights → NaN cascade in 30-50k env-steps.
+        // With stop_gradient(z), the KL force only updates the policy
+        // head's weights, leaving the encoder shaped purely by CE +
+        // value loss. This is the same trick that fixes the entropy-
+        // collapses-encoder bug on the plain e2e graph.
+        let z_for_kl = g.stop_gradient(z);
+        let logits_for_kl = policy.forward(&mut g, z_for_kl);
+        let sm_new = g.softmax(logits_for_kl);
+        let lsm_new = g.log_softmax(logits_for_kl);
         let lsm_old = g.log_softmax(old_logits);
         // log_diff = lsm_new − lsm_old via add(neg(...)) (no sub op).
         let neg_lsm_old = g.neg(lsm_old);

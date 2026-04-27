@@ -248,6 +248,14 @@ def main() -> int:
                         "double β if KL > target·1.5, halve if "
                         "KL < target/1.5. Bounds β to [1e-4, 10]. "
                         "Standard target value 0.01-0.05.")
+    parser.add_argument("--kl-use-snapshot", action="store_true",
+                        help="With --use-kl-ppo, freeze π_old at start of "
+                        "each K-epoch cycle (forward pass on the rollout "
+                        "with current weights, captured logits used for "
+                        "all K training epochs). Standard PPO behavior. "
+                        "Without this flag, kindle uses per-transition "
+                        "logits_at_action which keeps π_old very close to "
+                        "π_new (KL near zero, trust region inactive).")
     parser.add_argument("--ppo-n-epochs", type=int, default=1,
                         help="Number of epochs to replay each rollout "
                         "through the PPO update. Only matters with "
@@ -363,6 +371,7 @@ def main() -> int:
         ppo_clip_eps=args.ppo_clip_eps,
         use_kl_ppo=args.use_kl_ppo,
         kl_beta=args.kl_beta,
+        kl_use_snapshot=args.kl_use_snapshot,
         ppo_n_epochs=args.ppo_n_epochs,
         policy_warmup_steps=args.policy_warmup_steps,
         recompute_base_v=args.recompute_base_v,
