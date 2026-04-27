@@ -432,6 +432,9 @@ pub fn build_policy_graph_e2e(
     value_clip_scale: f32,
     num_options: usize,       // L1 options support: 0/1 = flat, >1 = options
     per_option_heads: bool,   // when num_options > 1: per-option fc2 vs shared+bias
+    wm_aux_loss_coef: f32,    // > 0 builds an in-graph WM head + auxiliary
+                              // MSE loss, sharing the policy encoder. Adds
+                              // inputs "next_obs" and "raw_action".
 ) -> Graph {
     let mut g = Graph::new();
     let obs = g.input("obs", &[batch_size, obs_dim]);
@@ -494,7 +497,61 @@ pub fn build_policy_graph_e2e(
         let coef = g.scalar(value_loss_coef);
         g.mul(value_loss_raw, coef)
     };
-    let base_loss = g.add(policy_loss, value_loss);
+    let policy_value_loss = g.add(policy_loss, value_loss);
+
+    // Auxiliary world-model loss: predict z_{t+1} from (z_t, a_t).
+    // Encoder is shared with policy (so policy gradient prevents
+    // encoder collapse); the prediction target is `stop_gradient(next_z)`,
+    // so the encoder receives gradient ONLY through the predictor side.
+    // Residual parameterization (z + delta) makes the no-op baseline
+    // the identity. Adds inputs "next_obs" and "raw_action".
+    //
+    // Diagnostic output nodes (`wm_pred_mse` and `wm_noop_mse`) are
+    // captured here and appended to the graph outputs at the end so
+    // the agent can read both scalars after each training step. Used
+    // by harnesses to verify the WM is actually predicting (ratio
+    // < 1) rather than the encoder collapsing into a trivial fixed
+    // point.
+    let (base_loss, wm_diag_nodes) = if wm_aux_loss_coef > 0.0 {
+        let next_obs = g.input("next_obs", &[batch_size, obs_dim]);
+        let raw_action = g.input("raw_action", &[batch_size, action_dim]);
+        let next_z = encoder_forward(&mut g, &encoder, next_obs, task);
+        let next_z_target = g.stop_gradient(next_z);
+
+        // WM head — same shape as the dedicated WM session's head, but
+        // sized off the policy's latent_dim/hidden_dim. Residual.
+        let wm_z_proj = nn::Linear::new(&mut g, "wm_aux.z_proj", latent_dim, hidden_dim);
+        let wm_a_proj = nn::Linear::no_bias(&mut g, "wm_aux.a_proj", action_dim, hidden_dim);
+        let wm_fc2 = nn::Linear::new(&mut g, "wm_aux.fc2", hidden_dim, hidden_dim);
+        let wm_fc_out = nn::Linear::no_bias(&mut g, "wm_aux.fc_out", hidden_dim, latent_dim);
+        let h_z = wm_z_proj.forward(&mut g, z);
+        let h_a = wm_a_proj.forward(&mut g, raw_action);
+        let h = g.add(h_z, h_a);
+        let h = g.relu(h);
+        let h = wm_fc2.forward(&mut g, h);
+        let h = g.relu(h);
+        let delta = wm_fc_out.forward(&mut g, h);
+        let predicted_next_z = g.add(z, delta);
+        let wm_loss_raw = g.mse_loss(predicted_next_z, next_z_target);
+        let wm_coef = g.scalar(wm_aux_loss_coef);
+        let wm_loss = g.mul(wm_loss_raw, wm_coef);
+
+        // Diagnostic: no-op baseline MSE = ||z - next_z||² (mean over
+        // batch × latent). If the encoder collapses to a fixed point,
+        // this approaches 0 and the WM has nothing to predict; if the
+        // WM is properly modeling dynamics, wm_pred_mse < wm_noop_mse.
+        // Both nodes are detached so they don't contribute to the
+        // gradient path — they're pure read-out scalars.
+        let z_det = g.stop_gradient(z);
+        let wm_noop_mse = g.mse_loss(z_det, next_z_target);
+        let wm_pred_mse_diag = g.stop_gradient(wm_loss_raw);
+        let wm_noop_mse_diag = g.stop_gradient(wm_noop_mse);
+
+        let new_loss = g.add(policy_value_loss, wm_loss);
+        (new_loss, Some((wm_pred_mse_diag, wm_noop_mse_diag)))
+    } else {
+        (policy_value_loss, None)
+    };
 
     // Entropy term: if construction-time beta > 0, include the branch
     // with a runtime-mutable input "entropy_beta" (so the harness can
@@ -554,7 +611,12 @@ pub fn build_policy_graph_e2e(
         g.add(base_loss, ent_penalty)
     };
 
-    g.set_outputs(vec![total_loss, logits, value]);
+    let mut outputs = vec![total_loss, logits, value];
+    if let Some((pred_mse, noop_mse)) = wm_diag_nodes {
+        outputs.push(pred_mse);
+        outputs.push(noop_mse);
+    }
+    g.set_outputs(outputs);
     g
 }
 
