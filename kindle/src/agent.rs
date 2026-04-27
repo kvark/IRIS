@@ -2163,8 +2163,12 @@ impl Agent {
                 Vec::new()
             },
             // Input is built only when e2e + initial entropy_beta > 0.
+            // The KL-PPO graph variant doesn't include the entropy
+            // regularization branch (no entropy_beta input), so gate
+            // it out here too.
             entropy_beta_input_present: config.end_to_end_encoder
-                && config.entropy_beta > 0.0,
+                && config.entropy_beta > 0.0
+                && !config.use_kl_ppo,
             // Input is built only when use_kl_ppo + kl_beta > 0.
             old_logits_input_present: config.use_kl_ppo && config.kl_beta > 0.0,
             last_kl: 0.0,
