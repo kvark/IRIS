@@ -265,3 +265,44 @@ input). Set_input call panicked with "unknown input: entropy_beta".
 Gate now also checks `!use_kl_ppo`. Note: this means KL-PPO has no
 entropy regularization on its policy loss — adding one would require
 extending build_kl_policy_graph_e2e.
+
+## DIAYN-options head-to-head on LunarLander
+
+**Tested** 2026-04-27. Same context as the KL-PPO failure: testing
+whether DIAYN (mutual-info skill diversity, kindle `5b7fbc7`) breaks
+the LunarLander -132 ceiling that plain-PG e2e + LR-drop established.
+
+### Configurations (LunarLander-v3, 80k policy steps × 8 lanes)
+| Config | Mean | Notes |
+|--------|------|-------|
+| Plain-PG e2e | **-179** | baseline (no options, no DIAYN) |
+| Options=4, DIAYN α=0.0 | -221 | options alone hurt |
+| Options=4, DIAYN α=0.1 | -214 | tiny lift over α=0 |
+| Options=4, DIAYN α=0.3 | -243 | DIAYN reward overwhelms extrinsic |
+
+### Diagnosis
+- Options alone (4 per-option heads, no DIAYN) hurt by 42 points vs
+  plain-PG. The per-option-head gradient dilution outweighs whatever
+  benefit option diversity might provide, at this budget.
+- DIAYN at α=0.1 partially compensates (small lift over α=0) but
+  doesn't recover plain-PG's level — entropy stays near max (1.30+)
+  throughout, indicating the policy never commits.
+- DIAYN at α=0.3 makes things worse — the intrinsic reward signal
+  becomes large enough to drown out extrinsic, and the policy is
+  rewarded more for trajectory diversity than for landing.
+
+This aligns with the structural finding from MountainCar+DIAYN
+(memory `project_kindle_structural_cap.md`): "DIAYN gives the agent
+diverse skills to try, but if NONE of those skills stochastically
+reaches the goal frequently enough to bootstrap policy gradient, the
+agent never converges." LunarLander's positive-reward (+100 for
+successful landing) is rare enough at random behavior that even
+8 lanes × 6300 episodes = ~50k episodes don't see enough successful
+landings to outweigh the DIAYN bonus.
+
+### Conclusion across all 2026-04-27 LunarLander head-to-heads
+Plain-PG e2e + LR-drop dominates at 80k×8 budget. Trust region (KL-PPO
+snapshot) and skill diversity (DIAYN-options) both fail to break
+through. The architectural ceiling at -132 (1.2M env-steps, plain-PG)
+is the genuine kindle limit for this env without explicit reward
+shaping or much longer budgets.
