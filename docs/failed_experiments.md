@@ -327,3 +327,22 @@ at the peak window indefinitely. This is the new recommended config
 for kindle on negative-reward envs where the LR-drop strategy applies.
 1000x freezes too tightly and the policy can't adapt to lane-batch
 variance; 100x is the empirical sweet spot.
+
+### Three-seed reproducibility (100x, LunarLander 200k×8)
+| Seed | Mean / 1.6M env-steps |
+|------|----------------------|
+| 42   | -159.96 |
+| 0    | -166.53 |
+| 1    | -178.73 |
+| **3-seed mean** | **-168.4** |
+
+Robustly better than the 10x-baseline -221 across all three seeds.
+
+### Generalization caveat
+Quick CartPole and Acrobot tests at 80k×8/rollout=4/100x didn't fire
+the LR-drop trigger at this budget — agents stayed near random. The
+prior memos that report CartPole +218 (with 10x) and Acrobot -128
+used different configs (longer budget, `--rollout-length` ≥5, etc.).
+The 100x finding is currently validated on LunarLander only; verifying
+on CartPole/Acrobot would require running each env at its own
+working baseline config and substituting 10x→100x in the LR-drop arg.
