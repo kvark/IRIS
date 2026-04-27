@@ -661,6 +661,12 @@ pub struct AgentConfig {
     /// value 0.01-0.1. Adaptive scheduling left to the harness for
     /// now (set higher for stronger trust region / smaller updates).
     pub kl_beta: f32,
+    /// When `use_kl_ppo` is on, switch from per-transition logits_at_action
+    /// (kindle's default — keeps π_old very close to π_new because the
+    /// per-step training cadence keeps drift tiny) to a frozen snapshot
+    /// captured ONCE per K-epoch cycle. Standard PPO uses the latter.
+    /// Default `false` (per-transition mode preserved).
+    pub kl_use_snapshot: bool,
     /// Number of epochs to replay each rollout through the PPO
     /// update. On epoch 1 the ratio is ≈ 1 everywhere (policy
     /// hasn't moved since collection), so the clip does nothing —
@@ -886,6 +892,7 @@ impl Default for AgentConfig {
             ppo_clip_eps: 0.2,
             use_kl_ppo: false,
             kl_beta: 0.05,
+            kl_use_snapshot: false,
             ppo_n_epochs: 1,
             policy_warmup_steps: 0,
             recompute_base_v: false,
@@ -1339,6 +1346,11 @@ pub struct Agent {
     /// session, read from output index 3 after each training step
     /// when KL-PPO is on. Used by the harness for adaptive β.
     last_kl: f32,
+    /// True when policy_step_rollout_batch is being called purely
+    /// to capture the KL π_old snapshot (forward only, LR=0). Set
+    /// by `capture_kl_snapshot_logits` for the duration of one call.
+    /// Re-introduced for snapshot-bug debug per docs/failed_experiments.md.
+    kl_snapshot_capture_pending: bool,
     /// Effective option_dim (resolved from config: 0 → latent_dim). The
     /// goal vector width used by the goal-alignment reward bonus.
     option_dim: usize,
@@ -2156,6 +2168,7 @@ impl Agent {
             // Input is built only when use_kl_ppo + kl_beta > 0.
             old_logits_input_present: config.use_kl_ppo && config.kl_beta > 0.0,
             last_kl: 0.0,
+            kl_snapshot_capture_pending: false,
             option_dim,
             option_onehot_scratch: vec![0.0; policy_batch * config.num_options.max(1)],
             option_taken_scratch: vec![0.0; n * config.num_options],
@@ -3851,9 +3864,18 @@ impl Agent {
                 } else {
                     1
                 };
-                // KL-PPO frozen-π_old snapshot mechanism was implemented
-                // here and reverted — caused value-head collapse at
-                // step ~35k on CartPole. See docs/failed_experiments.md.
+                // KL-PPO frozen-π_old snapshot capture (when
+                // kl_use_snapshot is on). Captures current policy's logits
+                // on the rollout batch BEFORE the K training epochs, holds
+                // them across all K iterations. KL grows monotonically as
+                // policy drifts from the captured point. Without this,
+                // KL stays near 0 and the trust region is inactive.
+                if self.config.use_kl_ppo
+                    && self.config.kl_use_snapshot
+                    && self.old_logits_input_present
+                {
+                    self.capture_kl_snapshot_logits(n_step, rollout_length);
+                }
                 for _ in 0..n_epochs {
                     self.policy_step_rollout_batch(n_step, rollout_length);
                 }
@@ -4453,6 +4475,45 @@ impl Agent {
     /// corresponds to lane `lane_i`'s ripe transition at
     /// `ripe_back_offset = offset`. Older offsets (larger `offset`)
     /// appear first, matching the temporal order of collection.
+    /// KL-PPO snapshot capture: forward-only pass on the rollout
+    /// batch's obs/task using current weights, write resulting logits
+    /// into kl_old_logits_scratch as the "frozen π_old" for the
+    /// upcoming K-epoch cycle.
+    ///
+    /// Called ONCE before the K-loop when `kl_use_snapshot=true`. The K
+    /// subsequent training calls leave kl_old_logits_scratch untouched
+    /// (the per-transition refill is gated off in snapshot mode), so KL
+    /// grows monotonically as the policy drifts from this captured point.
+    ///
+    /// Implementation: run policy_step_rollout_batch with the snapshot
+    /// flag set; that suppresses both the per-transition refill of
+    /// kl_old_logits_scratch AND the backward gradient effect (LR=0).
+    /// All other bookkeeping (read_loss, EMA, watchdog) runs normally
+    /// to keep the call's side effects clean. After return, read
+    /// output index 1 (logits) into kl_old_logits_scratch.
+    fn capture_kl_snapshot_logits(&mut self, n_step: usize, rollout_length: usize) {
+        let lanes = self.lanes.len();
+        let policy_batch = lanes * rollout_length;
+        self.kl_snapshot_capture_pending = true;
+        self.policy_step_rollout_batch(n_step, rollout_length);
+        self.kl_snapshot_capture_pending = false;
+        let n = policy_batch * MAX_ACTION_DIM;
+        if self.kl_old_logits_scratch.len() < n {
+            self.kl_old_logits_scratch.resize(n, 0.0);
+        }
+        self.policy_session
+            .read_output_by_index(1, &mut self.kl_old_logits_scratch[..n]);
+        // Defensive NaN/Inf guard. With stop_gradient(z) on the KL term
+        // in the graph (see build_kl_policy_graph_e2e), the KL gradient
+        // shouldn't push encoder weights toward overflow, but this is a
+        // belt-and-suspenders sanity check.
+        for v in self.kl_old_logits_scratch[..n].iter_mut() {
+            if !v.is_finite() {
+                *v = 0.0;
+            }
+        }
+    }
+
     fn policy_step_rollout_batch(&mut self, n_step: usize, rollout_length: usize) {
         let lanes = self.lanes.len();
         let policy_batch = lanes * rollout_length;
@@ -4546,14 +4607,21 @@ impl Agent {
                 ripe_action[row].copy_from_slice(&ripe.action);
                 ripe_option[row] = ripe.option_idx;
                 ripe_prob_taken[row] = ripe.prob_taken.max(1e-8);
-                // KL-PPO: refill from per-transition action-time logits.
-                // Note this keeps π_old close to π_new (only a few env-
-                // steps of drift per transition), so KL stays small and
-                // the trust region rarely activates. The frozen snapshot
-                // mechanism (capture_kl_snapshot_logits) addresses this
-                // but is currently disabled due to a value-head collapse
-                // bug — see docs/failed_experiments.md.
-                if self.config.use_kl_ppo && !ripe.logits_at_action.is_empty() {
+                // KL-PPO old_logits sourcing:
+                // - When `kl_snapshot_capture_pending` is on: this is the
+                //   snapshot capture pass; don't touch kl_old_logits_scratch
+                //   (it'll be filled from output 1 after this call).
+                // - When `kl_use_snapshot` is on (real training in
+                //   snapshot mode): also don't touch — the snapshot
+                //   captured by the previous capture pass should persist
+                //   across all K training epochs.
+                // - Otherwise (per-transition mode): refill from
+                //   ripe.logits_at_action like before.
+                if self.config.use_kl_ppo
+                    && !self.kl_snapshot_capture_pending
+                    && !self.config.kl_use_snapshot
+                    && !ripe.logits_at_action.is_empty()
+                {
                     let dst = &mut self.kl_old_logits_scratch
                         [row * MAX_ACTION_DIM..(row + 1) * MAX_ACTION_DIM];
                     let n = ripe.logits_at_action.len().min(MAX_ACTION_DIM);
@@ -4793,15 +4861,25 @@ impl Agent {
         // LR is not scaled down by rollout_length — the loss is already
         // mean-reduced over `policy_batch` rows, so gradient magnitude
         // per parameter is comparable to a `lanes`-batch update.
-        self.policy_session
-            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
+        // Snapshot capture pass: zero LR so weights don't move; we just
+        // want the forward pass's logits to capture as the frozen π_old.
+        // All other bookkeeping (read_loss, EMA, watchdog) still runs.
+        let effective_lr = if self.kl_snapshot_capture_pending {
+            0.0
+        } else {
+            self.config.lr_policy * self.batch_lr_scale * lr_scale
+        };
+        self.policy_session.set_learning_rate(effective_lr);
         self.policy_session.step();
         self.policy_session.wait();
 
         let loss = self.policy_session.read_loss();
         // Read KL diagnostic from output index 3 (only present when
-        // KL-PPO is on with kl_beta > 0 at construction).
-        if self.old_logits_input_present {
+        // KL-PPO is on with kl_beta > 0 at construction). Skip during
+        // snapshot capture pass — the KL by definition would be 0 there
+        // (old_logits is whatever was previously in scratch, and we'll
+        // overwrite it with this pass's output anyway).
+        if self.old_logits_input_present && !self.kl_snapshot_capture_pending {
             let mut kl_buf = [0.0f32; 1];
             self.policy_session.read_output_by_index(3, &mut kl_buf);
             self.last_kl = kl_buf[0];
