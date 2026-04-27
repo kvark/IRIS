@@ -188,3 +188,80 @@ Reverted same day. The intuition (PPO needs a non-degenerate gradient
 fallback) might still be right, but the right form is probably
 matching the surrogate to plain-PG's log-prob structure rather than
 adding CE on top.
+
+## Standard-PPO scaling on kindle's K-epoch loop
+
+**Tested** 2026-04-27 with the now-fixed KL-PPO snapshot mechanism
+(`stop_gradient(z)` on KL term, encoder no longer NaN-cascades).
+The hypothesis was that running KL-PPO at *standard* PPO scales —
+larger rollouts, more epochs per rollout — would let the trust region
+engage productively and outperform plain-PG e2e on CartPole.
+
+### Configurations tried (CartPole-v1, 240k env-steps)
+| rollout | history_len | epochs | lr_pi | mean | symptom |
+|---------|-------------|--------|-------|------|---------|
+| 64 | 32 (default) | 4 | 3e-4 | ~+9 | V=0 throughout (buffer too small) |
+| 64 | 32 | 10 | 1e-4 | ~+9 | V=0 throughout |
+| 16 | 64 | 10 | 1e-4 | +10.75 | ent collapses by step 10k, KL=0 |
+
+### Diagnosis
+The K-epoch loop in `policy_step_batched` calls
+`policy_step_rollout_batch` K times on the *same* `lanes ×
+rollout_length` batch — no mini-batching. Standard PPO mini-batches
+within each epoch precisely to prevent overfitting to a single batch.
+With K=10 and tiny rollouts, the policy overfits and entropy collapses
+to 0 within a few hundred rollouts. Both π_old and π_new collapse to
+the same deterministic policy → KL stays at 0 → trust region never
+engages anyway.
+
+The architectural difference between kindle's per-step / small-rollout
+cadence and standard PPO's "collect 2048 steps with frozen policy,
+train 10 epochs of mini-batches" is fundamental. A real PPO refactor
+would require:
+1. A separate collect phase that snapshots obs/action/return arrays
+   into a fixed buffer (decoupled from the lane buffers)
+2. A train phase that mini-batches over that buffer (e.g., M=64
+   mini-batch over B=2048 collected transitions, K=10 epochs)
+3. Snapshot capture happens once at the start of the train phase
+   (already implemented), but the K-loop iterates over mini-batches,
+   not the full batch
+
+This is multi-day work and the empirical evidence so far suggests
+trust-region PPO doesn't outperform plain-PG e2e + LR-drop on these
+toy tasks. Parked until a task surfaces where the trust region's
+benefit outweighs the implementation cost.
+
+### LunarLander head-to-head (2026-04-27)
+Tested KL-PPO snapshot vs plain-PG e2e at identical config and
+budget on LunarLander-v3 (the original motivation for trust region —
+its local-optimum plateau).
+
+| Approach | Mean | LR drop event |
+|----------|------|---------------|
+| Plain-PG e2e | -179 | step 34k @ -151 (well-timed; sustained) |
+| KL-PPO snapshot | -380 | step 8k @ -140 (premature; crash to -900s) |
+
+Same flags except `--use-kl-ppo --kl-use-snapshot --kl-beta 0.05
+--kl-target 0.02`. 80k policy steps × 8 lanes = 640k env-steps each.
+
+KL stayed at 0.0000–0.0019 throughout the snapshot run; adaptive β
+collapsed to floor 0.0001 immediately. Diagnosis: lr_policy=5e-5
+across a 32-row batch × 2 epochs produces weight drift too small to
+register meaningful KL(π_new ‖ snapshot). Trust region never engages.
+
+To get a non-trivial KL drift signal in the snapshot setup, kindle
+would need either (a) much higher lr_policy with the trust region
+constraining commit (but raises the entropy-collapse risk seen on
+CartPole), or (b) a real PPO refactor that snapshots over a much
+larger collect buffer with mini-batched K-epoch training. Neither is
+in scope for the current investigation; the snapshot mechanism stays
+in the codebase as a research artifact behind `--kl-use-snapshot`.
+
+### Bug fixed in passing
+Found and fixed: `entropy_beta_input_present` was true for
+`use_kl_ppo + e2e + entropy_beta > 0`, but the KL graph variant
+doesn't include the entropy regularization branch (no `entropy_beta`
+input). Set_input call panicked with "unknown input: entropy_beta".
+Gate now also checks `!use_kl_ppo`. Note: this means KL-PPO has no
+entropy regularization on its policy loss — adding one would require
+extending build_kl_policy_graph_e2e.
