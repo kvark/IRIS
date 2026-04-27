@@ -303,6 +303,27 @@ landings to outweigh the DIAYN bonus.
 ### Conclusion across all 2026-04-27 LunarLander head-to-heads
 Plain-PG e2e + LR-drop dominates at 80k×8 budget. Trust region (KL-PPO
 snapshot) and skill diversity (DIAYN-options) both fail to break
-through. The architectural ceiling at -132 (1.2M env-steps, plain-PG)
-is the genuine kindle limit for this env without explicit reward
-shaping or much longer budgets.
+through.
+
+### LR-drop strength sweep — 100x is the sweet spot
+Subsequently tested whether the prior reported "-132 ceiling" was a
+sustained mean or a transient peak window. Extended budget to 200k
+policy steps (1.6M env-steps) at three LR-drop strengths:
+
+| `--lr-drop-on-solve` | Mean / 1.6M env-steps |
+|----------------------|-----------------------|
+| 10 (the previous default in scripts) | -221 (peak window -110, decays after step 100k to -480) |
+| **100** | **-160** (sustained, no decay; range -130..-170 across 60k+ steps) |
+| 1000 | -163 (similar to 100; freezing too aggressively loses minor learning) |
+
+The prior reported ceiling of "-132 over 1.2M env-steps" was the
+PEAK WINDOW from a 10x LR-drop run that was stopped before the
+post-decay phase. With 10x drop, the policy reaches that peak
+around step 80-100k but decays afterward as accumulated noise
+pushes it into worse basins.
+
+Setting `--lr-drop-on-solve 100` (instead of 10) preserves the policy
+at the peak window indefinitely. This is the new recommended config
+for kindle on negative-reward envs where the LR-drop strategy applies.
+1000x freezes too tightly and the policy can't adapt to lane-batch
+variance; 100x is the empirical sweet spot.
