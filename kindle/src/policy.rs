@@ -435,6 +435,14 @@ pub fn build_policy_graph_e2e(
     wm_aux_loss_coef: f32,    // > 0 builds an in-graph WM head + auxiliary
                               // MSE loss, sharing the policy encoder. Adds
                               // inputs "next_obs" and "raw_action".
+    recon_loss_coef: f32,     // > 0 builds a reconstruction decoder head
+                              // (z → obs') + MSE loss against the obs input.
+                              // Forces encoder to retain enough info to
+                              // invert. Anti-collapse signal.
+    reward_pred_loss_coef: f32, // > 0 builds a reward-prediction MLP head
+                              // (z → r̂) + MSE loss against per-row reward.
+                              // Adds input "reward_target". Forces encoder
+                              // to retain reward-predictive features.
 ) -> Graph {
     let mut g = Graph::new();
     let obs = g.input("obs", &[batch_size, obs_dim]);
@@ -551,6 +559,47 @@ pub fn build_policy_graph_e2e(
         (new_loss, Some((wm_pred_mse_diag, wm_noop_mse_diag)))
     } else {
         (policy_value_loss, None)
+    };
+
+    // Reconstruction decoder anti-collapse loss: predict the input obs
+    // from z. The MSE target is `stop_gradient(obs)` (the input itself,
+    // detached so this loss never tries to learn from changing labels).
+    // Forces the encoder to retain enough information about the raw
+    // observation that an inverse exists. Standard auto-encoder term.
+    let base_loss = if recon_loss_coef > 0.0 {
+        let dec_fc1 = nn::Linear::new(&mut g, "recon.fc1", latent_dim, hidden_dim);
+        let dec_fc2 = nn::Linear::no_bias(&mut g, "recon.fc2", hidden_dim, obs_dim);
+        let dh = dec_fc1.forward(&mut g, z);
+        let dh = g.relu(dh);
+        let recon = dec_fc2.forward(&mut g, dh);
+        let obs_target = g.stop_gradient(obs);
+        let recon_loss_raw = g.mse_loss(recon, obs_target);
+        let recon_coef = g.scalar(recon_loss_coef);
+        let recon_loss = g.mul(recon_loss_raw, recon_coef);
+        g.add(base_loss, recon_loss)
+    } else {
+        base_loss
+    };
+
+    // Reward-prediction-from-z anti-collapse loss: predict per-row
+    // reward from z via a small MLP. Adds input "reward_target".
+    // Forces z to retain reward-predictive features (state components
+    // that move the reward — for LunarLander: vy, angle, leg contact).
+    // Standard auxiliary task in model-based RL.
+    let base_loss = if reward_pred_loss_coef > 0.0 {
+        let reward_target = g.input("reward_target", &[batch_size, 1]);
+        let r_fc1 = nn::Linear::new(&mut g, "reward_pred.fc1", latent_dim, hidden_dim);
+        let r_fc2 = nn::Linear::no_bias(&mut g, "reward_pred.fc2", hidden_dim, 1);
+        let rh = r_fc1.forward(&mut g, z);
+        let rh = g.relu(rh);
+        let r_hat = r_fc2.forward(&mut g, rh);
+        let r_target_det = g.stop_gradient(reward_target);
+        let r_loss_raw = g.mse_loss(r_hat, r_target_det);
+        let r_coef = g.scalar(reward_pred_loss_coef);
+        let r_loss = g.mul(r_loss_raw, r_coef);
+        g.add(base_loss, r_loss)
+    } else {
+        base_loss
     };
 
     // Entropy term: if construction-time beta > 0, include the branch

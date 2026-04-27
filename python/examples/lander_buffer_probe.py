@@ -70,6 +70,17 @@ def main() -> int:
                    "adds a residual WM head sharing the policy encoder, "
                    "trained against stop_gradient(next_z). Forces the "
                    "policy encoder to be dynamics-aware. Try 0.1-1.0.")
+    p.add_argument("--recon-loss-coef", type=float, default=0.0,
+                   help="Reconstruction decoder anti-collapse loss "
+                   "coefficient. >0 adds a decoder z→obs' + MSE loss "
+                   "vs. stop_gradient(obs). Forces encoder to retain "
+                   "enough info to invert. Try 0.1-1.0.")
+    p.add_argument("--reward-pred-loss-coef", type=float, default=0.0,
+                   help="Reward-from-z auxiliary loss coefficient. >0 "
+                   "adds a head z→r̂ + MSE loss vs. per-row reward. "
+                   "Forces z to encode reward-predictive features. "
+                   "Try 0.01-0.1 (reward scale ~100 squared = 10000, "
+                   "small coef gives loss in O(10).)")
     p.add_argument("--solve-auto-multiple", type=float, default=1.2)
     p.add_argument("--solve-windows", type=int, default=2)
     p.add_argument("--log-every", type=int, default=2000)
@@ -111,6 +122,8 @@ def main() -> int:
         advantage_normalize=True,
         wm_residual=args.wm_residual,
         wm_aux_loss_coef=args.wm_aux_loss_coef,
+        recon_loss_coef=args.recon_loss_coef,
+        reward_pred_loss_coef=args.reward_pred_loss_coef,
     )
     if args.wm_only:
         agent.set_lr_policy(0.0)

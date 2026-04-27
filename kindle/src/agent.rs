@@ -619,6 +619,19 @@ pub struct AgentConfig {
     /// without letting the WM target side collapse it.
     /// Default 0.0 = disabled (preserves prior byte parity).
     pub wm_aux_loss_coef: f32,
+    /// Reconstruction decoder anti-collapse loss coefficient. When > 0
+    /// (e2e only), the policy graph builds a decoder `z → obs'` and
+    /// adds MSE(obs', stop_grad(obs)) to the total loss. Forces the
+    /// encoder to retain enough information about the raw observation
+    /// that an inverse exists — the classical auto-encoder anti-
+    /// collapse term. Default 0.0.
+    pub recon_loss_coef: f32,
+    /// Reward-prediction-from-z anti-collapse loss coefficient. When
+    /// > 0 (e2e only), the policy graph builds a head `z → r̂` and
+    /// adds MSE(r̂, stop_grad(reward)) to the total loss. Adds input
+    /// `reward_target`. Forces z to retain reward-predictive features
+    /// (per-row single-step reward). Default 0.0.
+    pub reward_pred_loss_coef: f32,
     /// Update the policy only every N env-steps, then do N
     /// gradient steps in a row on the accumulated rollout.
     /// Default `1` = per-env-step update (the existing behavior).
@@ -904,6 +917,8 @@ impl Default for AgentConfig {
             bootstrap_value_clamp: 100.0,
             wm_residual: false,
             wm_aux_loss_coef: 0.0,
+            recon_loss_coef: 0.0,
+            reward_pred_loss_coef: 0.0,
             policy_update_interval: 1,
             advantage_normalize: false,
             use_ppo: false,
@@ -1377,6 +1392,14 @@ pub struct Agent {
     /// Last `mean((predicted_next_z - stop_grad(next_z))²)` from the
     /// in-policy WM aux head. Populated after each rollout-batch
     /// training step when `wm_aux_input_present`. Diagnostic only.
+    /// Mirror of `reward_pred_loss_coef > 0 && end_to_end_encoder`. When
+    /// true the policy graph has a `reward_target` input that must be
+    /// fed every training step.
+    reward_pred_input_present: bool,
+    /// Scratch for the policy graph's `reward_target` input, sized
+    /// `policy_batch × 1`. Filled from `transitions[ripe_idx].reward`.
+    /// Empty when `reward_pred_input_present` is false.
+    reward_target_scratch: Vec<f32>,
     last_wm_aux_pred_mse: f32,
     /// Last `mean((z - stop_grad(next_z))²)` — the no-op baseline that
     /// `last_wm_aux_pred_mse` must beat to claim the WM is actually
@@ -1890,6 +1913,8 @@ impl Agent {
                     config.num_options,
                     config.per_option_heads,
                     config.wm_aux_loss_coef,
+                    config.recon_loss_coef,
+                    config.reward_pred_loss_coef,
                 )
             } else if is_discrete && config.use_ppo {
                 // PPO mode does not support L1 options yet — options are
@@ -2236,6 +2261,19 @@ impl Agent {
             },
             last_wm_aux_pred_mse: 0.0,
             last_wm_aux_noop_mse: 0.0,
+            reward_pred_input_present: config.end_to_end_encoder
+                && config.reward_pred_loss_coef > 0.0
+                && !config.use_kl_ppo
+                && !config.use_ppo,
+            reward_target_scratch: if config.end_to_end_encoder
+                && config.reward_pred_loss_coef > 0.0
+                && !config.use_kl_ppo
+                && !config.use_ppo
+            {
+                vec![0.0; policy_batch]
+            } else {
+                Vec::new()
+            },
             last_kl: 0.0,
             kl_snapshot_capture_pending: false,
             option_dim,
@@ -4817,6 +4855,10 @@ impl Agent {
             self.next_obs_scratch.fill(0.0);
             self.raw_action_scratch.fill(0.0);
         }
+        let rp_aux = self.reward_pred_input_present;
+        if rp_aux {
+            self.reward_target_scratch.fill(0.0);
+        }
         for row in 0..policy_batch {
             if !row_active[row] {
                 continue;
@@ -4879,6 +4921,18 @@ impl Agent {
                             // → no gradient through WM aux for this row.
                             next_dst[..copy_n].copy_from_slice(&ripe.observation[..copy_n]);
                         }
+                    }
+                    // Reward-prediction aux: feed the per-row single-
+                    // step reward as the regression target. Clamped to
+                    // ±200 to bound the loss against the lander +100/
+                    // -100 terminal events without saturating.
+                    if rp_aux {
+                        let r = if ripe.reward.is_finite() {
+                            ripe.reward.clamp(-200.0, 200.0)
+                        } else {
+                            0.0
+                        };
+                        self.reward_target_scratch[row] = r;
                     }
                 }
             }
@@ -4980,6 +5034,10 @@ impl Agent {
                 .set_input("next_obs", &self.next_obs_scratch);
             self.policy_session
                 .set_input("raw_action", &self.raw_action_scratch);
+        }
+        if self.reward_pred_input_present {
+            self.policy_session
+                .set_input("reward_target", &self.reward_target_scratch);
         }
         self.feed_entropy_beta_input();
         self.feed_kl_beta_input();
