@@ -490,6 +490,8 @@ impl PyBatchAgent {
         bootstrap_value_clamp = None,
         wm_residual = None,
         wm_aux_loss_coef = None,
+        recon_loss_coef = None,
+        reward_pred_loss_coef = None,
         planner_horizon = None,
         planner_samples = None,
         planner_refresh_interval = None,
@@ -589,6 +591,8 @@ impl PyBatchAgent {
         bootstrap_value_clamp: Option<f32>,
         wm_residual: Option<bool>,
         wm_aux_loss_coef: Option<f32>,
+        recon_loss_coef: Option<f32>,
+        reward_pred_loss_coef: Option<f32>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
         planner_refresh_interval: Option<usize>,
@@ -913,6 +917,12 @@ impl PyBatchAgent {
         }
         if let Some(v) = wm_aux_loss_coef {
             config.wm_aux_loss_coef = v;
+        }
+        if let Some(v) = recon_loss_coef {
+            config.recon_loss_coef = v;
+        }
+        if let Some(v) = reward_pred_loss_coef {
+            config.reward_pred_loss_coef = v;
         }
         if let Some(v) = planner_horizon {
             config.planner_horizon = v;

@@ -346,3 +346,35 @@ used different configs (longer budget, `--rollout-length` ≥5, etc.).
 The 100x finding is currently validated on LunarLander only; verifying
 on CartPole/Acrobot would require running each env at its own
 working baseline config and substituting 10x→100x in the LR-drop arg.
+
+## Reward-prediction-from-z auxiliary loss (`reward_pred_loss_coef`)
+
+**Tested 2026-04-27, kept off by default.** Added a `z → r̂` MLP head to
+the e2e policy graph with MSE loss against per-row single-step reward.
+Rationale: prevent encoder collapse by forcing z to retain reward-
+predictive features (vy, angle, leg contact for LunarLander). Anti-
+collapse signal independent of policy/V/WM training.
+
+### Symptoms
+LunarLander 200k×8, 3 seeds, `reward_pred_loss_coef=0.05`:
+
+| Metric (mean) | baseline | rpred only | recon only | both |
+|---------------|----------|------------|------------|------|
+| best_ep        | +14.7    | +7.5       | **+29.9**  | -3.6 |
+| V↔R corr (post-training) | +0.36 | **+0.09**  | +0.47      | +0.35 |
+| max R range    | +48      | +77        | +82        | +72  |
+
+The reward-pred head **destroys the V correlation** (+0.36 → +0.09):
+predicting noisy per-step reward and predicting smooth discounted
+return ask the encoder for incompatible features, and the per-step
+reward signal wins the gradient race because it has a tighter target.
+Combining recon + rpred (both heads on) regresses below baseline as
+the two anti-collapse signals interfere with each other.
+
+### Why kept (not removed)
+Code path is gated `reward_pred_loss_coef > 0.0 && e2e && !KL/PPO`,
+default 0.0 (byte-parity with plain-PG e2e). Provides the negative
+result for future experimenters considering reward-from-z as an
+encoder regularizer. Reconstruction decoder (`recon_loss_coef`)
+ships enabled in our LunarLander recipe instead — it tracks V at
++0.47 corr while improving best-episode return 2× over baseline.
