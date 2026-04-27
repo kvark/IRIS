@@ -603,6 +603,22 @@ pub struct AgentConfig {
     /// reward envs (CartPole regresses from peak +329 to peak +64 if
     /// you raise this to 200 unilaterally).
     pub bootstrap_value_clamp: f32,
+    /// Use residual parameterization in the world model:
+    /// `z_hat_{t+1} = z_t + delta(z_t, a_t)` instead of predicting
+    /// `z_{t+1}` directly. The MLP only needs to learn the change from
+    /// step to step; the no-op baseline (`z' = z`) is the identity.
+    /// Required when consecutive latents are nearly equal (LunarLander,
+    /// most continuous-control envs). Default false for backward
+    /// byte-parity with all prior runs.
+    pub wm_residual: bool,
+    /// Auxiliary world-model loss coefficient for the policy graph.
+    /// When > 0 (e2e only), the policy graph builds an in-graph WM
+    /// head sharing the policy encoder. Loss = MSE(z + delta(z, a),
+    /// stop_grad(next_z)) — encoder gets gradient through the predictor
+    /// side only. Forces the policy encoder to be dynamics-aware
+    /// without letting the WM target side collapse it.
+    /// Default 0.0 = disabled (preserves prior byte parity).
+    pub wm_aux_loss_coef: f32,
     /// Update the policy only every N env-steps, then do N
     /// gradient steps in a row on the accumulated rollout.
     /// Default `1` = per-env-step update (the existing behavior).
@@ -886,6 +902,8 @@ impl Default for AgentConfig {
             value_loss_coef: 1.0,
             value_clip_scale: 200.0,
             bootstrap_value_clamp: 100.0,
+            wm_residual: false,
+            wm_aux_loss_coef: 0.0,
             policy_update_interval: 1,
             advantage_normalize: false,
             use_ppo: false,
@@ -1342,6 +1360,28 @@ pub struct Agent {
     /// KL branch is fully elided and set_input("old_logits", …)
     /// would error.
     old_logits_input_present: bool,
+    /// Mirror of `wm_aux_loss_coef > 0 && end_to_end_encoder`. When
+    /// true the policy graph has `next_obs` and `raw_action` inputs
+    /// that must be fed every training step.
+    wm_aux_input_present: bool,
+    /// Scratch for the policy graph's `next_obs` input, sized
+    /// `policy_batch × OBS_TOKEN_DIM`. Filled from
+    /// `transitions[ripe_idx + 1].observation` at training time.
+    /// Empty when `wm_aux_input_present` is false.
+    next_obs_scratch: Vec<f32>,
+    /// Scratch for the policy graph's `raw_action` one-hot input.
+    /// Distinct from `policy_action_scratch` which carries the
+    /// advantage-weighted target. Sized `policy_batch × MAX_ACTION_DIM`.
+    /// Empty when `wm_aux_input_present` is false.
+    raw_action_scratch: Vec<f32>,
+    /// Last `mean((predicted_next_z - stop_grad(next_z))²)` from the
+    /// in-policy WM aux head. Populated after each rollout-batch
+    /// training step when `wm_aux_input_present`. Diagnostic only.
+    last_wm_aux_pred_mse: f32,
+    /// Last `mean((z - stop_grad(next_z))²)` — the no-op baseline that
+    /// `last_wm_aux_pred_mse` must beat to claim the WM is actually
+    /// predicting rather than relying on encoder collapse.
+    last_wm_aux_noop_mse: f32,
     /// Most recent observed KL(π_new ‖ π_old) from the policy
     /// session, read from output index 3 after each training step
     /// when KL-PPO is on. Used by the harness for adaptive β.
@@ -1690,7 +1730,7 @@ impl Agent {
                 }
             };
             let wm = WorldModel::new(&mut g, config.latent_dim, MAX_ACTION_DIM, config.hidden_dim);
-            let z_hat = wm.forward(&mut g, z_t, action);
+            let z_hat = wm.forward_with_mode(&mut g, z_t, action, config.wm_residual);
             let loss = WorldModel::loss(&mut g, z_hat, z_target);
 
             // Per-lane squared-error output. Exposing `(z_hat − z_target)²`
@@ -1849,6 +1889,7 @@ impl Agent {
                     config.value_clip_scale,
                     config.num_options,
                     config.per_option_heads,
+                    config.wm_aux_loss_coef,
                 )
             } else if is_discrete && config.use_ppo {
                 // PPO mode does not support L1 options yet — options are
@@ -2171,6 +2212,30 @@ impl Agent {
                 && !config.use_kl_ppo,
             // Input is built only when use_kl_ppo + kl_beta > 0.
             old_logits_input_present: config.use_kl_ppo && config.kl_beta > 0.0,
+            wm_aux_input_present: config.end_to_end_encoder
+                && config.wm_aux_loss_coef > 0.0
+                && !config.use_kl_ppo
+                && !config.use_ppo,
+            next_obs_scratch: if config.end_to_end_encoder
+                && config.wm_aux_loss_coef > 0.0
+                && !config.use_kl_ppo
+                && !config.use_ppo
+            {
+                vec![0.0; policy_batch * OBS_TOKEN_DIM]
+            } else {
+                Vec::new()
+            },
+            raw_action_scratch: if config.end_to_end_encoder
+                && config.wm_aux_loss_coef > 0.0
+                && !config.use_kl_ppo
+                && !config.use_ppo
+            {
+                vec![0.0; policy_batch * MAX_ACTION_DIM]
+            } else {
+                Vec::new()
+            },
+            last_wm_aux_pred_mse: 0.0,
+            last_wm_aux_noop_mse: 0.0,
             last_kl: 0.0,
             kl_snapshot_capture_pending: false,
             option_dim,
@@ -3332,6 +3397,20 @@ impl Agent {
     /// is off or no training step has run.
     pub fn last_kl(&self) -> f32 {
         self.last_kl
+    }
+
+    /// Last `mean((predicted_next_z - stop_grad(next_z))²)` from the
+    /// in-policy WM aux head, averaged over the rollout batch. Zero
+    /// when wm_aux_loss_coef is 0.
+    pub fn last_wm_aux_pred_mse(&self) -> f32 {
+        self.last_wm_aux_pred_mse
+    }
+
+    /// Last `mean((z - stop_grad(next_z))²)` no-op baseline, averaged
+    /// over the rollout batch. The in-policy WM beats no-op when
+    /// `last_wm_aux_pred_mse() < last_wm_aux_noop_mse()`.
+    pub fn last_wm_aux_noop_mse(&self) -> f32 {
+        self.last_wm_aux_noop_mse
     }
 
     /// Mutate the policy-session learning rate at runtime. See
@@ -4733,6 +4812,11 @@ impl Agent {
             self.obs_token_scratch.fill(0.0);
             self.task_scratch.fill(0.0);
         }
+        let wm_aux = self.wm_aux_input_present;
+        if wm_aux {
+            self.next_obs_scratch.fill(0.0);
+            self.raw_action_scratch.fill(0.0);
+        }
         for row in 0..policy_batch {
             if !row_active[row] {
                 continue;
@@ -4764,6 +4848,37 @@ impl Agent {
                     let task_dst = &mut self.task_scratch[row * TASK_DIM..(row + 1) * TASK_DIM];
                     if let Some(emb) = self.task_embeddings.get(&ripe.env_id) {
                         task_dst.copy_from_slice(emb);
+                    }
+
+                    // WM aux: feed next_obs (the obs recorded at
+                    // ripe_idx+1) and raw_action (one-hot of ripe.action).
+                    // Skip when ripe_idx+1 is an env_boundary (the
+                    // transition crossed an episode reset; predicting
+                    // across that boundary would hand the WM loss a
+                    // discontinuity it can't model). For boundary rows
+                    // we leave next_obs at the current obs — predicted
+                    // delta = 0 then has zero loss, contributing no
+                    // gradient.
+                    if wm_aux {
+                        let raw_dst = &mut self.raw_action_scratch
+                            [row * MAX_ACTION_DIM..(row + 1) * MAX_ACTION_DIM];
+                        for (dst, &src) in raw_dst.iter_mut().zip(ripe.action.iter()) {
+                            *dst = src;
+                        }
+                        let next_dst = &mut self.next_obs_scratch
+                            [row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
+                        let next_idx = ripe_idx + 1;
+                        let use_next = next_idx < buf_len
+                            && !self.lanes[lane_i].buffer.get(next_idx).env_boundary;
+                        if use_next {
+                            let next_t = self.lanes[lane_i].buffer.get(next_idx);
+                            let copy_n = next_t.observation.len().min(OBS_TOKEN_DIM);
+                            next_dst[..copy_n].copy_from_slice(&next_t.observation[..copy_n]);
+                        } else {
+                            // Fall back to current obs → delta target = 0
+                            // → no gradient through WM aux for this row.
+                            next_dst[..copy_n].copy_from_slice(&ripe.observation[..copy_n]);
+                        }
                     }
                 }
             }
@@ -4860,6 +4975,12 @@ impl Agent {
             self.policy_session
                 .set_input("old_logits", &self.kl_old_logits_scratch);
         }
+        if self.wm_aux_input_present {
+            self.policy_session
+                .set_input("next_obs", &self.next_obs_scratch);
+            self.policy_session
+                .set_input("raw_action", &self.raw_action_scratch);
+        }
         self.feed_entropy_beta_input();
         self.feed_kl_beta_input();
         // LR is not scaled down by rollout_length — the loss is already
@@ -4887,6 +5008,20 @@ impl Agent {
             let mut kl_buf = [0.0f32; 1];
             self.policy_session.read_output_by_index(3, &mut kl_buf);
             self.last_kl = kl_buf[0];
+        }
+        // WM aux diagnostic outputs at indices 3 and 4 — present only
+        // when wm_aux_input_present (mutually exclusive with KL-PPO so
+        // there's no slot conflict).
+        if self.wm_aux_input_present {
+            let mut buf = [0.0f32; 1];
+            self.policy_session.read_output_by_index(3, &mut buf);
+            if buf[0].is_finite() {
+                self.last_wm_aux_pred_mse = buf[0];
+            }
+            self.policy_session.read_output_by_index(4, &mut buf);
+            if buf[0].is_finite() {
+                self.last_wm_aux_noop_mse = buf[0];
+            }
         }
         let wd = self.config.policy_loss_watchdog_threshold;
         if !loss.is_finite() || loss.abs() > wd {
@@ -5109,6 +5244,29 @@ impl Agent {
         }
         let past_warmup = (state.episodes_seen - warmup) as f32;
         (past_warmup / saturation as f32).clamp(0.0, 1.0)
+    }
+
+    /// Snapshot the most recent `n` transitions of `lane_idx` (oldest
+    /// first), cloning fields needed for offline diagnostics. Returns an
+    /// empty vec on out-of-range lane.
+    ///
+    /// Diagnostic-only — used by Python harnesses to inspect rollouts
+    /// (WM pred error trajectory, V vs. discounted return, action
+    /// distribution near terminal events). Cost is O(n × latent_dim);
+    /// callers should pass small n (≤ 1024).
+    pub fn recent_transitions(
+        &self,
+        lane_idx: usize,
+        n: usize,
+    ) -> Vec<crate::buffer::Transition> {
+        let Some(lane) = self.lanes.get(lane_idx) else {
+            return Vec::new();
+        };
+        lane.buffer
+            .recent_window(n)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// Per-lane diagnostics, one entry per lane in lane order.

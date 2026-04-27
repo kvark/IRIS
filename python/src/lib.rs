@@ -488,6 +488,8 @@ impl PyBatchAgent {
         rollout_length = None,
         value_clip_scale = None,
         bootstrap_value_clamp = None,
+        wm_residual = None,
+        wm_aux_loss_coef = None,
         planner_horizon = None,
         planner_samples = None,
         planner_refresh_interval = None,
@@ -585,6 +587,8 @@ impl PyBatchAgent {
         rollout_length: Option<usize>,
         value_clip_scale: Option<f32>,
         bootstrap_value_clamp: Option<f32>,
+        wm_residual: Option<bool>,
+        wm_aux_loss_coef: Option<f32>,
         planner_horizon: Option<usize>,
         planner_samples: Option<usize>,
         planner_refresh_interval: Option<usize>,
@@ -904,6 +908,12 @@ impl PyBatchAgent {
         if let Some(v) = bootstrap_value_clamp {
             config.bootstrap_value_clamp = v;
         }
+        if let Some(v) = wm_residual {
+            config.wm_residual = v;
+        }
+        if let Some(v) = wm_aux_loss_coef {
+            config.wm_aux_loss_coef = v;
+        }
         if let Some(v) = planner_horizon {
             config.planner_horizon = v;
         }
@@ -1175,6 +1185,19 @@ impl PyBatchAgent {
         self.agent.last_kl()
     }
 
+    /// Most recent in-policy WM aux pred MSE (mean squared error of
+    /// `predicted_next_z` vs. detached `next_z` over the rollout batch).
+    /// Zero when wm_aux_loss_coef is 0.
+    fn last_wm_aux_pred_mse(&self) -> f32 {
+        self.agent.last_wm_aux_pred_mse()
+    }
+
+    /// No-op baseline `mean((z − stop_grad(next_z))²)`. The in-policy
+    /// WM beats no-op when last_wm_aux_pred_mse() < last_wm_aux_noop_mse().
+    fn last_wm_aux_noop_mse(&self) -> f32 {
+        self.agent.last_wm_aux_noop_mse()
+    }
+
     /// Print a summary of the largest policy-session gradient norms
     /// (descending), with grad/weight ratios. Diagnostic for which
     /// parameter is driving instability. Print goes to stderr.
@@ -1323,6 +1346,41 @@ impl PyBatchAgent {
     /// Total queued planner actions across all lanes. Diagnostic.
     fn planner_queue_len(&self) -> usize {
         self.agent.planner_queue_len()
+    }
+
+    /// Snapshot the most recent `n` transitions of `lane_idx`, oldest
+    /// first, as a list of dicts. Each dict contains:
+    ///   observation (list[float]), latent (list[float]),
+    ///   action (list[float]), reward (float), credit (float),
+    ///   pred_error (float), value (float), prob_taken (float),
+    ///   option_idx (int), env_id (int), env_boundary (bool).
+    /// Diagnostic-only — used to inspect rollout buffers offline
+    /// (e.g. compare V(s_t) trajectory to discounted return, plot
+    /// pred_error over time, locate landing windows by reward spikes).
+    fn dump_buffer<'py>(
+        &self,
+        py: Python<'py>,
+        lane_idx: usize,
+        n: usize,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let snap = self.agent.recent_transitions(lane_idx, n);
+        let out = PyList::empty(py);
+        for t in snap.iter() {
+            let d = PyDict::new(py);
+            d.set_item("observation", t.observation.clone())?;
+            d.set_item("latent", t.latent.clone())?;
+            d.set_item("action", t.action.clone())?;
+            d.set_item("reward", t.reward)?;
+            d.set_item("credit", t.credit)?;
+            d.set_item("pred_error", t.pred_error)?;
+            d.set_item("value", t.value)?;
+            d.set_item("prob_taken", t.prob_taken)?;
+            d.set_item("option_idx", t.option_idx)?;
+            d.set_item("env_id", t.env_id)?;
+            d.set_item("env_boundary", t.env_boundary)?;
+            out.append(d)?;
+        }
+        Ok(out)
     }
 }
 
