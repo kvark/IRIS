@@ -171,6 +171,20 @@ def main() -> int:
                         "exceed ±100, but expect more violent post-solve "
                         "crashes (CartPole regresses peak +329 → +64 if "
                         "raised to 200 unilaterally).")
+    parser.add_argument("--recon-loss-coef", type=float, default=0.0,
+                        help="Reconstruction decoder anti-collapse loss "
+                        "coefficient. >0 (e2e only) adds a decoder z→obs' "
+                        "+ MSE loss vs. stop_gradient(obs). Empirically "
+                        "binary: any nonzero value engages the encoder "
+                        "anti-collapse signal; magnitude in [0.1, 2.0] "
+                        "doesn't differentiate. Validated on LunarLander "
+                        "(sustained mean -291→-115 across 3 seeds at "
+                        "200k×8). Default 0.0 (off) for byte-parity.")
+    parser.add_argument("--reward-pred-loss-coef", type=float, default=0.0,
+                        help="Reward-from-z auxiliary loss coefficient. "
+                        ">0 adds head z→r̂ + MSE vs. per-row reward. Kills "
+                        "V↔R correlation (+0.36 → +0.09); kept for the "
+                        "experimental record. Default 0.0 (off).")
     parser.add_argument("--lr-drop-on-solve", type=float, default=0.0,
                         help="If > 0, drop learning_rate AND lr_policy by "
                         "this factor (e.g. 10.0 for 10× drop) once "
@@ -379,6 +393,8 @@ def main() -> int:
         rollout_length=args.rollout_length,
         value_clip_scale=args.value_clip_scale,
         bootstrap_value_clamp=args.bootstrap_value_clamp,
+        recon_loss_coef=args.recon_loss_coef,
+        reward_pred_loss_coef=args.reward_pred_loss_coef,
     )
     print("agent ready (MLP encoder)")
 
