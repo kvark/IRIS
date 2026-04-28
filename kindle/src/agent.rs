@@ -4684,15 +4684,49 @@ impl Agent {
         // step, so by the time a transition becomes ripe its stored
         // V is computed under a different encoder than is now.
         if self.config.recompute_base_v && !use_gae {
-            // Stage z for the forward pass.
-            for row in 0..policy_batch {
-                if row_active[row] {
-                    self.policy_z_scratch[row * ld..(row + 1) * ld]
-                        .copy_from_slice(&ripe_latent[row]);
+            let e2e_pre = self.config.end_to_end_encoder;
+            if e2e_pre {
+                // E2E mode: stage obs+task per row so the policy
+                // session forwards through its own encoder. The legacy
+                // z input doesn't exist on this graph variant.
+                self.obs_token_scratch.fill(0.0);
+                self.task_scratch.fill(0.0);
+                for row in 0..policy_batch {
+                    if !row_active[row] {
+                        continue;
+                    }
+                    let lane_i = row % lanes;
+                    let buf_len = self.lanes[lane_i].buffer.len();
+                    let offset = row / lanes;
+                    if buf_len < n_step + bootstrap_headroom + offset {
+                        continue;
+                    }
+                    let ripe_idx = buf_len - n_step - bootstrap_headroom - offset;
+                    let ripe = self.lanes[lane_i].buffer.get(ripe_idx);
+                    let obs_dst = &mut self.obs_token_scratch
+                        [row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
+                    let copy_n = ripe.observation.len().min(OBS_TOKEN_DIM);
+                    obs_dst[..copy_n].copy_from_slice(&ripe.observation[..copy_n]);
+                    let task_dst = &mut self.task_scratch[row * TASK_DIM..(row + 1) * TASK_DIM];
+                    if let Some(emb) = self.task_embeddings.get(&ripe.env_id) {
+                        task_dst.copy_from_slice(emb);
+                    }
                 }
+                self.policy_session
+                    .set_input("obs", &self.obs_token_scratch);
+                self.policy_session
+                    .set_input("task", &self.task_scratch);
+            } else {
+                // Non-e2e: legacy z input.
+                for row in 0..policy_batch {
+                    if row_active[row] {
+                        self.policy_z_scratch[row * ld..(row + 1) * ld]
+                            .copy_from_slice(&ripe_latent[row]);
+                    }
+                }
+                self.policy_session
+                    .set_input("z", &self.policy_z_scratch);
             }
-            self.policy_session
-                .set_input("z", &self.policy_z_scratch);
             // Need all other inputs valid-shaped. Action / value
             // target / PPO inputs already filled with zeros above.
             self.policy_session
@@ -4709,8 +4743,15 @@ impl Agent {
                 self.policy_session
                     .set_input("option_onehot", &self.option_onehot_scratch);
             }
+            // Reward-pred aux input needs to be valid-shaped too.
+            // (recon shares `obs` already set above.)
+            if self.reward_pred_input_present {
+                self.reward_target_scratch.fill(0.0);
+                self.policy_session
+                    .set_input("reward_target", &self.reward_target_scratch);
+            }
             self.feed_entropy_beta_input();
-        self.feed_kl_beta_input();
+            self.feed_kl_beta_input();
             self.policy_session.set_learning_rate(0.0);
             self.policy_session.step();
             self.policy_session.wait();
