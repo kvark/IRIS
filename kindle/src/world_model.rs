@@ -42,35 +42,13 @@ impl WorldModel {
     /// `z_t`: `[batch, latent_dim]` — encoder output (on the gradient path).
     /// `action`: `[batch, action_dim]` — one-hot or continuous action vector.
     pub fn forward(&self, g: &mut Graph, z_t: NodeId, action: NodeId) -> NodeId {
-        self.forward_with_mode(g, z_t, action, false)
-    }
-
-    /// Forward pass with optional residual parameterization.
-    ///
-    /// When `residual` is true the head predicts `z + delta(z, a)`
-    /// instead of `z_{t+1}` directly. Empirically necessary on envs
-    /// where consecutive latents are nearly equal: without residual
-    /// the head must re-derive z from scratch every step, and the
-    /// no-op baseline (`z' = z`) beats the learned predictor.
-    pub fn forward_with_mode(
-        &self,
-        g: &mut Graph,
-        z_t: NodeId,
-        action: NodeId,
-        residual: bool,
-    ) -> NodeId {
         let h_z = self.z_proj.forward(g, z_t);
         let h_a = self.a_proj.forward(g, action);
         let h = g.add(h_z, h_a);
         let h = g.relu(h);
         let h = self.fc2.forward(g, h);
         let h = g.relu(h);
-        let delta_or_pred = self.fc_out.forward(g, h);
-        if residual {
-            g.add(z_t, delta_or_pred)
-        } else {
-            delta_or_pred
-        }
+        self.fc_out.forward(g, h)
     }
 
     /// Build the MSE loss against the target latent.

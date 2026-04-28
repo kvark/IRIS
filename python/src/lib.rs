@@ -488,8 +488,6 @@ impl PyBatchAgent {
         rollout_length = None,
         value_clip_scale = None,
         bootstrap_value_clamp = None,
-        wm_residual = None,
-        wm_aux_loss_coef = None,
         recon_loss_coef = None,
         reward_pred_loss_coef = None,
         planner_horizon = None,
@@ -589,8 +587,6 @@ impl PyBatchAgent {
         rollout_length: Option<usize>,
         value_clip_scale: Option<f32>,
         bootstrap_value_clamp: Option<f32>,
-        wm_residual: Option<bool>,
-        wm_aux_loss_coef: Option<f32>,
         recon_loss_coef: Option<f32>,
         reward_pred_loss_coef: Option<f32>,
         planner_horizon: Option<usize>,
@@ -912,12 +908,6 @@ impl PyBatchAgent {
         if let Some(v) = bootstrap_value_clamp {
             config.bootstrap_value_clamp = v;
         }
-        if let Some(v) = wm_residual {
-            config.wm_residual = v;
-        }
-        if let Some(v) = wm_aux_loss_coef {
-            config.wm_aux_loss_coef = v;
-        }
         if let Some(v) = recon_loss_coef {
             config.recon_loss_coef = v;
         }
@@ -1193,19 +1183,6 @@ impl PyBatchAgent {
     /// step. 0.0 when KL-PPO is off.
     fn last_kl(&self) -> f32 {
         self.agent.last_kl()
-    }
-
-    /// Most recent in-policy WM aux pred MSE (mean squared error of
-    /// `predicted_next_z` vs. detached `next_z` over the rollout batch).
-    /// Zero when wm_aux_loss_coef is 0.
-    fn last_wm_aux_pred_mse(&self) -> f32 {
-        self.agent.last_wm_aux_pred_mse()
-    }
-
-    /// No-op baseline `mean((z − stop_grad(next_z))²)`. The in-policy
-    /// WM beats no-op when last_wm_aux_pred_mse() < last_wm_aux_noop_mse().
-    fn last_wm_aux_noop_mse(&self) -> f32 {
-        self.agent.last_wm_aux_noop_mse()
     }
 
     /// Print a summary of the largest policy-session gradient norms
