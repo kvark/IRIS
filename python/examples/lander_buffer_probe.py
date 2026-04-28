@@ -62,14 +62,6 @@ def main() -> int:
     p.add_argument("--bootstrap-value-clamp", type=float, default=200.0)
     p.add_argument("--value-clip-scale", type=float, default=400.0)
     p.add_argument("--lr-drop-on-solve", type=float, default=100.0)
-    p.add_argument("--wm-residual", action="store_true",
-                   help="Predict z' = z + delta(z, a) instead of z' "
-                   "directly. Makes the no-op baseline the identity.")
-    p.add_argument("--wm-aux-loss-coef", type=float, default=0.0,
-                   help="In-policy WM auxiliary loss coefficient. >0 "
-                   "adds a residual WM head sharing the policy encoder, "
-                   "trained against stop_gradient(next_z). Forces the "
-                   "policy encoder to be dynamics-aware. Try 0.1-1.0.")
     p.add_argument("--recon-loss-coef", type=float, default=0.0,
                    help="Reconstruction decoder anti-collapse loss "
                    "coefficient. >0 adds a decoder z→obs' + MSE loss "
@@ -120,8 +112,6 @@ def main() -> int:
         bootstrap_value_clamp=args.bootstrap_value_clamp,
         value_clip_scale=args.value_clip_scale,
         advantage_normalize=True,
-        wm_residual=args.wm_residual,
-        wm_aux_loss_coef=args.wm_aux_loss_coef,
         recon_loss_coef=args.recon_loss_coef,
         reward_pred_loss_coef=args.reward_pred_loss_coef,
     )
@@ -183,18 +173,11 @@ def main() -> int:
                               f"threshold={threshold:+.1f} → lr {new_lr:.1e}")
             sps = step * args.lanes / max(1e-3, time.time() - t0)
             vs = np.array(agent.values(), dtype=np.float32)
-            wm_aux_str = ""
-            if args.wm_aux_loss_coef > 0:
-                pred = float(agent.last_wm_aux_pred_mse())
-                noop = float(agent.last_wm_aux_noop_mse())
-                ratio = pred / max(1e-9, noop)
-                wm_aux_str = (f" | aux pred={pred:.4f} noop={noop:.4f} "
-                              f"r={ratio:.2f}")
             print(f"step={step:>6} eps={ep_count:>3} avg_ret={avg_ret:+7.1f} "
                   f"| wm={float(d['loss_world_model']):.3f} "
                   f"pi={float(d['loss_policy']):+5.2f} "
                   f"ent={float(d['policy_entropy']):.2f} "
-                  f"V[{vs.min():+5.2f},{vs.max():+5.2f}]{wm_aux_str} "
+                  f"V[{vs.min():+5.2f},{vs.max():+5.2f}] "
                   f"| {sps:5.0f} sps")
 
     envs.close()
