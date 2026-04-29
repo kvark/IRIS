@@ -39,9 +39,9 @@ use crate::buffer::{ExperienceBuffer, Transition};
 use crate::coord;
 use crate::credit;
 use crate::delta_goals;
+use crate::diayn;
 use crate::encoder::{CnnEncoder, Encoder};
 use crate::env::{Action, ActionKind, Environment, Observation};
-use crate::diayn;
 use crate::option;
 use crate::outcome;
 use crate::planner;
@@ -603,6 +603,27 @@ pub struct AgentConfig {
     /// reward envs (CartPole regresses from peak +329 to peak +64 if
     /// you raise this to 200 unilaterally).
     pub bootstrap_value_clamp: f32,
+    /// Symmetric clamp applied to the value-head TRAINING target (the
+    /// n-step return / single-step reward fed into MSE against V(s_t)).
+    /// Default 100.0 — the kindle pre-config-knob hardcoded value. Caps
+    /// the magnitude of the V regression target so a runaway reward
+    /// (e.g. a sparse +200 landing bonus or a very negative homeo
+    /// deviation) cannot drive the value-MSE gradient into a regime
+    /// that explodes the value-head weights.
+    ///
+    /// Per-env tuning: must be ≥ the absolute magnitude of any single-
+    /// episode return the V-head should be able to predict end-to-end.
+    /// LunarLander has terminal events of -100 (crash) and +200..+300
+    /// (soft landing); leaving this at 100 clips the *positive* tail
+    /// asymmetrically, biasing V to predict crashes well and landings
+    /// poorly. Bump to 300 (or scale rewards Python-side) for that env.
+    /// Pendulum has -1500..0 returns; bump to 1500.
+    ///
+    /// Independent of `value_clip_scale` (V-head output range) and
+    /// `bootstrap_value_clamp` (stale V-readings clamp); those exist
+    /// to bound *forward-pass* stability, this clamps the *backward
+    /// target*.
+    pub value_target_clamp: f32,
     /// Reconstruction decoder anti-collapse loss coefficient. When > 0
     /// (e2e only), the policy graph builds a decoder `z → obs'` and
     /// adds MSE(obs', stop_grad(obs)) to the total loss. Forces the
@@ -899,6 +920,7 @@ impl Default for AgentConfig {
             value_loss_coef: 1.0,
             value_clip_scale: 200.0,
             bootstrap_value_clamp: 100.0,
+            value_target_clamp: 100.0,
             recon_loss_coef: 0.0,
             reward_pred_loss_coef: 0.0,
             policy_update_interval: 1,
@@ -1571,14 +1593,20 @@ fn compute_gae_advantage(
         let next_v = if next.env_boundary || !next.value.is_finite() {
             0.0
         } else {
-            next.value.clamp(-bootstrap_value_clamp, bootstrap_value_clamp)
+            next.value
+                .clamp(-bootstrap_value_clamp, bootstrap_value_clamp)
         };
         let v_t = if tr.value.is_finite() {
-            tr.value.clamp(-bootstrap_value_clamp, bootstrap_value_clamp)
+            tr.value
+                .clamp(-bootstrap_value_clamp, bootstrap_value_clamp)
         } else {
             0.0
         };
-        let r = if tr.reward.is_finite() { tr.reward } else { 0.0 };
+        let r = if tr.reward.is_finite() {
+            tr.reward
+        } else {
+            0.0
+        };
         let delta = r + gamma * next_v - v_t;
         deltas.push(delta);
     }
@@ -2507,8 +2535,7 @@ impl Agent {
             if self.config.end_to_end_encoder {
                 self.policy_session
                     .set_input("obs", &self.obs_token_scratch);
-                self.policy_session
-                    .set_input("task", &self.task_scratch);
+                self.policy_session.set_input("task", &self.task_scratch);
             } else {
                 // Pad z_stack from [lanes × ld] to the policy graph's
                 // expected [policy_batch × ld]. With rollout_length=1
@@ -2533,8 +2560,7 @@ impl Agent {
                 // populated above with current-step values.
                 self.policy_session
                     .set_input("obs", &self.obs_token_scratch);
-                self.policy_session
-                    .set_input("task", &self.task_scratch);
+                self.policy_session.set_input("task", &self.task_scratch);
             } else {
                 self.policy_z_scratch[..n * ld].copy_from_slice(&z_stack);
                 for v in self.policy_z_scratch[n * ld..].iter_mut() {
@@ -3317,8 +3343,35 @@ impl Agent {
     /// threshold is reached, to prevent the on-policy AC post-solve
     /// crash. Does NOT modify `lr_policy`/`lr_credit`/etc — those have
     /// their own setters since they may need independent tuning.
+    ///
+    /// **Footgun:** the policy session uses `lr_policy`, not
+    /// `learning_rate`. Calling only `set_learning_rate` updates the
+    /// encoder/replay/option LRs but leaves the policy LR unchanged —
+    /// usually a silent no-op for the post-solve-crash use case, where
+    /// the policy is the destabilizer. Prefer `set_all_learning_rates`
+    /// for a runtime LR schedule, or pair this call with
+    /// `set_lr_policy(lr * 0.5)`.
     pub fn set_learning_rate(&mut self, lr: f32) {
         self.config.learning_rate = lr;
+    }
+
+    /// Set the base, policy, and credit learning rates together,
+    /// preserving the same `0.5×` / `0.3×` ratios the Python
+    /// constructor uses. Intended for LR schedules that want a
+    /// single knob to control the whole agent's update magnitude.
+    ///
+    /// Equivalent to:
+    /// ```ignore
+    /// agent.set_learning_rate(lr);
+    /// agent.set_lr_policy(lr * 0.5);
+    /// agent.set_lr_credit(lr * 0.3);  // (no public setter; we set config directly)
+    /// ```
+    /// without the easy-to-forget pair-call. See `set_learning_rate`
+    /// for the footgun this exists to avoid.
+    pub fn set_all_learning_rates(&mut self, lr: f32) {
+        self.config.learning_rate = lr;
+        self.config.lr_policy = lr * 0.5;
+        self.config.lr_credit = lr * 0.3;
     }
 
     /// Mutate the entropy bonus weight at runtime. Currently only
@@ -3978,10 +4031,11 @@ impl Agent {
         // to a sane range so a runaway reward stream (e.g. a very
         // negative homeo deviation) can't drive the value MSE into
         // gradient magnitudes that explode the value-head weights.
+        let vtc = self.config.value_target_clamp;
         for (i, lane) in self.lanes.iter().enumerate() {
             let v = lane.last_base_reward;
             self.value_target_scratch[i] = if v.is_finite() {
-                v.clamp(-100.0, 100.0)
+                v.clamp(-vtc, vtc)
             } else {
                 0.0
             };
@@ -4256,7 +4310,7 @@ impl Agent {
                     .set_input("option_onehot", &self.option_onehot_scratch);
             }
             self.feed_entropy_beta_input();
-        self.feed_kl_beta_input();
+            self.feed_kl_beta_input();
             self.policy_session.set_learning_rate(0.0);
             self.policy_session.step();
             self.policy_session.wait();
@@ -4303,10 +4357,11 @@ impl Agent {
                 ret - v_for_baseline
             };
             raw_advantages[i] = adv_raw;
+            let vtc = self.config.value_target_clamp;
             value_targets[i] = if value_target_bootstrap {
-                ret.clamp(-100.0, 100.0)
+                ret.clamp(-vtc, vtc)
             } else if ripe.reward.is_finite() {
-                ripe.reward.clamp(-100.0, 100.0)
+                ripe.reward.clamp(-vtc, vtc)
             } else {
                 0.0
             };
@@ -4397,8 +4452,8 @@ impl Agent {
                 // PPO feeds: plain one-hot `action` (sum=1), scalar
                 // `advantage`, scalar `old_prob_taken`. The clip and
                 // the advantage-weighting live inside the graph.
-                let act_dst = &mut self.policy_action_scratch
-                    [i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+                let act_dst =
+                    &mut self.policy_action_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
                 for (dst, &src) in act_dst.iter_mut().zip(ripe.action.iter()) {
                     *dst = src;
                 }
@@ -4412,8 +4467,8 @@ impl Agent {
                     advantage
                 };
                 let act_src = &ripe.action;
-                let act_dst = &mut self.policy_action_scratch
-                    [i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
+                let act_dst =
+                    &mut self.policy_action_scratch[i * MAX_ACTION_DIM..(i + 1) * MAX_ACTION_DIM];
                 for (dst, &src) in act_dst.iter_mut().zip(act_src.iter()) {
                     let smoothed = (1.0 - eps) * src + eps / k_actions;
                     *dst = effective_adv * smoothed;
@@ -4463,8 +4518,7 @@ impl Agent {
         if self.config.end_to_end_encoder {
             self.policy_session
                 .set_input("obs", &self.obs_token_scratch);
-            self.policy_session
-                .set_input("task", &self.task_scratch);
+            self.policy_session.set_input("task", &self.task_scratch);
         } else {
             self.policy_session.set_input("z", &old_z_stack);
         }
@@ -4638,10 +4692,11 @@ impl Agent {
                 raw_advantages[row] = adv_raw;
                 ripe_returns[row] = ret;
                 ripe_stored_v[row] = ripe.value;
+                let vtc = self.config.value_target_clamp;
                 value_targets[row] = if value_target_bootstrap {
-                    ret.clamp(-100.0, 100.0)
+                    ret.clamp(-vtc, vtc)
                 } else if ripe.reward.is_finite() {
-                    ripe.reward.clamp(-100.0, 100.0)
+                    ripe.reward.clamp(-vtc, vtc)
                 } else {
                     0.0
                 };
@@ -4703,8 +4758,8 @@ impl Agent {
                     }
                     let ripe_idx = buf_len - n_step - bootstrap_headroom - offset;
                     let ripe = self.lanes[lane_i].buffer.get(ripe_idx);
-                    let obs_dst = &mut self.obs_token_scratch
-                        [row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
+                    let obs_dst =
+                        &mut self.obs_token_scratch[row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
                     let copy_n = ripe.observation.len().min(OBS_TOKEN_DIM);
                     obs_dst[..copy_n].copy_from_slice(&ripe.observation[..copy_n]);
                     let task_dst = &mut self.task_scratch[row * TASK_DIM..(row + 1) * TASK_DIM];
@@ -4714,8 +4769,7 @@ impl Agent {
                 }
                 self.policy_session
                     .set_input("obs", &self.obs_token_scratch);
-                self.policy_session
-                    .set_input("task", &self.task_scratch);
+                self.policy_session.set_input("task", &self.task_scratch);
             } else {
                 // Non-e2e: legacy z input.
                 for row in 0..policy_batch {
@@ -4724,8 +4778,7 @@ impl Agent {
                             .copy_from_slice(&ripe_latent[row]);
                     }
                 }
-                self.policy_session
-                    .set_input("z", &self.policy_z_scratch);
+                self.policy_session.set_input("z", &self.policy_z_scratch);
             }
             // Need all other inputs valid-shaped. Action / value
             // target / PPO inputs already filled with zeros above.
@@ -4840,8 +4893,8 @@ impl Agent {
                 if buf_len >= n_step + bootstrap_headroom + offset {
                     let ripe_idx = buf_len - n_step - bootstrap_headroom - offset;
                     let ripe = self.lanes[lane_i].buffer.get(ripe_idx);
-                    let obs_dst = &mut self.obs_token_scratch
-                        [row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
+                    let obs_dst =
+                        &mut self.obs_token_scratch[row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
                     let copy_n = ripe.observation.len().min(OBS_TOKEN_DIM);
                     obs_dst[..copy_n].copy_from_slice(&ripe.observation[..copy_n]);
                     let task_dst = &mut self.task_scratch[row * TASK_DIM..(row + 1) * TASK_DIM];
@@ -4942,8 +4995,7 @@ impl Agent {
         if e2e {
             self.policy_session
                 .set_input("obs", &self.obs_token_scratch);
-            self.policy_session
-                .set_input("task", &self.task_scratch);
+            self.policy_session.set_input("task", &self.task_scratch);
         } else {
             self.policy_session.set_input("z", &self.policy_z_scratch);
         }
@@ -5228,19 +5280,11 @@ impl Agent {
     /// (WM pred error trajectory, V vs. discounted return, action
     /// distribution near terminal events). Cost is O(n × latent_dim);
     /// callers should pass small n (≤ 1024).
-    pub fn recent_transitions(
-        &self,
-        lane_idx: usize,
-        n: usize,
-    ) -> Vec<crate::buffer::Transition> {
+    pub fn recent_transitions(&self, lane_idx: usize, n: usize) -> Vec<crate::buffer::Transition> {
         let Some(lane) = self.lanes.get(lane_idx) else {
             return Vec::new();
         };
-        lane.buffer
-            .recent_window(n)
-            .into_iter()
-            .cloned()
-            .collect()
+        lane.buffer.recent_window(n).into_iter().cloned().collect()
     }
 
     /// Per-lane diagnostics, one entry per lane in lane order.
@@ -5627,9 +5671,9 @@ mod tests {
         // λ=1 → Â_t = Σ γ^k · δ_{t+k} = (Σ γ^k · r_{t+k}) + γ^n · V(s_{t+n}) − V(s_t).
         // Verify via telescoping.
         let buf = mk_buffer(&[
-            (1.0, 0.5, false),  // ripe: r=1, V=0.5
-            (2.0, 0.3, false),  // t+1: r=2, V=0.3
-            (4.0, 0.2, false),  // t+2: r=4, V=0.2
+            (1.0, 0.5, false),   // ripe: r=1, V=0.5
+            (2.0, 0.3, false),   // t+1: r=2, V=0.3
+            (4.0, 0.2, false),   // t+2: r=4, V=0.2
             (99.0, 10.0, false), // bootstrap slot: V=10
         ]);
         let gamma = 0.9;
@@ -5729,11 +5773,7 @@ mod tests {
     #[test]
     fn gae_clamp_bounds_runaway_value() {
         // V=1e6 at ripe; clamp to ±100 before computing δ.
-        let buf = mk_buffer(&[
-            (0.0, 1e6, false),
-            (0.0, 0.0, false),
-            (0.0, 0.0, false),
-        ]);
+        let buf = mk_buffer(&[(0.0, 1e6, false), (0.0, 0.0, false), (0.0, 0.0, false)]);
         let gamma = 0.9;
         let adv = compute_gae_advantage(&buf, 0, 1, gamma, 0.5, 100.0);
         // δ_0 = 0 + 0.9·0 − 100 (V clamped) = −100. λ=0.5 has only 1 step, so Â=δ_0.
@@ -5747,11 +5787,7 @@ mod tests {
     #[test]
     fn gae_nonfinite_value_treated_as_zero() {
         // NaN at ripe's V — treated as 0.
-        let buf = mk_buffer(&[
-            (3.0, f32::NAN, false),
-            (0.0, 2.0, false),
-            (0.0, 0.0, false),
-        ]);
+        let buf = mk_buffer(&[(3.0, f32::NAN, false), (0.0, 2.0, false), (0.0, 0.0, false)]);
         let gamma = 0.9;
         let adv = compute_gae_advantage(&buf, 0, 1, gamma, 0.0, 100.0);
         // δ_0 = 3 + 0.9·2 − 0 = 4.8
