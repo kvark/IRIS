@@ -192,7 +192,7 @@ impl DiaynState {
             num_options,
             hidden_dim,
             lr,
-            last_log_lik: -(num_options as f32).ln(),  // log(1/K) at init
+            last_log_lik: -(num_options as f32).ln(), // log(1/K) at init
             discriminator: DiscriminatorMlp::new(latent_dim, hidden_dim, num_options, seed),
         }
     }
@@ -202,9 +202,7 @@ impl DiaynState {
     /// Reward is positive when the discriminator predicts the option
     /// better than uniform, negative when worse.
     pub fn step(&mut self, z: &[f32], option_idx: usize) -> f32 {
-        let (_probs, log_lik) = self
-            .discriminator
-            .train_step(z, option_idx, self.lr);
+        let (_probs, log_lik) = self.discriminator.train_step(z, option_idx, self.lr);
         self.last_log_lik = log_lik;
         // Reward: log q(option | z) - log p(option) where p is uniform = 1/K
         // = log q(option | z) + log(K)
@@ -230,11 +228,7 @@ mod tests {
         let z = vec![0.5, -0.3, 0.1, 0.2];
         let r = d.reward(&z, 2);
         // log(1/4) + log(4) = 0; init has small randomness.
-        assert!(
-            r.abs() < 0.5,
-            "init reward should be near 0, got {}",
-            r
-        );
+        assert!(r.abs() < 0.5, "init reward should be near 0, got {}", r);
     }
 
     #[test]
@@ -245,10 +239,10 @@ mod tests {
         let mut d = DiaynState::new(2, 4, 16, 0.05, 7);
         // Distinct centroids per option.
         let centroids = vec![
-            vec![1.0, 0.0],   // option 0
-            vec![0.0, 1.0],   // option 1
-            vec![-1.0, 0.0],  // option 2
-            vec![0.0, -1.0],  // option 3
+            vec![1.0, 0.0],  // option 0
+            vec![0.0, 1.0],  // option 1
+            vec![-1.0, 0.0], // option 2
+            vec![0.0, -1.0], // option 3
         ];
         let mut last_rewards = vec![0.0; 4];
         for _epoch in 0..2000 {

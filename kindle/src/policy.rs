@@ -425,21 +425,21 @@ pub fn build_policy_graph_e2e(
     hidden_dim: usize,
     latent_dim: usize,
     batch_size: usize,
-    entropy_beta: f32,  // If > 0 at construction, builds entropy branch
-                        // with a runtime-mutable input "entropy_beta".
-                        // If == 0, branch is fully elided (parity).
+    entropy_beta: f32, // If > 0 at construction, builds entropy branch
+    // with a runtime-mutable input "entropy_beta".
+    // If == 0, branch is fully elided (parity).
     value_loss_coef: f32,
     value_clip_scale: f32,
-    num_options: usize,       // L1 options support: 0/1 = flat, >1 = options
-    per_option_heads: bool,   // when num_options > 1: per-option fc2 vs shared+bias
-    recon_loss_coef: f32,     // > 0 builds a reconstruction decoder head
-                              // (z → obs') + MSE loss against the obs input.
-                              // Forces encoder to retain enough info to
-                              // invert. Anti-collapse signal.
+    num_options: usize,     // L1 options support: 0/1 = flat, >1 = options
+    per_option_heads: bool, // when num_options > 1: per-option fc2 vs shared+bias
+    recon_loss_coef: f32,   // > 0 builds a reconstruction decoder head
+    // (z → obs') + MSE loss against the obs input.
+    // Forces encoder to retain enough info to
+    // invert. Anti-collapse signal.
     reward_pred_loss_coef: f32, // > 0 builds a reward-prediction MLP head
-                              // (z → r̂) + MSE loss against per-row reward.
-                              // Adds input "reward_target". Forces encoder
-                              // to retain reward-predictive features.
+                                // (z → r̂) + MSE loss against per-row reward.
+                                // Adds input "reward_target". Forces encoder
+                                // to retain reward-predictive features.
 ) -> Graph {
     let mut g = Graph::new();
     let obs = g.input("obs", &[batch_size, obs_dim]);

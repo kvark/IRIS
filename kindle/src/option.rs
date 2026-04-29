@@ -43,11 +43,11 @@ pub fn build_option_graph(
     num_options: usize,
     hidden_dim: usize,
     batch_size: usize,
-    option_entropy_beta: f32,  // > 0 adds entropy bonus to option choice
-                                // (push option_session toward picking
-                                // diverse options instead of collapsing
-                                // to one). Standard A2C entropy regularizer
-                                // applied to the option logits.
+    option_entropy_beta: f32, // > 0 adds entropy bonus to option choice
+                              // (push option_session toward picking
+                              // diverse options instead of collapsing
+                              // to one). Standard A2C entropy regularizer
+                              // applied to the option logits.
 ) -> Graph {
     let mut g = Graph::new();
     let z = g.input("z", &[batch_size, latent_dim]);
