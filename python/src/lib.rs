@@ -488,6 +488,7 @@ impl PyBatchAgent {
         rollout_length = None,
         value_clip_scale = None,
         bootstrap_value_clamp = None,
+        value_target_clamp = None,
         recon_loss_coef = None,
         reward_pred_loss_coef = None,
         planner_horizon = None,
@@ -587,6 +588,7 @@ impl PyBatchAgent {
         rollout_length: Option<usize>,
         value_clip_scale: Option<f32>,
         bootstrap_value_clamp: Option<f32>,
+        value_target_clamp: Option<f32>,
         recon_loss_coef: Option<f32>,
         reward_pred_loss_coef: Option<f32>,
         planner_horizon: Option<usize>,
@@ -908,6 +910,9 @@ impl PyBatchAgent {
         if let Some(v) = bootstrap_value_clamp {
             config.bootstrap_value_clamp = v;
         }
+        if let Some(v) = value_target_clamp {
+            config.value_target_clamp = v;
+        }
         if let Some(v) = recon_loss_coef {
             config.recon_loss_coef = v;
         }
@@ -1153,6 +1158,12 @@ impl PyBatchAgent {
     /// per-step `set_learning_rate` across all sessions on the next
     /// `observe()`. Use case: drop LR after sustained-solve detected,
     /// to head off the on-policy AC post-solve crash.
+    ///
+    /// **Footgun:** the policy session reads `lr_policy`, not
+    /// `learning_rate`. Calling only this setter is usually a silent
+    /// no-op for an LR schedule (the policy is the post-solve
+    /// destabilizer). Prefer `set_all_learning_rates` for a single-
+    /// knob LR drop.
     fn set_learning_rate(&mut self, lr: f32) {
         self.agent.set_learning_rate(lr);
     }
@@ -1162,6 +1173,14 @@ impl PyBatchAgent {
     /// committed-good policy.
     fn set_lr_policy(&mut self, lr: f32) {
         self.agent.set_lr_policy(lr);
+    }
+
+    /// Update base + policy + credit learning rates together,
+    /// preserving the constructor's 0.5× / 0.3× ratios. The
+    /// recommended setter for LR schedules — avoids the
+    /// `set_learning_rate`-without-`set_lr_policy` no-op footgun.
+    fn set_all_learning_rates(&mut self, lr: f32) {
+        self.agent.set_all_learning_rates(lr);
     }
 
     /// Update entropy bonus weight at runtime. Currently only effective
