@@ -624,6 +624,39 @@ pub struct AgentConfig {
     /// to bound *forward-pass* stability, this clamps the *backward
     /// target*.
     pub value_target_clamp: f32,
+    /// Number of transitions before a positive-reward terminal that
+    /// receive a retroactive curiosity bonus. Default 0 (disabled).
+    /// When `terminal_proximity_k > 0`, the agent adds
+    /// `terminal_proximity_bonus` to the `reward` field of each of the
+    /// last `K` transitions in a lane's buffer at the moment
+    /// `mark_boundary` is called — *if* the just-ended episode's terminal
+    /// transition reward exceeds `terminal_proximity_threshold`.
+    ///
+    /// Mechanism: focuses kindle's exploration toward the boundary states
+    /// that *immediately precede* successful terminals, without coupling
+    /// to env-specific shaping. On LunarLander the policy learns to seek
+    /// the few-step approach to a safe landing rather than treating all
+    /// novel states as equally interesting.
+    ///
+    /// Asymmetric design: the bonus only fires for *positive*-reward
+    /// terminals (above `terminal_proximity_threshold`). Crashes and
+    /// other negative-reward terminals receive no bonus. This makes the
+    /// reward an attractor toward the goal region rather than toward
+    /// any-termination.
+    ///
+    /// Bonuses do not propagate across episode boundaries: the lookback
+    /// stops at the previous `env_boundary` flag.
+    pub terminal_proximity_k: usize,
+    /// Per-step bonus added to each of the K transitions before a
+    /// successful terminal. Default 0.0 (disabled). See
+    /// `terminal_proximity_k`.
+    pub terminal_proximity_bonus: f32,
+    /// Reward threshold the just-ended episode's terminal transition
+    /// must exceed for the proximity bonus to fire. Default 0.0
+    /// (any positive-reward terminal). Set higher to require a clearly
+    /// positive landing-style outcome (e.g. >5.0 for LunarLander where
+    /// landing yields a +30 spike vs intrinsic rewards typically <5).
+    pub terminal_proximity_threshold: f32,
     /// Reconstruction decoder anti-collapse loss coefficient. When > 0
     /// (e2e only), the policy graph builds a decoder `z → obs'` and
     /// adds MSE(obs', stop_grad(obs)) to the total loss. Forces the
@@ -921,6 +954,9 @@ impl Default for AgentConfig {
             value_clip_scale: 200.0,
             bootstrap_value_clamp: 100.0,
             value_target_clamp: 100.0,
+            terminal_proximity_k: 0,
+            terminal_proximity_bonus: 0.0,
+            terminal_proximity_threshold: 0.0,
             recon_loss_coef: 0.0,
             reward_pred_loss_coef: 0.0,
             policy_update_interval: 1,
@@ -1491,6 +1527,39 @@ pub struct Agent {
     /// previous step's value. Only consumed when
     /// `extrinsic_reward_alpha > 0`.
     extrinsic_reward: Vec<f32>,
+}
+
+/// Apply the terminal-proximity bonus retroactively to the K most
+/// recent transitions in a lane's buffer when the just-ended episode
+/// crossed `threshold` reward. Stops at any earlier `env_boundary`
+/// flag so it never spans episode boundaries. Caller controls when
+/// this is invoked — kindle calls it in `mark_boundary`. No-op if
+/// `k == 0` or `bonus <= 0.0`.
+fn apply_terminal_proximity_bonus(
+    buffer: &mut crate::buffer::ExperienceBuffer,
+    k: usize,
+    bonus: f32,
+    threshold: f32,
+) {
+    if k == 0 || bonus <= 0.0 {
+        return;
+    }
+    let buf_len = buffer.len();
+    if buf_len == 0 {
+        return;
+    }
+    let last_idx = buf_len - 1;
+    if buffer.get(last_idx).reward <= threshold {
+        return;
+    }
+    let lookback = k.min(last_idx);
+    for i in 1..=lookback {
+        let idx = last_idx - i;
+        if buffer.get(idx).env_boundary {
+            break;
+        }
+        buffer.get_mut(idx).reward += bonus;
+    }
 }
 
 /// Cosine similarity between two equal-length vectors. Returns 0 when
@@ -2281,6 +2350,15 @@ impl Agent {
     /// transition will be tagged `env_boundary = true`, so the credit
     /// assigner and world model skip attribution across the reset.
     pub fn mark_boundary(&mut self, lane_idx: usize) {
+        // Apply the terminal-proximity bonus retroactively if configured
+        // and the just-ended episode terminated with a positive-reward
+        // outcome. See `apply_terminal_proximity_bonus`.
+        apply_terminal_proximity_bonus(
+            &mut self.lanes[lane_idx].buffer,
+            self.config.terminal_proximity_k,
+            self.config.terminal_proximity_bonus,
+            self.config.terminal_proximity_threshold,
+        );
         let lane = &mut self.lanes[lane_idx];
         lane.pending_boundary = true;
         // An episode reset ends any in-flight action repeat: the post-reset
@@ -5811,5 +5889,123 @@ mod tests {
         ]);
         let adv = compute_gae_advantage(&buf, 0, 2, 0.0, 0.95, 100.0);
         assert!((adv - 4.0).abs() < 1e-5, "adv: {}", adv);
+    }
+
+    #[test]
+    fn proximity_bonus_fires_on_positive_terminal() {
+        // 5-step episode ending with reward +30 (landing). With
+        // K=3 and bonus=2.0 and threshold=0.0, the last 3
+        // *pre-terminal* transitions should each get +2.0; the terminal
+        // step itself is unchanged, and earlier steps are unchanged.
+        let mut buf = mk_buffer(&[
+            (-0.3, 0.0, false), // step 0: should NOT receive bonus (outside K=3 lookback from idx=4)
+            (-0.3, 0.0, false), // step 1: receives bonus (idx=4-3)
+            (-0.3, 0.0, false), // step 2: receives bonus (idx=4-2)
+            (-0.3, 0.0, false), // step 3: receives bonus (idx=4-1)
+            (30.0, 0.0, false), // step 4: terminal — unchanged
+        ]);
+        apply_terminal_proximity_bonus(&mut buf, 3, 2.0, 0.0);
+        assert!(
+            (buf.get(0).reward - (-0.3)).abs() < 1e-5,
+            "step 0 reward: {}",
+            buf.get(0).reward
+        );
+        assert!(
+            (buf.get(1).reward - (-0.3 + 2.0)).abs() < 1e-5,
+            "step 1 reward: {}",
+            buf.get(1).reward
+        );
+        assert!(
+            (buf.get(2).reward - (-0.3 + 2.0)).abs() < 1e-5,
+            "step 2 reward: {}",
+            buf.get(2).reward
+        );
+        assert!(
+            (buf.get(3).reward - (-0.3 + 2.0)).abs() < 1e-5,
+            "step 3 reward: {}",
+            buf.get(3).reward
+        );
+        assert!(
+            (buf.get(4).reward - 30.0).abs() < 1e-5,
+            "terminal reward: {}",
+            buf.get(4).reward
+        );
+    }
+
+    #[test]
+    fn proximity_bonus_skips_negative_terminal() {
+        // Same buffer shape but terminal is -100 (crash). Bonus must
+        // NOT fire — the asymmetry is the whole point.
+        let mut buf = mk_buffer(&[
+            (-0.3, 0.0, false),
+            (-0.3, 0.0, false),
+            (-0.3, 0.0, false),
+            (-0.3, 0.0, false),
+            (-100.0, 0.0, false),
+        ]);
+        apply_terminal_proximity_bonus(&mut buf, 3, 2.0, 0.0);
+        for i in 0..5 {
+            let expected = if i < 4 { -0.3 } else { -100.0 };
+            assert!(
+                (buf.get(i).reward - expected).abs() < 1e-5,
+                "step {} reward: {}",
+                i,
+                buf.get(i).reward
+            );
+        }
+    }
+
+    #[test]
+    fn proximity_bonus_stops_at_episode_boundary() {
+        // Two-episode buffer: ep1 ends at idx=2 with -100 (crash),
+        // ep2 starts at idx=3 (env_boundary=true on idx=3) and ends
+        // at idx=5 with +30 (landing). K=10 lookback should NOT cross
+        // back into ep1 — only idx=3 and idx=4 receive bonus.
+        let mut buf = mk_buffer(&[
+            (-0.3, 0.0, false),   // ep1 step 0
+            (-0.3, 0.0, false),   // ep1 step 1
+            (-100.0, 0.0, false), // ep1 step 2 (terminal, but no boundary flag yet — flag is on next ep's first transition)
+            (-0.3, 0.0, true),    // ep2 step 0 (env_boundary=true: first of new ep)
+            (-0.3, 0.0, false),   // ep2 step 1
+            (30.0, 0.0, false),   // ep2 step 2 (terminal)
+        ]);
+        apply_terminal_proximity_bonus(&mut buf, 10, 2.0, 0.0);
+        // Ep1 transitions must be untouched:
+        assert!((buf.get(0).reward - (-0.3)).abs() < 1e-5);
+        assert!((buf.get(1).reward - (-0.3)).abs() < 1e-5);
+        assert!((buf.get(2).reward - (-100.0)).abs() < 1e-5);
+        // Ep2 idx=3 has env_boundary=true and is the start; the loop
+        // stops AT this transition and doesn't bonus it.
+        assert!(
+            (buf.get(3).reward - (-0.3)).abs() < 1e-5,
+            "boundary tx reward: {}",
+            buf.get(3).reward
+        );
+        // idx=4 (one before terminal) gets bonus:
+        assert!((buf.get(4).reward - (-0.3 + 2.0)).abs() < 1e-5);
+        // Terminal unchanged:
+        assert!((buf.get(5).reward - 30.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn proximity_bonus_disabled_by_zero_k_or_bonus() {
+        let mut buf1 = mk_buffer(&[(-0.3, 0.0, false), (30.0, 0.0, false)]);
+        apply_terminal_proximity_bonus(&mut buf1, 0, 2.0, 0.0);
+        assert!((buf1.get(0).reward - (-0.3)).abs() < 1e-5);
+        let mut buf2 = mk_buffer(&[(-0.3, 0.0, false), (30.0, 0.0, false)]);
+        apply_terminal_proximity_bonus(&mut buf2, 5, 0.0, 0.0);
+        assert!((buf2.get(0).reward - (-0.3)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn proximity_bonus_threshold_gates_firing() {
+        // Terminal reward exactly at threshold should NOT fire (>, not >=).
+        let mut buf1 = mk_buffer(&[(-0.3, 0.0, false), (5.0, 0.0, false)]);
+        apply_terminal_proximity_bonus(&mut buf1, 1, 2.0, 5.0);
+        assert!((buf1.get(0).reward - (-0.3)).abs() < 1e-5);
+        // Terminal reward above threshold fires.
+        let mut buf2 = mk_buffer(&[(-0.3, 0.0, false), (10.0, 0.0, false)]);
+        apply_terminal_proximity_bonus(&mut buf2, 1, 2.0, 5.0);
+        assert!((buf2.get(0).reward - (-0.3 + 2.0)).abs() < 1e-5);
     }
 }

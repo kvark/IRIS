@@ -489,6 +489,9 @@ impl PyBatchAgent {
         value_clip_scale = None,
         bootstrap_value_clamp = None,
         value_target_clamp = None,
+        terminal_proximity_k = None,
+        terminal_proximity_bonus = None,
+        terminal_proximity_threshold = None,
         recon_loss_coef = None,
         reward_pred_loss_coef = None,
         planner_horizon = None,
@@ -589,6 +592,9 @@ impl PyBatchAgent {
         value_clip_scale: Option<f32>,
         bootstrap_value_clamp: Option<f32>,
         value_target_clamp: Option<f32>,
+        terminal_proximity_k: Option<usize>,
+        terminal_proximity_bonus: Option<f32>,
+        terminal_proximity_threshold: Option<f32>,
         recon_loss_coef: Option<f32>,
         reward_pred_loss_coef: Option<f32>,
         planner_horizon: Option<usize>,
@@ -912,6 +918,15 @@ impl PyBatchAgent {
         }
         if let Some(v) = value_target_clamp {
             config.value_target_clamp = v;
+        }
+        if let Some(v) = terminal_proximity_k {
+            config.terminal_proximity_k = v;
+        }
+        if let Some(v) = terminal_proximity_bonus {
+            config.terminal_proximity_bonus = v;
+        }
+        if let Some(v) = terminal_proximity_threshold {
+            config.terminal_proximity_threshold = v;
         }
         if let Some(v) = recon_loss_coef {
             config.recon_loss_coef = v;
