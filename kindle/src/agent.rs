@@ -745,18 +745,35 @@ pub struct AgentConfig {
     /// to the no-clip baseline for single-epoch runs).
     pub ppo_n_epochs: usize,
     /// Enable Group-Relative Policy Optimization (GRPO). When `true`,
-    /// drops the V-baseline and uses cross-lane (per-step) statistics
-    /// for advantage estimation: `A_i(t) = (R_i(t) - mean_lanes(R(t)))
-    /// / std_lanes(R(t))`. Reuses the plain-PG e2e graph (no new
-    /// graph variant needed) — the GRPO formulation lives entirely
-    /// in advantage computation. Requires `advantage_normalize = true`
-    /// (forced) since the cross-lane normalization IS GRPO's core.
-    /// `value_loss_coef` should be `0.0` to skip V training (V is
-    /// unused for advantage when GRPO is on); a non-zero coef will
-    /// still train V but it does not feed back into the policy
-    /// advantage. Mutually exclusive with `use_ppo` and `use_kl_ppo`.
-    /// Default `false`.
+    /// drops the V-baseline and uses batch-relative statistics for
+    /// advantage estimation. Two sub-modes controlled by
+    /// `use_grpo_episode`:
+    ///
+    /// - per-step (default, `use_grpo_episode = false`): n-step return
+    ///   without V bootstrap, normalized across the policy batch.
+    /// - per-episode (`use_grpo_episode = true`): each lane's most
+    ///   recently completed episode return is used as the per-transition
+    ///   advantage; cross-lane normalization gives the GRPO advantage.
+    ///   Closer to the canonical DeepSeek-R1 formulation but introduces
+    ///   inter-update lag (lane only contributes after first episode
+    ///   completes).
+    ///
+    /// Combinations:
+    /// - `use_grpo` alone: plain-PG e2e graph + GRPO advantage. No clip.
+    /// - `use_grpo + use_ppo`: PPO clipped surrogate + GRPO advantage.
+    ///   Standard GRPO from DeepSeek-R1.
+    /// - `use_grpo + use_kl_ppo`: KL-penalty PPO + GRPO advantage.
+    ///
+    /// Requires `advantage_normalize = true` since the cross-batch
+    /// normalization IS GRPO's core. `value_loss_coef = 0.0` is
+    /// natural (V unused) but harmless if non-zero.
     pub use_grpo: bool,
+    /// Per-episode variant of GRPO. When set with `use_grpo`, advantage
+    /// is computed from each lane's most-recent completed-episode
+    /// return G_i (sum of in-episode rewards), instead of n-step
+    /// return. Cross-lane normalization uses the batch of recent G's.
+    /// Default `false` (per-step GRPO).
+    pub use_grpo_episode: bool,
     /// Zero all advantages (and therefore the policy-gradient
     /// signal) for the first `policy_warmup_steps` env-steps.
     /// The value head still trains — only the policy-gradient
@@ -977,6 +994,7 @@ impl Default for AgentConfig {
             use_ppo: false,
             ppo_clip_eps: 0.2,
             use_grpo: false,
+            use_grpo_episode: false,
             use_kl_ppo: false,
             kl_beta: 0.05,
             kl_use_snapshot: false,
@@ -1302,6 +1320,11 @@ struct Lane {
     outcome_ep_trajectory: Vec<Vec<f32>>,
     /// Running sum of `r_base` over the current episode.
     outcome_ep_return: f32,
+    /// Most recently completed episode's total return (snapshotted from
+    /// `outcome_ep_return` at env_boundary, before reset). Used by GRPO
+    /// per-episode advantage mode (`use_grpo_episode`). Initialized to 0;
+    /// becomes meaningful after the lane's first episode completes.
+    last_episode_return: f32,
     /// Single-step `r_base` of the just-finished step. Becomes the
     /// previous episode's terminal reward when the *next* step
     /// carries `env_boundary=true`. Used by
@@ -1943,13 +1966,16 @@ impl Agent {
                 !(config.use_kl_ppo && config.num_options > 1),
                 "use_kl_ppo + L1 options not implemented"
             );
+            // use_grpo + use_ppo is the canonical DeepSeek-R1 GRPO
+            // formulation: PPO-clipped surrogate with GRPO advantage
+            // (cross-batch normalized n-step return, no V baseline).
+            // use_grpo + use_kl_ppo is also allowed and gives the
+            // KL-penalty PPO surrogate with GRPO advantage. When use_grpo
+            // is set alone, the plain-PG e2e graph is used (no clip,
+            // no KL — just advantage-weighted CE with GRPO advantage).
             assert!(
-                !(config.use_grpo && config.use_ppo),
-                "use_grpo and use_ppo are mutually exclusive"
-            );
-            assert!(
-                !(config.use_grpo && config.use_kl_ppo),
-                "use_grpo and use_kl_ppo are mutually exclusive"
+                !(config.use_grpo && config.use_kl_ppo && config.use_ppo),
+                "all three of use_grpo + use_ppo + use_kl_ppo cannot be set"
             );
             assert!(
                 !(config.use_grpo && !config.advantage_normalize),
@@ -2258,6 +2284,7 @@ impl Agent {
                 last_base_reward: 0.0,
                 outcome_ep_trajectory: Vec::new(),
                 outcome_ep_return: 0.0,
+                last_episode_return: 0.0,
                 outcome_last_step_reward: 0.0,
                 outcome_ep_step_rewards: Vec::new(),
                 prev_r_hat: 0.0,
@@ -3095,6 +3122,9 @@ impl Agent {
                     }
                 }
                 lane.outcome_ep_trajectory.clear();
+                // Snapshot the just-completed episode return for GRPO
+                // per-episode advantage mode before resetting.
+                lane.last_episode_return = lane.outcome_ep_return;
                 lane.outcome_ep_return = 0.0;
                 lane.outcome_ep_step_rewards.clear();
                 lane.prev_r_hat = 0.0;
@@ -4457,20 +4487,27 @@ impl Agent {
                 None => ripe.value,
             };
             let adv_raw = if self.config.use_grpo {
-                // GRPO: no V baseline AND no V bootstrap. With
-                // value_loss_coef=0 (the natural GRPO setup), V is
-                // never trained, so the bootstrap V_n in `ret` is
-                // pure noise. Recompute the n-step return without
-                // bootstrap for a clean unbiased reward sum.
-                let (ret_nob, _, _) = compute_td_n_step_return(
-                    &lane.buffer,
-                    ripe_idx,
-                    n_step,
-                    gamma,
-                    false,
-                    self.config.bootstrap_value_clamp,
-                );
-                ret_nob
+                if self.config.use_grpo_episode {
+                    // Per-episode GRPO: use the lane's most recently
+                    // completed episode return as the score for every
+                    // transition. Cross-batch normalization gives the
+                    // group-relative advantage. Closer to canonical
+                    // DeepSeek-R1 GRPO than per-step.
+                    lane.last_episode_return
+                } else {
+                    // Per-step GRPO: n-step return without V bootstrap
+                    // (V is unused with value_loss_coef=0, so its
+                    // bootstrap contribution is random noise).
+                    let (ret_nob, _, _) = compute_td_n_step_return(
+                        &lane.buffer,
+                        ripe_idx,
+                        n_step,
+                        gamma,
+                        false,
+                        self.config.bootstrap_value_clamp,
+                    );
+                    ret_nob
+                }
             } else if use_gae {
                 compute_gae_advantage(
                     &lane.buffer,
@@ -4805,16 +4842,21 @@ impl Agent {
                     self.config.bootstrap_value_clamp,
                 );
                 let adv_raw = if self.config.use_grpo {
-                    // GRPO: no V baseline AND no V bootstrap. See doc.
-                    let (ret_nob, _, _) = compute_td_n_step_return(
-                        &lane.buffer,
-                        ripe_idx,
-                        n_step,
-                        gamma,
-                        false,
-                        self.config.bootstrap_value_clamp,
-                    );
-                    ret_nob
+                    if self.config.use_grpo_episode {
+                        // Per-episode GRPO. See use_grpo_episode docs.
+                        lane.last_episode_return
+                    } else {
+                        // Per-step GRPO: no V bootstrap.
+                        let (ret_nob, _, _) = compute_td_n_step_return(
+                            &lane.buffer,
+                            ripe_idx,
+                            n_step,
+                            gamma,
+                            false,
+                            self.config.bootstrap_value_clamp,
+                        );
+                        ret_nob
+                    }
                 } else if use_gae {
                     compute_gae_advantage(
                         &lane.buffer,

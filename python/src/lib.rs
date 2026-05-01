@@ -479,6 +479,7 @@ impl PyBatchAgent {
         use_ppo = None,
         ppo_clip_eps = None,
         use_grpo = None,
+        use_grpo_episode = None,
         use_kl_ppo = None,
         kl_beta = None,
         kl_use_snapshot = None,
@@ -583,6 +584,7 @@ impl PyBatchAgent {
         use_ppo: Option<bool>,
         ppo_clip_eps: Option<f32>,
         use_grpo: Option<bool>,
+        use_grpo_episode: Option<bool>,
         use_kl_ppo: Option<bool>,
         kl_beta: Option<f32>,
         kl_use_snapshot: Option<bool>,
@@ -890,6 +892,9 @@ impl PyBatchAgent {
         }
         if let Some(v) = use_grpo {
             config.use_grpo = v;
+        }
+        if let Some(v) = use_grpo_episode {
+            config.use_grpo_episode = v;
         }
         if let Some(v) = use_kl_ppo {
             config.use_kl_ppo = v;
