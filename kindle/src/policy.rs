@@ -775,11 +775,112 @@ fn encoder_forward(g: &mut Graph, e: &EncoderE2E, obs: NodeId, task: NodeId) -> 
     e.fc2.forward(g, h)
 }
 
-// Note: `build_ppo_policy_graph_e2e` was removed in
-// docs/failed_experiments.md.  PPO + end_to_end_encoder never
-// converged across multiple debug rounds; the working sustained-solve
-// path is plain-PG e2e + `--lr-drop-on-solve` (the dynamic LR mutator
-// gives the trust-region effect PPO would provide if it worked).
+/// PPO clipped-surrogate policy graph with end-to-end encoder.
+///
+/// Restored 2026-05-01 after the autodiff bug fix — the previous
+/// failure ("ratio stays near 1, clip never engages, gradient SNR too
+/// low") was diagnosed under buggy autodiff (SumAll/MeanAll dropped
+/// grad_output). The bug fix changes per-element gradient magnitudes,
+/// so this graph is worth re-validating. Failure mode and history
+/// in `docs/failed_experiments.md`.
+///
+/// Loss: `-mean(min(r_t·Â_t, clip(r_t, 1±ε)·Â_t)) + vf_coef·MSE(V, target) - β·H(π)`.
+/// Inputs: obs, task, action (plain one-hot of taken action), advantage,
+/// old_prob_taken, value_target. Optional: entropy_beta input when
+/// β > 0 at construction.
+#[allow(clippy::too_many_arguments)]
+pub fn build_ppo_policy_graph_e2e(
+    obs_dim: usize,
+    task_dim: usize,
+    action_dim: usize,
+    hidden_dim: usize,
+    latent_dim: usize,
+    batch_size: usize,
+    clip_eps: f32,
+    value_loss_coef: f32,
+    entropy_beta: f32,
+    value_clip_scale: f32,
+) -> Graph {
+    let mut g = Graph::new();
+    let obs = g.input("obs", &[batch_size, obs_dim]);
+    let task = g.input("task", &[batch_size, task_dim]);
+    let action = g.input("action", &[batch_size, action_dim]);
+    let advantage = g.input("advantage", &[batch_size, 1]);
+    let old_prob_taken = g.input("old_prob_taken", &[batch_size, 1]);
+    let value_target = g.input("value_target", &[batch_size, 1]);
+
+    let encoder = build_named_encoder(&mut g, obs_dim, task_dim, latent_dim, hidden_dim);
+    let z = encoder_forward(&mut g, &encoder, obs, task);
+
+    let policy = Policy::new(&mut g, latent_dim, action_dim, hidden_dim);
+    let logits = policy.forward(&mut g, z);
+
+    let sm_new = g.softmax(logits);
+    let p_per_class = g.mul(sm_new, action);
+    let ones_k1 = g.constant(vec![1.0; action_dim], &[action_dim, 1]);
+    let new_prob_taken = g.matmul(p_per_class, ones_k1);
+    let ratio = g.div(new_prob_taken, old_prob_taken);
+
+    let one_plus_eps = g.constant(vec![1.0 + clip_eps; batch_size], &[batch_size, 1]);
+    let one_minus_eps = g.constant(vec![1.0 - clip_eps; batch_size], &[batch_size, 1]);
+    let ones_bx1 = g.constant(vec![1.0; batch_size], &[batch_size, 1]);
+
+    let gate_over = g.greater(ratio, one_plus_eps);
+    let neg_gate_over = g.neg(gate_over);
+    let inv_gate_over = g.add(ones_bx1, neg_gate_over);
+    let term1 = g.mul(ratio, inv_gate_over);
+    let term2 = g.mul(one_plus_eps, gate_over);
+    let ratio_hi = g.add(term1, term2);
+
+    let gate_under = g.greater(one_minus_eps, ratio_hi);
+    let neg_gate_under = g.neg(gate_under);
+    let inv_gate_under = g.add(ones_bx1, neg_gate_under);
+    let cterm1 = g.mul(ratio_hi, inv_gate_under);
+    let cterm2 = g.mul(one_minus_eps, gate_under);
+    let ratio_clip = g.add(cterm1, cterm2);
+
+    let surr1 = g.mul(ratio, advantage);
+    let surr2 = g.mul(ratio_clip, advantage);
+    let gate_min = g.greater(surr1, surr2);
+    let neg_gate_min = g.neg(gate_min);
+    let inv_gate_min = g.add(ones_bx1, neg_gate_min);
+    let smin1 = g.mul(surr1, inv_gate_min);
+    let smin2 = g.mul(surr2, gate_min);
+    let surr_min = g.add(smin1, smin2);
+    let neg_surr_min = g.neg(surr_min);
+    let policy_loss = g.mean_all(neg_surr_min);
+
+    // Detach z from value head — V MSE doesn't backprop into encoder.
+    let z_for_value = g.stop_gradient(z);
+    let value_head = ValueHead::new(&mut g, latent_dim, hidden_dim);
+    let raw_value = value_head.forward(&mut g, z_for_value);
+    let value = scaled_tanh(&mut g, raw_value, value_clip_scale, batch_size, 1);
+    let value_loss_raw = g.mse_loss(value, value_target);
+    let value_loss = if (value_loss_coef - 1.0).abs() < 1e-6 {
+        value_loss_raw
+    } else {
+        let coef = g.scalar(value_loss_coef);
+        g.mul(value_loss_raw, coef)
+    };
+    let base_loss = g.add(policy_loss, value_loss);
+
+    let total_loss = if entropy_beta == 0.0 {
+        base_loss
+    } else {
+        let z_det = g.stop_gradient(z);
+        let logits_for_ent = policy.forward(&mut g, z_det);
+        let sm = g.softmax(logits_for_ent);
+        let lsm = g.log_softmax(logits_for_ent);
+        let p_log_p = g.mul(sm, lsm);
+        let mean_ent = g.mean_all(p_log_p);
+        let beta_input = g.input("entropy_beta", &[1]);
+        let ent_penalty = g.mul(mean_ent, beta_input);
+        g.add(base_loss, ent_penalty)
+    };
+
+    g.set_outputs(vec![total_loss, logits, value]);
+    g
+}
 
 pub fn build_continuous_policy_graph(
     latent_dim: usize,

@@ -744,6 +744,19 @@ pub struct AgentConfig {
     /// Only has effect when `use_ppo = true`. Default 1 (equivalent
     /// to the no-clip baseline for single-epoch runs).
     pub ppo_n_epochs: usize,
+    /// Enable Group-Relative Policy Optimization (GRPO). When `true`,
+    /// drops the V-baseline and uses cross-lane (per-step) statistics
+    /// for advantage estimation: `A_i(t) = (R_i(t) - mean_lanes(R(t)))
+    /// / std_lanes(R(t))`. Reuses the plain-PG e2e graph (no new
+    /// graph variant needed) — the GRPO formulation lives entirely
+    /// in advantage computation. Requires `advantage_normalize = true`
+    /// (forced) since the cross-lane normalization IS GRPO's core.
+    /// `value_loss_coef` should be `0.0` to skip V training (V is
+    /// unused for advantage when GRPO is on); a non-zero coef will
+    /// still train V but it does not feed back into the policy
+    /// advantage. Mutually exclusive with `use_ppo` and `use_kl_ppo`.
+    /// Default `false`.
+    pub use_grpo: bool,
     /// Zero all advantages (and therefore the policy-gradient
     /// signal) for the first `policy_warmup_steps` env-steps.
     /// The value head still trains — only the policy-gradient
@@ -963,6 +976,7 @@ impl Default for AgentConfig {
             advantage_normalize: false,
             use_ppo: false,
             ppo_clip_eps: 0.2,
+            use_grpo: false,
             use_kl_ppo: false,
             kl_beta: 0.05,
             kl_use_snapshot: false,
@@ -1913,20 +1927,10 @@ impl Agent {
             config.batch_size
         };
         let policy_session = {
-            // PPO + end_to_end_encoder is not currently supported. The
-            // PPO+e2e graph (build_ppo_policy_graph_e2e) was attempted
-            // across multiple debug rounds and never converged on
-            // CartPole; see docs/failed_experiments.md for the
-            // diagnostic trail. Future work would need per-op gradient
-            // inspection in meganeura or a KL-penalty PPO rewrite —
-            // outside session scope. The plain-PG e2e path is the
-            // working sustained-solve recipe; PPO without e2e remains
-            // available for envs where the WM-trained encoder suffices.
-            assert!(
-                !(is_discrete && config.end_to_end_encoder && config.use_ppo),
-                "end_to_end_encoder + use_ppo is not supported (PPO+e2e graph \
-                 fails to converge; see docs/failed_experiments.md)"
-            );
+            // PPO + end_to_end_encoder: restored 2026-05-01 with the
+            // post-autodiff-bug-fix grad path. Validate behavior carefully
+            // — historical failure mode documented in
+            // docs/failed_experiments.md.
             assert!(
                 !(config.use_kl_ppo && !config.end_to_end_encoder),
                 "use_kl_ppo currently requires end_to_end_encoder = true"
@@ -1939,6 +1943,19 @@ impl Agent {
                 !(config.use_kl_ppo && config.num_options > 1),
                 "use_kl_ppo + L1 options not implemented"
             );
+            assert!(
+                !(config.use_grpo && config.use_ppo),
+                "use_grpo and use_ppo are mutually exclusive"
+            );
+            assert!(
+                !(config.use_grpo && config.use_kl_ppo),
+                "use_grpo and use_kl_ppo are mutually exclusive"
+            );
+            assert!(
+                !(config.use_grpo && !config.advantage_normalize),
+                "use_grpo requires advantage_normalize = true (cross-lane \
+                 mean/std normalization IS the GRPO advantage definition)"
+            );
             let g = if is_discrete && config.end_to_end_encoder && config.use_kl_ppo {
                 policy::build_kl_policy_graph_e2e(
                     OBS_TOKEN_DIM,
@@ -1949,6 +1966,23 @@ impl Agent {
                     policy_batch,
                     config.kl_beta,
                     config.value_loss_coef,
+                    config.value_clip_scale,
+                )
+            } else if is_discrete && config.end_to_end_encoder && config.use_ppo {
+                assert!(
+                    config.num_options <= 1,
+                    "use_ppo is not compatible with num_options > 1 (L1 options)"
+                );
+                policy::build_ppo_policy_graph_e2e(
+                    OBS_TOKEN_DIM,
+                    TASK_DIM,
+                    MAX_ACTION_DIM,
+                    config.hidden_dim,
+                    config.latent_dim,
+                    policy_batch,
+                    config.ppo_clip_eps,
+                    config.value_loss_coef,
+                    config.entropy_beta,
                     config.value_clip_scale,
                 )
             } else if is_discrete && config.end_to_end_encoder {
@@ -4422,7 +4456,12 @@ impl Agent {
                 Some(fv) => fv[i],
                 None => ripe.value,
             };
-            let adv_raw = if use_gae {
+            let adv_raw = if self.config.use_grpo {
+                // GRPO: no V baseline. The n-step return itself is
+                // the per-step "score"; cross-lane mean/std normalize
+                // below produce the group-relative advantage.
+                ret
+            } else if use_gae {
                 compute_gae_advantage(
                     &lane.buffer,
                     ripe_idx,
@@ -4755,7 +4794,10 @@ impl Agent {
                     value_target_bootstrap,
                     self.config.bootstrap_value_clamp,
                 );
-                let adv_raw = if use_gae {
+                let adv_raw = if self.config.use_grpo {
+                    // GRPO: no V baseline. See use_grpo doc.
+                    ret
+                } else if use_gae {
                     compute_gae_advantage(
                         &lane.buffer,
                         ripe_idx,
