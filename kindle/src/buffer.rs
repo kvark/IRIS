@@ -118,6 +118,22 @@ pub struct Transition {
     /// Boundary flag: true on the first transition after `switch_env`, so
     /// the credit assigner and world model skip cross-env attribution.
     pub env_boundary: bool,
+    /// Total episode return at the time this episode COMPLETED. Set
+    /// retroactively when the episode-end boundary is detected
+    /// (see `Agent::backfill_episode_returns`); zero until then.
+    /// Used by `use_grpo_episode` advantage to apply the same
+    /// per-episode score to every transition in the episode. A
+    /// transition with `episode_return == 0` is either pre-first-
+    /// episode-completion or comes from an episode whose return was
+    /// genuinely zero — the GRPO update path uses an explicit
+    /// "episode complete" flag rather than relying on this value.
+    pub episode_return: f32,
+    /// Set when the transition's containing episode has been
+    /// retroactively annotated (i.e. the episode has ended). Used by
+    /// `use_grpo_episode` advantage to gate "skip transitions whose
+    /// episode hasn't ended yet" from "this transition's episode
+    /// genuinely returned zero".
+    pub episode_complete: bool,
 }
 
 /// Key for the novelty visit-count map.

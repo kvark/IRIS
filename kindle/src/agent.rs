@@ -3125,6 +3125,39 @@ impl Agent {
                 // Snapshot the just-completed episode return for GRPO
                 // per-episode advantage mode before resetting.
                 lane.last_episode_return = lane.outcome_ep_return;
+                // Retroactively annotate the just-completed episode's
+                // transitions in lane.buffer with their episode_return
+                // and episode_complete=true. This walks back from the
+                // most recent transition (which is the terminal step)
+                // until we hit the previous env_boundary or the start
+                // of the buffer.
+                if self.config.use_grpo_episode {
+                    let blen = lane.buffer.len();
+                    if blen > 0 {
+                        let ep_ret = lane.last_episode_return;
+                        let mut idx = blen - 1;
+                        loop {
+                            // Annotate first; the start-of-episode
+                            // transition itself (env_boundary=true)
+                            // is part of the episode we're closing.
+                            let tr = lane.buffer.get_mut(idx);
+                            tr.episode_return = ep_ret;
+                            tr.episode_complete = true;
+                            // env_boundary marks first step of a new
+                            // episode — when we hit it we've fully
+                            // covered this episode's range. (For the
+                            // very first episode, no transition has
+                            // env_boundary=true; we fall out at idx=0.)
+                            if tr.env_boundary {
+                                break;
+                            }
+                            if idx == 0 {
+                                break;
+                            }
+                            idx -= 1;
+                        }
+                    }
+                }
                 lane.outcome_ep_return = 0.0;
                 lane.outcome_ep_step_rewards.clear();
                 lane.prev_r_hat = 0.0;
@@ -3350,6 +3383,8 @@ impl Agent {
                 option_idx: lane.current_option,
                 env_id: lane.adapter.id(),
                 env_boundary,
+                episode_return: 0.0,
+                episode_complete: false,
             });
 
             lane.last_surprise = surprise;
@@ -4488,12 +4523,16 @@ impl Agent {
             };
             let adv_raw = if self.config.use_grpo {
                 if self.config.use_grpo_episode {
-                    // Per-episode GRPO: use the lane's most recently
-                    // completed episode return as the score for every
-                    // transition. Cross-batch normalization gives the
-                    // group-relative advantage. Closer to canonical
-                    // DeepSeek-R1 GRPO than per-step.
-                    lane.last_episode_return
+                    // Per-episode GRPO: use this transition's own
+                    // episode return (set retroactively at episode end).
+                    // If the transition's episode hasn't ended yet,
+                    // skip the lane (set inactive) — credit-assigning
+                    // mid-episode transitions before we know the
+                    // outcome would just inject noise.
+                    if !ripe.episode_complete {
+                        continue;
+                    }
+                    ripe.episode_return
                 } else {
                     // Per-step GRPO: n-step return without V bootstrap
                     // (V is unused with value_loss_coef=0, so its
@@ -4844,7 +4883,10 @@ impl Agent {
                 let adv_raw = if self.config.use_grpo {
                     if self.config.use_grpo_episode {
                         // Per-episode GRPO. See use_grpo_episode docs.
-                        lane.last_episode_return
+                        if !ripe.episode_complete {
+                            continue;
+                        }
+                        ripe.episode_return
                     } else {
                         // Per-step GRPO: no V bootstrap.
                         let (ret_nob, _, _) = compute_td_n_step_return(
@@ -5661,6 +5703,8 @@ mod tests {
                 option_idx: 0,
                 env_id: 0,
                 env_boundary,
+                episode_return: 0.0,
+                episode_complete: false,
             });
         }
         buf
