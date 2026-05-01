@@ -4457,10 +4457,20 @@ impl Agent {
                 None => ripe.value,
             };
             let adv_raw = if self.config.use_grpo {
-                // GRPO: no V baseline. The n-step return itself is
-                // the per-step "score"; cross-lane mean/std normalize
-                // below produce the group-relative advantage.
-                ret
+                // GRPO: no V baseline AND no V bootstrap. With
+                // value_loss_coef=0 (the natural GRPO setup), V is
+                // never trained, so the bootstrap V_n in `ret` is
+                // pure noise. Recompute the n-step return without
+                // bootstrap for a clean unbiased reward sum.
+                let (ret_nob, _, _) = compute_td_n_step_return(
+                    &lane.buffer,
+                    ripe_idx,
+                    n_step,
+                    gamma,
+                    false,
+                    self.config.bootstrap_value_clamp,
+                );
+                ret_nob
             } else if use_gae {
                 compute_gae_advantage(
                     &lane.buffer,
@@ -4795,8 +4805,16 @@ impl Agent {
                     self.config.bootstrap_value_clamp,
                 );
                 let adv_raw = if self.config.use_grpo {
-                    // GRPO: no V baseline. See use_grpo doc.
-                    ret
+                    // GRPO: no V baseline AND no V bootstrap. See doc.
+                    let (ret_nob, _, _) = compute_td_n_step_return(
+                        &lane.buffer,
+                        ripe_idx,
+                        n_step,
+                        gamma,
+                        false,
+                        self.config.bootstrap_value_clamp,
+                    );
+                    ret_nob
                 } else if use_gae {
                     compute_gae_advantage(
                         &lane.buffer,
