@@ -4585,14 +4585,25 @@ impl Agent {
                     }
                 }
                 let mean = sum / active_count as f32;
-                let mut sq_sum = 0.0f32;
-                for (i, &a) in raw_advantages.iter().enumerate() {
-                    if lane_active[i] {
-                        let d = a - mean;
-                        sq_sum += d * d;
+                // For per-episode GRPO: only mean-center, don't divide
+                // by std. With clustered episode returns (8 similar
+                // policies), std → 0 and (a-mean)/std collapses the
+                // gradient to zero. Mean-centering preserves the raw
+                // reward scale; advantage_clamp caps if needed.
+                let divide_by_std =
+                    !(self.config.use_grpo && self.config.use_grpo_episode);
+                let std = if divide_by_std {
+                    let mut sq_sum = 0.0f32;
+                    for (i, &a) in raw_advantages.iter().enumerate() {
+                        if lane_active[i] {
+                            let d = a - mean;
+                            sq_sum += d * d;
+                        }
                     }
-                }
-                let std = (sq_sum / active_count as f32).sqrt().max(1e-3);
+                    (sq_sum / active_count as f32).sqrt().max(1e-3)
+                } else {
+                    1.0
+                };
                 for (i, a) in raw_advantages.iter_mut().enumerate() {
                     if lane_active[i] {
                         *a = (*a - mean) / std;
@@ -5064,14 +5075,23 @@ impl Agent {
                     }
                 }
                 let mean = sum / active_count as f32;
-                let mut sq_sum = 0.0f32;
-                for (i, &a) in raw_advantages.iter().enumerate() {
-                    if row_active[i] {
-                        let d = a - mean;
-                        sq_sum += d * d;
+                // For per-episode GRPO: skip variance normalization to
+                // avoid the clustered-returns degeneracy (see other
+                // apply_pg_update path for explanation).
+                let divide_by_std =
+                    !(self.config.use_grpo && self.config.use_grpo_episode);
+                let std = if divide_by_std {
+                    let mut sq_sum = 0.0f32;
+                    for (i, &a) in raw_advantages.iter().enumerate() {
+                        if row_active[i] {
+                            let d = a - mean;
+                            sq_sum += d * d;
+                        }
                     }
-                }
-                let std = (sq_sum / active_count as f32).sqrt().max(1e-3);
+                    (sq_sum / active_count as f32).sqrt().max(1e-3)
+                } else {
+                    1.0
+                };
                 for (i, a) in raw_advantages.iter_mut().enumerate() {
                     if row_active[i] {
                         *a = (*a - mean) / std;
