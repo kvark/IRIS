@@ -6,13 +6,20 @@
     clippy::single_match,
     clippy::too_many_arguments,
     clippy::collapsible_if,
-    clippy::collapsible_match
-)]
-#![warn(
-    trivial_numeric_casts,
-    unused_extern_crates,
+    clippy::collapsible_match,
+    // Numerical kernels: matrix-style indexing with row/col loop vars
+    // is clearer than enumerate adapters. See diayn::forward_softmax,
+    // backward, etc.
+    clippy::needless_range_loop,
+    // Several test helpers use vec! for clarity even when fixed-size
+    // arrays would compile.
+    clippy::useless_vec,
+    // Match against owned value through a borrowed reference is the
+    // intended pattern in some adapter code (e.g. Action enum match
+    // on `&action`).
     clippy::pattern_type_mismatch
 )]
+#![warn(trivial_numeric_casts, unused_extern_crates)]
 
 //! kindle: a continually self-training RL agent built on meganeura.
 //!
