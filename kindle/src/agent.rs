@@ -774,6 +774,42 @@ pub struct AgentConfig {
     /// return. Cross-lane normalization uses the batch of recent G's.
     /// Default `false` (per-step GRPO).
     pub use_grpo_episode: bool,
+    /// Enable Self-Imitation Learning (Oh et al. 2018). When `true`,
+    /// the agent maintains a buffer of `(obs, action)` pairs from
+    /// "successful" episodes (return > running EMA baseline). After
+    /// each policy update, an additional supervised CE loss step
+    /// runs on a random batch from this buffer, pulling the policy
+    /// toward "actions you have taken that worked".
+    ///
+    /// Mechanism: addresses the on-policy A2C limitation that gradient
+    /// updates only propagate through actually-sampled (s, a) pairs.
+    /// A policy locked at a local optimum in some state-distribution
+    /// (e.g., "always fire engine when on ground") never samples the
+    /// alternative action there, so it never gets the gradient signal
+    /// to escape. SIL forces the policy to imitate its own past
+    /// successes, even at states it currently visits with different
+    /// actions — provided the encoder generalizes between the two.
+    ///
+    /// Requires successful episodes to actually occur (sparse-reward
+    /// problems with zero successes won't benefit). Compatible with
+    /// any policy graph (plain PG e2e, KL-PPO, GRPO).
+    pub use_sil: bool,
+    /// Weight applied to the SIL CE loss. Each SIL update treats
+    /// every (s, a) as a positive example with effective advantage
+    /// = `sil_loss_coef`. Default 0.5 — SIL gradient half the
+    /// magnitude of a unit-advantage on-policy update. Larger values
+    /// pull the policy more aggressively toward past successes.
+    pub sil_loss_coef: f32,
+    /// Capacity of the SIL replay buffer. Older samples are evicted
+    /// FIFO when full. Default 10000.
+    pub sil_buffer_capacity: usize,
+    /// EMA decay rate for the "successful episode" baseline. The
+    /// baseline tracks recent episode returns; an episode qualifies
+    /// for SIL push if its return strictly exceeds the current
+    /// baseline. Default 0.99 (≈ 100-episode horizon). Lower values
+    /// make the baseline more reactive (fewer episodes qualify but
+    /// they are more recently-best).
+    pub sil_baseline_decay: f32,
     /// Zero all advantages (and therefore the policy-gradient
     /// signal) for the first `policy_warmup_steps` env-steps.
     /// The value head still trains — only the policy-gradient
@@ -995,6 +1031,10 @@ impl Default for AgentConfig {
             ppo_clip_eps: 0.2,
             use_grpo: false,
             use_grpo_episode: false,
+            use_sil: false,
+            sil_loss_coef: 0.5,
+            sil_buffer_capacity: 10_000,
+            sil_baseline_decay: 0.99,
             use_kl_ppo: false,
             kl_beta: 0.05,
             kl_use_snapshot: false,
@@ -1564,6 +1604,36 @@ pub struct Agent {
     /// previous step's value. Only consumed when
     /// `extrinsic_reward_alpha > 0`.
     extrinsic_reward: Vec<f32>,
+    /// SIL replay buffer: (obs, action_idx, value_target, env_id)
+    /// from successful episodes. See `AgentConfig::use_sil`.
+    sil_buffer: std::collections::VecDeque<SilSample>,
+    /// EMA of recent episode returns, used as the threshold for
+    /// "successful episode" → SIL push. Initialized lazily on first
+    /// completed episode.
+    sil_baseline: f32,
+    /// Whether `sil_baseline` has been initialized from a real
+    /// episode return (false = use first episode's return as init).
+    sil_baseline_initialized: bool,
+}
+
+/// One sample in the SIL replay buffer.
+///
+/// Stores (s, a, R_to_go, V_at_collect). The SIL update uses
+/// `max(0, R_to_go - V_at_collect)` as the per-sample advantage —
+/// the "positive advantage filter" from Oh et al. 2018. This focuses
+/// gradient on transitions where the actual outcome exceeded V's
+/// prediction at collection time, naturally weighting the late-
+/// episode "surprising success" moments (e.g. the touchdown noop
+/// that yields +100) over routine descent steps.
+#[derive(Clone)]
+pub struct SilSample {
+    pub obs: Vec<f32>,
+    pub action_idx: usize,
+    /// Undiscounted return-to-go from this step to episode end.
+    pub r_to_go: f32,
+    /// V(s) baseline cached at collection time.
+    pub v_at_collect: f32,
+    pub env_id: u32,
 }
 
 /// Apply the terminal-proximity bonus retroactively to the K most
@@ -2396,6 +2466,11 @@ impl Agent {
             planner_queue: (0..n).map(|_| std::collections::VecDeque::new()).collect(),
             planner_calls_since_refresh: 0,
             extrinsic_reward: vec![0.0; n],
+            sil_buffer: std::collections::VecDeque::with_capacity(
+                config.sil_buffer_capacity,
+            ),
+            sil_baseline: 0.0,
+            sil_baseline_initialized: false,
             config,
         }
     }
@@ -3125,6 +3200,68 @@ impl Agent {
                 // Snapshot the just-completed episode return for GRPO
                 // per-episode advantage mode before resetting.
                 lane.last_episode_return = lane.outcome_ep_return;
+                // SIL: push successful episode's transitions into the
+                // replay buffer. "Successful" = return strictly above
+                // the EMA baseline of recent episode returns.
+                if self.config.use_sil {
+                    let ep_ret = lane.outcome_ep_return;
+                    let push = if !self.sil_baseline_initialized {
+                        // First episode: initialize baseline, don't push
+                        self.sil_baseline = ep_ret;
+                        self.sil_baseline_initialized = true;
+                        false
+                    } else {
+                        ep_ret > self.sil_baseline
+                    };
+                    if push {
+                        let blen = lane.buffer.len();
+                        if blen > 0 {
+                            let vtc = self.config.value_target_clamp;
+                            // Walk back from terminal, accumulating
+                            // undiscounted R-to-go per transition.
+                            let mut r_acc = 0.0f32;
+                            let mut idx = blen - 1;
+                            loop {
+                                let tr = lane.buffer.get(idx);
+                                if tr.reward.is_finite() {
+                                    r_acc += tr.reward;
+                                }
+                                let action_idx = tr
+                                    .action
+                                    .iter()
+                                    .position(|&v| v > 0.5)
+                                    .unwrap_or(0);
+                                if self.sil_buffer.len()
+                                    >= self.config.sil_buffer_capacity
+                                {
+                                    self.sil_buffer.pop_front();
+                                }
+                                let v_at_collect = if tr.value.is_finite() {
+                                    tr.value
+                                } else {
+                                    0.0
+                                };
+                                self.sil_buffer.push_back(SilSample {
+                                    obs: tr.observation.clone(),
+                                    action_idx,
+                                    r_to_go: r_acc.clamp(-vtc, vtc),
+                                    v_at_collect,
+                                    env_id: tr.env_id,
+                                });
+                                if tr.env_boundary {
+                                    break;
+                                }
+                                if idx == 0 {
+                                    break;
+                                }
+                                idx -= 1;
+                            }
+                        }
+                    }
+                    // EMA-update baseline regardless of push.
+                    let d = self.config.sil_baseline_decay;
+                    self.sil_baseline = d * self.sil_baseline + (1.0 - d) * ep_ret;
+                }
                 // Retroactively annotate the just-completed episode's
                 // transitions in lane.buffer with their episode_return
                 // and episode_complete=true. This walks back from the
@@ -4772,6 +4909,7 @@ impl Agent {
             let rate = self.config.policy_lr_adaptive_ema.clamp(0.001, 1.0);
             self.policy_loss_ema = (1.0 - rate) * self.policy_loss_ema + rate * loss.abs();
         }
+        self.maybe_run_sil_update();
     }
 
     /// Big-batch rollout policy update: flatten the `rollout_length`-
@@ -5305,6 +5443,112 @@ impl Agent {
             let rate = self.config.policy_lr_adaptive_ema.clamp(0.001, 1.0);
             self.policy_loss_ema = (1.0 - rate) * self.policy_loss_ema + rate * loss.abs();
         }
+        self.maybe_run_sil_update();
+    }
+
+    /// Self-Imitation Learning step: run one supervised CE update on
+    /// a sampled batch of (obs, action) from the SIL buffer of past
+    /// successful episodes. No-op when use_sil is off, when buffer
+    /// has fewer than policy_batch samples, or when the policy graph
+    /// requires inputs we don't have for SIL (e.g. PPO's old_prob).
+    ///
+    /// The graph is reused (no separate session). For the plain-PG
+    /// e2e graph, `action = sil_loss_coef * one_hot(taken)` makes the
+    /// CE term `-sil_loss_coef * log_pi(taken)` — pure positive-example
+    /// imitation. value_target is set to the stored episode return so
+    /// V also learns from these samples.
+    fn maybe_run_sil_update(&mut self) {
+        if !self.config.use_sil {
+            return;
+        }
+        // PPO+e2e graph reads `advantage` and `old_prob_taken` inputs
+        // that we don't fill for SIL — skip to avoid feeding stale
+        // values that would scramble the gradient. KL-PPO is fine
+        // (it uses old_logits which we DO have, but conservatively
+        // skip there too for now).
+        if self.config.use_ppo || self.config.use_kl_ppo {
+            return;
+        }
+        if !self.config.end_to_end_encoder {
+            return;
+        }
+        let policy_batch = self.config.batch_size * self.config.rollout_length;
+        if self.sil_buffer.len() < policy_batch {
+            return;
+        }
+
+        // Sample policy_batch indices.
+        use rand::Rng;
+        let mut rng = rand::rng();
+        let n = self.sil_buffer.len();
+        let sampled_idx: Vec<usize> = (0..policy_batch)
+            .map(|_| rng.random_range(0..n))
+            .collect();
+
+        // Fill scratch buffers from the sampled SIL transitions.
+        self.obs_token_scratch.fill(0.0);
+        self.task_scratch.fill(0.0);
+        self.policy_action_scratch.fill(0.0);
+        self.value_target_scratch.fill(0.0);
+
+        let coef = self.config.sil_loss_coef;
+        let mut n_active = 0;
+        for (row, &si) in (0..policy_batch).zip(sampled_idx.iter()) {
+            let sample = &self.sil_buffer[si];
+            // Positive-advantage filter (Oh et al. 2018):
+            //   sil_advantage = max(0, R_to_go - V_at_collect)
+            // Transitions where the actual outcome did not exceed V's
+            // prediction at collection time get zero gradient — they
+            // are "expected" successes that don't carry surprise.
+            // Successful TD transitions where R_to_go ≫ V get the
+            // strongest pull. This naturally weights late-episode
+            // moments (touchdown noops) over routine descent.
+            let adv = (sample.r_to_go - sample.v_at_collect).max(0.0);
+            let weight = coef * adv;
+            // obs
+            let obs_dst = &mut self.obs_token_scratch
+                [row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
+            let copy_n = sample.obs.len().min(OBS_TOKEN_DIM);
+            obs_dst[..copy_n].copy_from_slice(&sample.obs[..copy_n]);
+            // task
+            let task_dst = &mut self.task_scratch[row * TASK_DIM..(row + 1) * TASK_DIM];
+            if let Some(emb) = self.task_embeddings.get(&sample.env_id) {
+                task_dst.copy_from_slice(emb);
+            }
+            // action: weight * one_hot(taken). When weight = 0 the
+            // CE contribution from this row is zero (no gradient).
+            let act_dst = &mut self.policy_action_scratch
+                [row * MAX_ACTION_DIM..(row + 1) * MAX_ACTION_DIM];
+            if sample.action_idx < MAX_ACTION_DIM {
+                act_dst[sample.action_idx] = weight;
+            }
+            // value target: train V toward R_to_go (helps V learn
+            // to predict actual outcomes from successful states,
+            // which ALSO sharpens future SIL filtering).
+            self.value_target_scratch[row] = sample.r_to_go;
+            if weight > 0.0 {
+                n_active += 1;
+            }
+        }
+        // No-op if all sampled rows had non-positive advantage.
+        if n_active == 0 {
+            return;
+        }
+
+        self.policy_session
+            .set_input("obs", &self.obs_token_scratch);
+        self.policy_session
+            .set_input("task", &self.task_scratch);
+        self.policy_session
+            .set_input("action", &self.policy_action_scratch);
+        self.policy_session
+            .set_input("value_target", &self.value_target_scratch);
+        self.feed_entropy_beta_input();
+        // Use the same effective LR as a regular update.
+        let lr = self.config.lr_policy * self.batch_lr_scale;
+        self.policy_session.set_learning_rate(lr);
+        self.policy_session.step();
+        self.policy_session.wait();
     }
 
     pub fn step_count(&self) -> usize {
