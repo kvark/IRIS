@@ -2483,9 +2483,7 @@ impl Agent {
             planner_queue: (0..n).map(|_| std::collections::VecDeque::new()).collect(),
             planner_calls_since_refresh: 0,
             extrinsic_reward: vec![0.0; n],
-            sil_buffer: std::collections::VecDeque::with_capacity(
-                config.sil_buffer_capacity,
-            ),
+            sil_buffer: std::collections::VecDeque::with_capacity(config.sil_buffer_capacity),
             sil_baseline: 0.0,
             sil_baseline_initialized: false,
             sil_updates_attempted: 0,
@@ -3249,21 +3247,13 @@ impl Agent {
                                 if tr.reward.is_finite() {
                                     r_acc += tr.reward;
                                 }
-                                let action_idx = tr
-                                    .action
-                                    .iter()
-                                    .position(|&v| v > 0.5)
-                                    .unwrap_or(0);
-                                if self.sil_buffer.len()
-                                    >= self.config.sil_buffer_capacity
-                                {
+                                let action_idx =
+                                    tr.action.iter().position(|&v| v > 0.5).unwrap_or(0);
+                                if self.sil_buffer.len() >= self.config.sil_buffer_capacity {
                                     self.sil_buffer.pop_front();
                                 }
-                                let v_at_collect = if tr.value.is_finite() {
-                                    tr.value
-                                } else {
-                                    0.0
-                                };
+                                let v_at_collect =
+                                    if tr.value.is_finite() { tr.value } else { 0.0 };
                                 self.sil_buffer.push_back(SilSample {
                                     obs: tr.observation.clone(),
                                     action_idx,
@@ -4757,8 +4747,7 @@ impl Agent {
                 // policies), std → 0 and (a-mean)/std collapses the
                 // gradient to zero. Mean-centering preserves the raw
                 // reward scale; advantage_clamp caps if needed.
-                let divide_by_std =
-                    !(self.config.use_grpo && self.config.use_grpo_episode);
+                let divide_by_std = !(self.config.use_grpo && self.config.use_grpo_episode);
                 let std = if divide_by_std {
                     let mut sq_sum = 0.0f32;
                     for (i, &a) in raw_advantages.iter().enumerate() {
@@ -5246,8 +5235,7 @@ impl Agent {
                 // For per-episode GRPO: skip variance normalization to
                 // avoid the clustered-returns degeneracy (see other
                 // apply_pg_update path for explanation).
-                let divide_by_std =
-                    !(self.config.use_grpo && self.config.use_grpo_episode);
+                let divide_by_std = !(self.config.use_grpo && self.config.use_grpo_episode);
                 let std = if divide_by_std {
                     let mut sq_sum = 0.0f32;
                     for (i, &a) in raw_advantages.iter().enumerate() {
@@ -5512,9 +5500,7 @@ impl Agent {
         use rand::Rng;
         let mut rng = rand::rng();
         let n = self.sil_buffer.len();
-        let sampled_idx: Vec<usize> = (0..policy_batch)
-            .map(|_| rng.random_range(0..n))
-            .collect();
+        let sampled_idx: Vec<usize> = (0..policy_batch).map(|_| rng.random_range(0..n)).collect();
 
         // Fill scratch buffers from the sampled SIL transitions.
         self.obs_token_scratch.fill(0.0);
@@ -5545,8 +5531,8 @@ impl Agent {
             let adv = raw_adv.min(adv_cap);
             let weight = coef * adv;
             // obs
-            let obs_dst = &mut self.obs_token_scratch
-                [row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
+            let obs_dst =
+                &mut self.obs_token_scratch[row * OBS_TOKEN_DIM..(row + 1) * OBS_TOKEN_DIM];
             let copy_n = sample.obs.len().min(OBS_TOKEN_DIM);
             obs_dst[..copy_n].copy_from_slice(&sample.obs[..copy_n]);
             // task
@@ -5556,8 +5542,8 @@ impl Agent {
             }
             // action: weight * one_hot(taken). When weight = 0 the
             // CE contribution from this row is zero (no gradient).
-            let act_dst = &mut self.policy_action_scratch
-                [row * MAX_ACTION_DIM..(row + 1) * MAX_ACTION_DIM];
+            let act_dst =
+                &mut self.policy_action_scratch[row * MAX_ACTION_DIM..(row + 1) * MAX_ACTION_DIM];
             if sample.action_idx < MAX_ACTION_DIM {
                 act_dst[sample.action_idx] = weight;
             }
@@ -5583,8 +5569,7 @@ impl Agent {
 
         self.policy_session
             .set_input("obs", &self.obs_token_scratch);
-        self.policy_session
-            .set_input("task", &self.task_scratch);
+        self.policy_session.set_input("task", &self.task_scratch);
         self.policy_session
             .set_input("action", &self.policy_action_scratch);
         self.policy_session
