@@ -1138,6 +1138,11 @@ impl PyBatchAgent {
         )
     }
 
+    /// L1 param change from most recent SIL step.
+    fn sil_last_param_change(&self) -> f32 {
+        self.agent.sil_last_param_change_value()
+    }
+
     /// Per-lane diagnostics as a list of plain Python dicts.
     fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let diags = self.agent.diagnostics();
