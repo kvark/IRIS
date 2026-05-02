@@ -665,10 +665,10 @@ pub struct AgentConfig {
     /// collapse term. Default 0.0.
     pub recon_loss_coef: f32,
     /// Reward-prediction-from-z anti-collapse loss coefficient. When
-    /// > 0 (e2e only), the policy graph builds a head `z → r̂` and
-    /// adds MSE(r̂, stop_grad(reward)) to the total loss. Adds input
-    /// `reward_target`. Forces z to retain reward-predictive features
-    /// (per-row single-step reward). Default 0.0.
+    /// non-zero (e2e only), the policy graph builds a head `z → r̂`
+    /// and adds MSE(r̂, stop_grad(reward)) to the total loss. Adds
+    /// input `reward_target`. Forces z to retain reward-predictive
+    /// features (per-row single-step reward). Default 0.0.
     pub reward_pred_loss_coef: f32,
     /// Update the policy only every N env-steps, then do N
     /// gradient steps in a row on the accumulated rollout.
@@ -872,6 +872,7 @@ pub struct AgentConfig {
     ///   - The policy update fires every `rollout_length` env-steps
     ///     (supersedes `policy_update_interval`). One gradient step
     ///     per fire, or `ppo_n_epochs` steps under PPO.
+    ///
     /// The low-variance mean gradient estimate that a big-batch
     /// update produces is precisely what lets the PPO clip fire on
     /// genuine trust-region excursions rather than on per-lane
@@ -2041,7 +2042,7 @@ impl Agent {
             // — historical failure mode documented in
             // docs/failed_experiments.md.
             assert!(
-                !(config.use_kl_ppo && !config.end_to_end_encoder),
+                !config.use_kl_ppo || config.end_to_end_encoder,
                 "use_kl_ppo currently requires end_to_end_encoder = true"
             );
             assert!(
@@ -2064,7 +2065,7 @@ impl Agent {
                 "all three of use_grpo + use_ppo + use_kl_ppo cannot be set"
             );
             assert!(
-                !(config.use_grpo && !config.advantage_normalize),
+                !config.use_grpo || config.advantage_normalize,
                 "use_grpo requires advantage_normalize = true (cross-lane \
                  mean/std normalization IS the GRPO advantage definition)"
             );
