@@ -1618,6 +1618,10 @@ pub struct Agent {
     sil_updates_attempted: u64,
     sil_updates_fired: u64,
     sil_last_active_rows: u32,
+    /// L1 change in policy.fc1.weight (first 32 values) caused by the
+    /// most recent SIL update. >0 means SIL is moving params; ≈0 means
+    /// SIL fired but had no effect on params.
+    sil_last_param_change: f32,
 }
 
 /// One sample in the SIL replay buffer.
@@ -2478,6 +2482,7 @@ impl Agent {
             sil_updates_attempted: 0,
             sil_updates_fired: 0,
             sil_last_active_rows: 0,
+            sil_last_param_change: 0.0,
             config,
         }
     }
@@ -5500,6 +5505,13 @@ impl Agent {
         self.value_target_scratch.fill(0.0);
 
         let coef = self.config.sil_loss_coef;
+        // Clamp the SIL per-sample advantage to the same scale as the
+        // regular policy update's `advantage_clamp` (default ±1 after
+        // advantage_normalize). Without this clamp, raw R_to_go values
+        // (which can be 50–200 on dense-reward envs) produce SIL weights
+        // 50–200× larger than the regular advantage, and the SIL update
+        // dominates, destabilizing training.
+        let adv_cap = self.config.advantage_clamp.max(0.1);
         let mut n_active = 0;
         for (row, &si) in (0..policy_batch).zip(sampled_idx.iter()) {
             let sample = &self.sil_buffer[si];
@@ -5511,7 +5523,8 @@ impl Agent {
             // Successful TD transitions where R_to_go ≫ V get the
             // strongest pull. This naturally weights late-episode
             // moments (touchdown noops) over routine descent.
-            let adv = (sample.r_to_go - sample.v_at_collect).max(0.0);
+            let raw_adv = (sample.r_to_go - sample.v_at_collect).max(0.0);
+            let adv = raw_adv.min(adv_cap);
             let weight = coef * adv;
             // obs
             let obs_dst = &mut self.obs_token_scratch
@@ -5545,6 +5558,11 @@ impl Agent {
         }
         self.sil_updates_fired += 1;
 
+        // Diagnostic: snapshot a small param slice BEFORE the SIL step.
+        let mut p_before = vec![0.0f32; 32];
+        self.policy_session
+            .read_param("policy.fc1.weight", &mut p_before);
+
         self.policy_session
             .set_input("obs", &self.obs_token_scratch);
         self.policy_session
@@ -5559,6 +5577,17 @@ impl Agent {
         self.policy_session.set_learning_rate(lr);
         self.policy_session.step();
         self.policy_session.wait();
+
+        // Diagnostic: param L1 change. Stored in `sil_last_param_change`.
+        let mut p_after = vec![0.0f32; 32];
+        self.policy_session
+            .read_param("policy.fc1.weight", &mut p_after);
+        let change: f32 = p_before
+            .iter()
+            .zip(p_after.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        self.sil_last_param_change = change;
     }
 
     pub fn step_count(&self) -> usize {
@@ -5811,6 +5840,13 @@ impl Agent {
     /// SIL update. 0 if SIL never fired.
     pub fn sil_last_active(&self) -> u32 {
         self.sil_last_active_rows
+    }
+
+    /// L1 change in policy.fc1.weight (first 32 entries) caused by
+    /// the most recent SIL update. Useful diagnostic to confirm the
+    /// SIL session step is actually moving parameters.
+    pub fn sil_last_param_change_value(&self) -> f32 {
+        self.sil_last_param_change
     }
 
     /// Current SIL "successful episode" baseline. Returns 0 before
