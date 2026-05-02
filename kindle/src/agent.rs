@@ -72,7 +72,20 @@ use rand::Rng;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncoderKind {
     Mlp,
+    /// Tiny CNN: conv(8, 3×3, s=2) → conv(16, 3×3, s=2) → global_avg_pool → fc.
+    /// ~5k params, suitable only for tiny visual tasks (synthetic/grid/test).
+    /// The global pool destroys spatial information — DON'T use for Atari.
     Cnn {
+        channels: u32,
+        height: u32,
+        width: u32,
+    },
+    /// Nature-DQN-scale CNN (Mnih et al. 2015):
+    /// conv(32, 8×8, s=4) → conv(64, 4×4, s=2) → conv(64, 3×3, s=1)
+    /// → flatten → fc(512) → fc(latent_dim). ~1.7M params.
+    /// Standard for 84×84×4 Atari preprocessed frames; preserves spatial
+    /// structure via flatten (no global pooling).
+    CnnDqn {
         channels: u32,
         height: u32,
         width: u32,
@@ -81,11 +94,16 @@ pub enum EncoderKind {
 
 impl EncoderKind {
     /// Flat element count for visual obs: `0` for Mlp,
-    /// `channels · height · width` for Cnn.
+    /// `channels · height · width` for Cnn variants.
     pub fn visual_dim(&self) -> usize {
         match *self {
             EncoderKind::Mlp => 0,
             EncoderKind::Cnn {
+                channels,
+                height,
+                width,
+            }
+            | EncoderKind::CnnDqn {
                 channels,
                 height,
                 width,
@@ -1932,6 +1950,36 @@ impl Agent {
                     let task_h = task_proj.forward(&mut g, task);
                     g.add(z_cnn, task_h)
                 }
+                EncoderKind::CnnDqn {
+                    channels,
+                    height,
+                    width,
+                } => {
+                    // Same wiring as Cnn but uses CnnEncoderDqn
+                    // (Nature-DQN-scale, ~1.7M params, no global pool).
+                    let flat_dim = (channels as usize)
+                        * (height as usize)
+                        * (width as usize)
+                        * config.batch_size;
+                    let visual = g.input("visual_obs", &[flat_dim]);
+                    let cnn = crate::encoder::CnnEncoderDqn::new(
+                        &mut g,
+                        channels,
+                        height,
+                        width,
+                        config.latent_dim,
+                        config.batch_size as u32,
+                    );
+                    let z_cnn = cnn.forward(&mut g, visual);
+                    let task_proj = nn::Linear::no_bias(
+                        &mut g,
+                        "encoder.task_proj_cnn",
+                        TASK_DIM,
+                        config.latent_dim,
+                    );
+                    let task_h = task_proj.forward(&mut g, task);
+                    g.add(z_cnn, task_h)
+                }
             };
             let wm = WorldModel::new(&mut g, config.latent_dim, MAX_ACTION_DIM, config.hidden_dim);
             let z_hat = wm.forward(&mut g, z_t, action);
@@ -3625,7 +3673,7 @@ impl Agent {
             EncoderKind::Mlp => {
                 self.wm_session.set_input("obs", &self.obs_token_scratch);
             }
-            EncoderKind::Cnn { .. } => {
+            EncoderKind::Cnn { .. } | EncoderKind::CnnDqn { .. } => {
                 // The `visual_obs` graph buffer is allocated by
                 // meganeura as `Memory::Shared` (device-local +
                 // host-visible + host-coherent). The harness writes
@@ -3891,7 +3939,10 @@ impl Agent {
         // stored per-transition, which they aren't (buffer holds
         // the 64-dim token). Skip replay in that case; the online
         // WM gradient still flows every step.
-        if matches!(self.config.encoder_kind, EncoderKind::Cnn { .. }) {
+        if matches!(
+            self.config.encoder_kind,
+            EncoderKind::Cnn { .. } | EncoderKind::CnnDqn { .. }
+        ) {
             return;
         }
         let ld = self.latent_dim;
@@ -4007,7 +4058,10 @@ impl Agent {
         // Drift probes are 64-dim obs tokens captured at warmup;
         // they're not visual frames, so a CNN encoder can't consume
         // them. Leave `last_drift = 0` for CNN-mode agents.
-        if matches!(self.config.encoder_kind, EncoderKind::Cnn { .. }) {
+        if matches!(
+            self.config.encoder_kind,
+            EncoderKind::Cnn { .. } | EncoderKind::CnnDqn { .. }
+        ) {
             return;
         }
         let (probes, references) = match (self.probe_obs.as_ref(), self.probe_reference.as_ref()) {
