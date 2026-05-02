@@ -1614,6 +1614,10 @@ pub struct Agent {
     /// Whether `sil_baseline` has been initialized from a real
     /// episode return (false = use first episode's return as init).
     sil_baseline_initialized: bool,
+    /// Counts of SIL update outcomes for diagnostics.
+    sil_updates_attempted: u64,
+    sil_updates_fired: u64,
+    sil_last_active_rows: u32,
 }
 
 /// One sample in the SIL replay buffer.
@@ -2471,6 +2475,9 @@ impl Agent {
             ),
             sil_baseline: 0.0,
             sil_baseline_initialized: false,
+            sil_updates_attempted: 0,
+            sil_updates_fired: 0,
+            sil_last_active_rows: 0,
             config,
         }
     }
@@ -5461,6 +5468,7 @@ impl Agent {
         if !self.config.use_sil {
             return;
         }
+        self.sil_updates_attempted += 1;
         // PPO+e2e graph reads `advantage` and `old_prob_taken` inputs
         // that we don't fill for SIL — skip to avoid feeding stale
         // values that would scramble the gradient. KL-PPO is fine
@@ -5530,10 +5538,12 @@ impl Agent {
                 n_active += 1;
             }
         }
+        self.sil_last_active_rows = n_active as u32;
         // No-op if all sampled rows had non-positive advantage.
         if n_active == 0 {
             return;
         }
+        self.sil_updates_fired += 1;
 
         self.policy_session
             .set_input("obs", &self.obs_token_scratch);
@@ -5779,6 +5789,40 @@ impl Agent {
     /// `loss_policy`, `loss_replay`, `repr_drift` — are broadcast to every
     /// lane's row. Lane-specific fields (`env_id`, `reward_*`,
     /// `policy_entropy`, `buffer_len`, `h_eff`) vary per row.
+    /// Number of (s, a, R_to_go, V) samples currently in the SIL buffer.
+    /// Useful for verifying SIL is actually populating during training.
+    pub fn sil_buffer_size(&self) -> usize {
+        self.sil_buffer.len()
+    }
+
+    /// Number of SIL updates fired (passed all guards including the
+    /// positive-advantage check producing at least one active row).
+    pub fn sil_updates_fired_count(&self) -> u64 {
+        self.sil_updates_fired
+    }
+
+    /// Number of times maybe_run_sil_update was called (regardless of
+    /// whether it actually ran).
+    pub fn sil_updates_attempted_count(&self) -> u64 {
+        self.sil_updates_attempted
+    }
+
+    /// Number of active rows (positive advantage) in the most recent
+    /// SIL update. 0 if SIL never fired.
+    pub fn sil_last_active(&self) -> u32 {
+        self.sil_last_active_rows
+    }
+
+    /// Current SIL "successful episode" baseline. Returns 0 before
+    /// the first episode completes.
+    pub fn sil_baseline_value(&self) -> f32 {
+        if self.sil_baseline_initialized {
+            self.sil_baseline
+        } else {
+            0.0
+        }
+    }
+
     pub fn diagnostics(&self) -> Vec<Diagnostics> {
         self.lanes
             .iter()

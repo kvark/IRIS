@@ -1119,6 +1119,25 @@ impl PyBatchAgent {
         self.agent.num_lanes()
     }
 
+    /// Number of (s, a, R, V) samples in the SIL replay buffer.
+    fn sil_buffer_size(&self) -> usize {
+        self.agent.sil_buffer_size()
+    }
+
+    /// Current SIL "successful episode" baseline value.
+    fn sil_baseline(&self) -> f32 {
+        self.agent.sil_baseline_value()
+    }
+
+    /// SIL update counters: (attempted, fired, last_active_rows).
+    fn sil_counters(&self) -> (u64, u64, u32) {
+        (
+            self.agent.sil_updates_attempted_count(),
+            self.agent.sil_updates_fired_count(),
+            self.agent.sil_last_active(),
+        )
+    }
+
     /// Per-lane diagnostics as a list of plain Python dicts.
     fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let diags = self.agent.diagnostics();
