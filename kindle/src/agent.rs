@@ -1365,6 +1365,14 @@ struct Lane {
     /// per-episode advantage mode (`use_grpo_episode`). Initialized to 0;
     /// becomes meaningful after the lane's first episode completes.
     last_episode_return: f32,
+    /// SIL episode return: accumulates the FULL per-step reward
+    /// (including extrinsic) over the current episode. Used by SIL's
+    /// "successful episode" predicate. Distinct from `outcome_ep_return`
+    /// which only tracks `reward_pre_m6` (intrinsic, excludes extrinsic).
+    /// Without this separate tracker, kindle-native runs that disable
+    /// intrinsics (surprise=0, novelty=0) would have outcome_ep_return
+    /// stuck at 0 and SIL would never push.
+    sil_ep_return: f32,
     /// Single-step `r_base` of the just-finished step. Becomes the
     /// previous episode's terminal reward when the *next* step
     /// carries `env_boundary=true`. Used by
@@ -2363,6 +2371,7 @@ impl Agent {
                 outcome_ep_trajectory: Vec::new(),
                 outcome_ep_return: 0.0,
                 last_episode_return: 0.0,
+                sil_ep_return: 0.0,
                 outcome_last_step_reward: 0.0,
                 outcome_ep_step_rewards: Vec::new(),
                 prev_r_hat: 0.0,
@@ -3215,8 +3224,10 @@ impl Agent {
                 // SIL: push successful episode's transitions into the
                 // replay buffer. "Successful" = return strictly above
                 // the EMA baseline of recent episode returns.
+                // Uses sil_ep_return (full reward incl. extrinsic), NOT
+                // outcome_ep_return (only intrinsic) — see Lane field doc.
                 if self.config.use_sil {
-                    let ep_ret = lane.outcome_ep_return;
+                    let ep_ret = lane.sil_ep_return;
                     let push = if !self.sil_baseline_initialized {
                         // First episode: initialize baseline, don't push
                         self.sil_baseline = ep_ret;
@@ -3308,6 +3319,7 @@ impl Agent {
                     }
                 }
                 lane.outcome_ep_return = 0.0;
+                lane.sil_ep_return = 0.0;
                 lane.outcome_ep_step_rewards.clear();
                 lane.prev_r_hat = 0.0;
             }
@@ -3505,6 +3517,12 @@ impl Agent {
                 + dg_reward
                 + xeps_reward
                 + ext_reward;
+
+            // Accumulate the FULL per-step reward into the SIL episode
+            // tracker. Distinct from outcome_ep_return (intrinsic only)
+            // — SIL needs the actual gym/env signal to gate "successful
+            // episode" pushes.
+            lane.sil_ep_return += reward;
 
             // Cache per-lane reward for the coord head's next
             // REINFORCE update; the head uses this step's reward
