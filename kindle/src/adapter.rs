@@ -10,7 +10,8 @@ use rand::{Rng, RngCore};
 
 /// Maximum action dimension across all supported environments.
 /// Discrete envs use the first `n` dims; continuous envs use the first `dim`.
-pub const MAX_ACTION_DIM: usize = 6;
+/// Set to 18 to accommodate full Atari ALE action set (Boxing, Pong, etc).
+pub const MAX_ACTION_DIM: usize = 18;
 
 /// Observation token dimension. Raw observations of any size are projected
 /// (padded with zeros initially) to this size.
@@ -219,7 +220,8 @@ mod tests {
         assert_eq!(token[0], 0.0);
         assert_eq!(token[1], 1.0);
         assert_eq!(token[2], 0.0);
-        assert_eq!(token[3..], [0.0; 3]); // padded to MAX_ACTION_DIM
+        // Tail (after the n=3 active classes) is padded to zero.
+        assert!(token[3..].iter().all(|&v| v == 0.0));
     }
 
     #[test]
@@ -229,13 +231,17 @@ mod tests {
         adapter.action_to_token(&Action::Continuous(vec![0.5, -0.25]), &mut token);
         assert_eq!(token[0], 0.5);
         assert_eq!(token[1], -0.25);
-        assert_eq!(token[2..], [0.0; 4]);
+        // Tail (after the dim=2 components) is padded to zero.
+        assert!(token[2..].iter().all(|&v| v == 0.0));
     }
 
     #[test]
     fn generic_adapter_sample_discrete_returns_valid_index() {
         let adapter = GenericAdapter::discrete(0, 4, 3);
-        let head = vec![1.0, 2.0, 3.0, 0.0, 0.0, 0.0];
+        let mut head = vec![0.0; MAX_ACTION_DIM];
+        head[0] = 1.0;
+        head[1] = 2.0;
+        head[2] = 3.0;
         let mut rng = rand::rng();
         for _ in 0..20 {
             let Action::Discrete(i) = adapter.sample_action(&head, &mut rng) else {
@@ -248,7 +254,9 @@ mod tests {
     #[test]
     fn generic_adapter_sample_continuous_matches_dim() {
         let adapter = GenericAdapter::continuous(2, 3, 2, 0.5);
-        let head = vec![0.1, 0.2, 0.0, 0.0, 0.0, 0.0];
+        let mut head = vec![0.0; MAX_ACTION_DIM];
+        head[0] = 0.1;
+        head[1] = 0.2;
         let mut rng = rand::rng();
         let Action::Continuous(v) = adapter.sample_action(&head, &mut rng) else {
             panic!("wrong action kind")
