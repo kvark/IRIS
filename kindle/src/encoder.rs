@@ -195,11 +195,9 @@ impl CnnEncoderDqn {
         let h = g.relu(h);
         let h = self.conv3.forward(g, h, self.batch);
         let h = g.relu(h);
-        // The conv output is a flat [batch * out_ch3 * h3 * w3] tensor.
-        // For the FC layer we need [batch, flat_dim] — same flat layout
-        // works since meganeura's Linear treats the input as
-        // [batch, in_features] when in_features = flat_dim. No reshape op
-        // required.
+        // Reshape conv output from flat 1-D to [batch, flat_dim] so the
+        // Linear layer's matmul sees a proper 2-D operand.
+        let h = g.reshape(h, &[self.batch as usize, self.flat_dim]);
         let h = self.fc1.forward(g, h);
         let h = g.relu(h);
         self.fc2.forward(g, h)
