@@ -181,9 +181,14 @@ def main() -> int:
     parser.add_argument("--watchdog-threshold", type=float, default=1e6)
     parser.add_argument("--levels-reward-scale", type=float, default=10.0,
                         help="Homeo spike magnitude per level completed.")
-    parser.add_argument("--encoder", choices=["mlp", "cnn"], default="mlp",
+    parser.add_argument("--encoder", choices=["mlp", "cnn", "cnn_dqn"], default="mlp",
                         help="'mlp' (default) = pre-pooled 64-dim token → MLP encoder. "
-                        "'cnn' = raw 64×64 grid → conv encoder (spatial info preserved).")
+                        "'cnn' = raw 64×64 grid → conv encoder (spatial info preserved). "
+                        "'cnn_dqn' = Nature DQN-scale CNN (3-layer 32/64/64 + fc 512).")
+    parser.add_argument("--adam", type=int, default=0,
+                        help="Use Adam optimizer (1) instead of SGD (0). Adam is "
+                        "essential for sparse-reward CNN training (Atari finding); "
+                        "ARC-AGI-3 has the same shape of task.")
     parser.add_argument("--reward-surprise", type=float, default=None,
                         help="Weight on the world-model surprise primitive. Default 1.0 "
                         "from kindle. For ARC, try 5-10 (homeo is meaningless here, so "
@@ -308,11 +313,11 @@ def main() -> int:
         print("no available actions on initial frame", file=sys.stderr)
         return 1
     # kindle's discrete adapter emits actions 0..num_actions-1.
-    # We use num_actions = min(6, len(available_actions)) so
-    # kindle's MAX_ACTION_DIM=6 covers the space. (Complex actions
-    # — ACTION6 — are allowed here; their (x, y) payload is filled
-    # with random coords per step by `action_to_game` below.)
-    num_actions = min(6, len(available_actions))
+    # MAX_ACTION_DIM=18 (post Atari work) so we can cover full ARC
+    # action space. (Complex actions — ACTION6 — are allowed here;
+    # their (x, y) payload is filled with random coords per step by
+    # `action_to_game` below.)
+    num_actions = min(18, len(available_actions))
 
     def preprocess(frame_ndarray: np.ndarray) -> list[float]:
         """64×64 int → 8×8 mean-pooled → flat 64-dim float in [0, 1].
@@ -334,19 +339,25 @@ def main() -> int:
     def action_to_game(
         kindle_action_idx: int,
         kindle_xy: tuple[float, float] | None = None,
-    ) -> GameAction:
+    ) -> tuple[GameAction, dict | None]:
         """Map kindle's 0-indexed discrete output to the current
         frame's `available_actions`. For complex actions
         (currently ACTION6), attach `(x, y)` coordinates.
 
+        Returns (game_action, data_dict). The local wrapper's
+        env.step() reads x/y from the `data` kwarg; the GameAction
+        itself does not carry payload across the wire (some game
+        implementations read self.action.data["x"] directly without
+        defensive checks, so passing data via env.step is required).
+
         If `kindle_xy` is supplied (values in `[-1, 1]` from the
         coord head), rescale to `[0, 63]`; otherwise fall back to
-        uniform random coords in `[0, 63]`. Simple actions
-        ignore the coordinate payload.
+        uniform random coords in `[0, 63]`. Simple actions return
+        data=None.
         """
         aa = available_actions
         if not aa:
-            return action_by_value[1]
+            return action_by_value[1], None
         idx = max(0, min(kindle_action_idx, len(aa) - 1))
         action_num = int(aa[idx])
         a = action_by_value[action_num]
@@ -362,7 +373,8 @@ def main() -> int:
                 x = rng.randrange(64)
                 y = rng.randrange(64)
             a.set_data({"x": x, "y": y})
-        return a
+            return a, {"x": x, "y": y}
+        return a, None
 
     # --- Kindle agent (one lane) ---
     if args.agent == "kindle":
@@ -379,10 +391,18 @@ def main() -> int:
             entropy_floor=args.entropy_floor,
             advantage_clamp=args.advantage_clamp,
             policy_loss_watchdog_threshold=args.watchdog_threshold,
+            use_adam=bool(args.adam),
         )
         if args.encoder == "cnn":
             agent_kwargs.update(
                 encoder_kind="cnn",
+                encoder_channels=1,
+                encoder_height=64,
+                encoder_width=64,
+            )
+        elif args.encoder == "cnn_dqn":
+            agent_kwargs.update(
+                encoder_kind="cnn_dqn",
                 encoder_channels=1,
                 encoder_height=64,
                 encoder_width=64,
@@ -548,10 +568,12 @@ def main() -> int:
             kindle_action = macro[0]
             macro_queue = macro[1:]
             macros_injected += 1
-        game_action = action_to_game(kindle_action, kindle_xy)
+        game_action, action_data = action_to_game(kindle_action, kindle_xy)
 
-        # Step env
-        obs_raw = env.step(game_action)
+        # Step env. Pass `data` separately so games that read
+        # self.action.data["x"] without defensive checks (bp35, cn04,
+        # lf52, m0r0, tn36) get coordinates instead of KeyError.
+        obs_raw = env.step(game_action, data=action_data)
         frame = np.asarray(obs_raw.frame[0], dtype=np.float32)
         if list(obs_raw.available_actions):
             available_actions = list(obs_raw.available_actions)
