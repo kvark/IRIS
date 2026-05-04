@@ -189,6 +189,10 @@ def main() -> int:
                         help="Use Adam optimizer (1) instead of SGD (0). Adam is "
                         "essential for sparse-reward CNN training (Atari finding); "
                         "ARC-AGI-3 has the same shape of task.")
+    parser.add_argument("--adam-eps", type=float, default=1e-8,
+                        help="Adam epsilon. Default 1e-8 PyTorch standard. Try 1e-4 "
+                        "for sparse-reward visual training to prevent late-training NaN "
+                        "collapse (kindle Atari finding 2026-05-04).")
     parser.add_argument("--reward-surprise", type=float, default=None,
                         help="Weight on the world-model surprise primitive. Default 1.0 "
                         "from kindle. For ARC, try 5-10 (homeo is meaningless here, so "
@@ -392,6 +396,7 @@ def main() -> int:
             advantage_clamp=args.advantage_clamp,
             policy_loss_watchdog_threshold=args.watchdog_threshold,
             use_adam=bool(args.adam),
+            adam_eps=args.adam_eps,
         )
         if args.encoder == "cnn":
             agent_kwargs.update(
