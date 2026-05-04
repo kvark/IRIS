@@ -185,6 +185,14 @@ pub struct AgentConfig {
     pub learning_rate: f32,
     pub lr_credit: f32,
     pub lr_policy: f32,
+    /// Use the Adam optimizer instead of SGD for all sessions
+    /// (policy, wm, credit, option). Standard for vision-based RL
+    /// (Atari, etc) where SGD's lack of per-parameter scaling makes
+    /// CNN training extremely slow under sparse rewards. Adam betas
+    /// fixed at 0.9 / 0.999, epsilon 1e-8 (PyTorch defaults). Default
+    /// `false` (preserves the historical SGD behavior on classic
+    /// control tasks where it worked well).
+    pub use_adam: bool,
     pub reward_weights: RewardWeights,
     pub warmup_steps: usize,
     /// Probability of running an additional replay training step per observe().
@@ -1035,6 +1043,7 @@ impl Default for AgentConfig {
             policy_lr_adaptive_ema: 0.05,
             value_bootstrap: false,
             gae_lambda: 0.0,
+            use_adam: false,
             value_loss_coef: 1.0,
             value_clip_scale: 200.0,
             bootstrap_value_clamp: 100.0,
@@ -1845,6 +1854,17 @@ fn unit_cosine(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// Xavier (Glorot uniform) initialization.
+/// Apply learning rate to a meganeura `Session`, dispatching on
+/// the AgentConfig::use_adam flag. SGD path uses set_learning_rate;
+/// Adam path uses set_adam(lr, 0.9, 0.999, 1e-8) — PyTorch defaults.
+fn apply_lr(session: &mut Session, lr: f32, use_adam: bool) {
+    if use_adam {
+        session.set_adam(lr, 0.9, 0.999, 1e-8);
+    } else {
+        session.set_learning_rate(lr);
+    }
+}
+
 fn xavier_init(fan_in: usize, fan_out: usize, seed: u64) -> Vec<f32> {
     use std::f32::consts::PI;
     let scale = (6.0 / (fan_in + fan_out) as f32).sqrt();
@@ -2872,7 +2892,7 @@ impl Agent {
             .set_input("value_target", &self.value_target_scratch);
         self.feed_entropy_beta_input();
         self.feed_kl_beta_input();
-        self.policy_session.set_learning_rate(0.0);
+        apply_lr(&mut self.policy_session, 0.0, self.config.use_adam);
         self.policy_session.step();
         self.policy_session.wait();
 
@@ -3690,7 +3710,7 @@ impl Agent {
         self.wm_session
             .set_input("z_target", &self.z_target_scratch);
         self.wm_session.set_input("task", &self.task_scratch);
-        self.wm_session.set_learning_rate(lr);
+        apply_lr(&mut self.wm_session, lr, self.config.use_adam);
         self.wm_session.step();
         self.wm_session.wait();
         self.wm_session.read_loss()
@@ -4109,7 +4129,7 @@ impl Agent {
             self.wm_session
                 .set_input("z_target", &self.z_target_scratch);
             self.wm_session.set_input("task", &self.task_scratch);
-            self.wm_session.set_learning_rate(0.0);
+            apply_lr(&mut self.wm_session, 0.0, self.config.use_adam);
             self.wm_session.step();
             self.wm_session.wait();
 
@@ -4188,7 +4208,7 @@ impl Agent {
         self.credit_session.set_input("history", &history_clean);
         self.credit_session
             .set_input("credit_target", &target_clean);
-        self.credit_session.set_learning_rate(lr_credit);
+        apply_lr(&mut self.credit_session, lr_credit, self.config.use_adam);
         self.credit_session.step();
         self.credit_session.wait();
 
@@ -4548,8 +4568,11 @@ impl Agent {
             .set_input("value_target", &self.value_target_scratch);
         self.feed_entropy_beta_input();
         self.feed_kl_beta_input();
-        self.policy_session
-            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
+        apply_lr(
+            &mut self.policy_session,
+            self.config.lr_policy * self.batch_lr_scale * lr_scale,
+            self.config.use_adam,
+        );
         self.policy_session.step();
         self.policy_session.wait();
 
@@ -4700,7 +4723,7 @@ impl Agent {
             }
             self.feed_entropy_beta_input();
             self.feed_kl_beta_input();
-            self.policy_session.set_learning_rate(0.0);
+            apply_lr(&mut self.policy_session, 0.0, self.config.use_adam);
             self.policy_session.step();
             self.policy_session.wait();
             // value output is at index 2 in the combined graph.
@@ -4963,8 +4986,11 @@ impl Agent {
         }
         self.feed_entropy_beta_input();
         self.feed_kl_beta_input();
-        self.policy_session
-            .set_learning_rate(self.config.lr_policy * self.batch_lr_scale * lr_scale);
+        apply_lr(
+            &mut self.policy_session,
+            self.config.lr_policy * self.batch_lr_scale * lr_scale,
+            self.config.use_adam,
+        );
         self.policy_session.step();
         self.policy_session.wait();
 
@@ -5250,7 +5276,7 @@ impl Agent {
             }
             self.feed_entropy_beta_input();
             self.feed_kl_beta_input();
-            self.policy_session.set_learning_rate(0.0);
+            apply_lr(&mut self.policy_session, 0.0, self.config.use_adam);
             self.policy_session.step();
             self.policy_session.wait();
             let mut v_fresh = vec![0.0f32; policy_batch];
@@ -5487,7 +5513,7 @@ impl Agent {
         } else {
             self.config.lr_policy * self.batch_lr_scale * lr_scale
         };
-        self.policy_session.set_learning_rate(effective_lr);
+        apply_lr(&mut self.policy_session, effective_lr, self.config.use_adam);
         self.policy_session.step();
         self.policy_session.wait();
 
@@ -5632,7 +5658,7 @@ impl Agent {
         self.feed_entropy_beta_input();
         // Use the same effective LR as a regular update.
         let lr = self.config.lr_policy * self.batch_lr_scale;
-        self.policy_session.set_learning_rate(lr);
+        apply_lr(&mut self.policy_session, lr, self.config.use_adam);
         self.policy_session.step();
         self.policy_session.wait();
 
