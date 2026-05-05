@@ -204,6 +204,11 @@ pub struct AgentConfig {
     /// long-horizon training on sparse-reward visual tasks where
     /// Adam's variance estimate eventually drives unbounded updates.
     pub grad_clip_norm: f32,
+    /// Cadence for the grad clip when enabled. 1 (default) clips every
+    /// step. >1 amortizes the CPU-readback cost: clip every N steps.
+    /// 5-10 typical for Atari long-horizon training (still bounds the
+    /// runaway, ~5x faster than every-step clipping).
+    pub grad_clip_every: u32,
     pub reward_weights: RewardWeights,
     pub warmup_steps: usize,
     /// Probability of running an additional replay training step per observe().
@@ -1057,6 +1062,7 @@ impl Default for AgentConfig {
             use_adam: false,
             adam_eps: 1e-8,
             grad_clip_norm: 0.0,
+            grad_clip_every: 1,
             value_loss_coef: 1.0,
             value_clip_scale: 200.0,
             bootstrap_value_clamp: 100.0,
@@ -2417,14 +2423,21 @@ impl Agent {
         // toggled per-step. Sessions without param_grad_pairs (forward
         // only) are unaffected by the setter.
         if config.grad_clip_norm > 0.0 {
-            wm_session.set_grad_clip_norm(config.grad_clip_norm);
-            policy_session.set_grad_clip_norm(config.grad_clip_norm);
-            credit_session.set_grad_clip_norm(config.grad_clip_norm);
+            let n = config.grad_clip_norm;
+            let every = config.grad_clip_every.max(1);
+            wm_session.set_grad_clip_norm(n);
+            wm_session.set_grad_clip_every(every);
+            policy_session.set_grad_clip_norm(n);
+            policy_session.set_grad_clip_every(every);
+            credit_session.set_grad_clip_norm(n);
+            credit_session.set_grad_clip_every(every);
             if let Some(ref mut s) = option_session {
-                s.set_grad_clip_norm(config.grad_clip_norm);
+                s.set_grad_clip_norm(n);
+                s.set_grad_clip_every(every);
             }
             if let Some(ref mut s) = option_credit_session {
-                s.set_grad_clip_norm(config.grad_clip_norm);
+                s.set_grad_clip_norm(n);
+                s.set_grad_clip_every(every);
             }
         }
 
