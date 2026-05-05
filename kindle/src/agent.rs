@@ -198,6 +198,12 @@ pub struct AgentConfig {
     /// collapse stems from `v_t -> 0` on idle parameters. The larger
     /// eps bounds the per-parameter update by ~lr/eps when v is tiny.
     pub adam_eps: f32,
+    /// Global L2 gradient-norm clip applied to every policy/wm/credit
+    /// session step. 0.0 (default) disables; standard PPO uses 0.5.
+    /// Bounds the per-step parameter update — required for sustained
+    /// long-horizon training on sparse-reward visual tasks where
+    /// Adam's variance estimate eventually drives unbounded updates.
+    pub grad_clip_norm: f32,
     pub reward_weights: RewardWeights,
     pub warmup_steps: usize,
     /// Probability of running an additional replay training step per observe().
@@ -1050,6 +1056,7 @@ impl Default for AgentConfig {
             gae_lambda: 0.0,
             use_adam: false,
             adam_eps: 1e-8,
+            grad_clip_norm: 0.0,
             value_loss_coef: 1.0,
             value_clip_scale: 200.0,
             bootstrap_value_clamp: 100.0,
@@ -1921,7 +1928,7 @@ impl Agent {
         // Per-env values are deterministic-random and persisted CPU-side
         // in `task_embeddings`. The encoder learns to map (obs_token,
         // task) into per-env latents.
-        let wm_session = {
+        let mut wm_session = {
             let mut g = Graph::new();
             let action = g.input("action", &[config.batch_size, MAX_ACTION_DIM]);
             let z_target = g.input("z_target", &[config.batch_size, config.latent_dim]);
@@ -2040,7 +2047,7 @@ impl Agent {
         };
 
         // --- Credit assigner graph ---
-        let credit_session = {
+        let mut credit_session = {
             let g = credit::build_credit_graph(
                 config.latent_dim,
                 MAX_ACTION_DIM,
@@ -2116,7 +2123,7 @@ impl Agent {
         } else {
             config.batch_size
         };
-        let policy_session = {
+        let mut policy_session = {
             // PPO + end_to_end_encoder: restored 2026-05-01 with the
             // post-autodiff-bug-fix grad path. Validate behavior carefully
             // — historical failure mode documented in
@@ -2248,7 +2255,7 @@ impl Agent {
 
         // L1 credit-assigner session — only built when L1 is active
         // and the user asked for a non-degenerate history window.
-        let option_credit_session = if l1_active && config.option_history_len >= 2 {
+        let mut option_credit_session = if l1_active && config.option_history_len >= 2 {
             let g = credit::build_option_credit_graph(
                 config.latent_dim,
                 config.num_options,
@@ -2390,7 +2397,7 @@ impl Agent {
         };
 
         // L1 option-policy session — only built when num_options >= 2.
-        let option_session = if l1_active {
+        let mut option_session = if l1_active {
             let g = option::build_option_graph(
                 config.latent_dim,
                 config.num_options,
@@ -2404,6 +2411,22 @@ impl Agent {
         } else {
             None
         };
+
+        // Apply gradient norm clipping to every training session if the
+        // user opted in. This is sticky — set once at agent build, not
+        // toggled per-step. Sessions without param_grad_pairs (forward
+        // only) are unaffected by the setter.
+        if config.grad_clip_norm > 0.0 {
+            wm_session.set_grad_clip_norm(config.grad_clip_norm);
+            policy_session.set_grad_clip_norm(config.grad_clip_norm);
+            credit_session.set_grad_clip_norm(config.grad_clip_norm);
+            if let Some(ref mut s) = option_session {
+                s.set_grad_clip_norm(config.grad_clip_norm);
+            }
+            if let Some(ref mut s) = option_credit_session {
+                s.set_grad_clip_norm(config.grad_clip_norm);
+            }
+        }
 
         let n = config.batch_size;
 
