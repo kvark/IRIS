@@ -2899,6 +2899,23 @@ impl Agent {
             self.policy_session
                 .set_input("old_logits", &self.kl_old_logits_scratch);
         }
+        // PPO graph requires `advantage` and `old_prob_taken` inputs.
+        // act() doesn't read the loss output but the forward pass still
+        // computes the policy_loss subgraph, which divides by
+        // old_prob_taken — leaving it at the buffer default (0) on the
+        // very first act() produces Inf/NaN that propagates and trips
+        // the watchdog on the first training step. Zero advantage and
+        // unit old_prob keep the PPO subgraph well-defined here.
+        if self.config.use_ppo {
+            self.ppo_advantage_scratch.fill(0.0);
+            for v in self.ppo_old_prob_scratch.iter_mut() {
+                *v = 1.0;
+            }
+            self.policy_session
+                .set_input("advantage", &self.ppo_advantage_scratch);
+            self.policy_session
+                .set_input("old_prob_taken", &self.ppo_old_prob_scratch);
+        }
         self.value_target_scratch.fill(0.0);
         self.policy_session
             .set_input("value_target", &self.value_target_scratch);
