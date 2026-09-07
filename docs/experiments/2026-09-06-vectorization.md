@@ -330,6 +330,55 @@ to the previous executable's evaluation prefix (excluding timestamps). Its
 complete accounting passes. This checks checkpoint compatibility, not new
 training trajectory equivalence or Pong mastery.
 
+## Remaining handoffs: read-only inventory
+
+The live N=8/B16/T64/12M run's 90k–100k window contains 2,500 updates.
+Mean measured update time is 0.42489 s: posterior sampling 0.06027 s,
+imagination/targets 0.15578 s, world training 0.16182 s, behavior training
+0.02593 s, and world/behavior synchronization 0.01598/0.00335 s.
+The full loop remains 7.244 actions/s; the environment adapter takes only
+4.33 s of the 1,380.52 s window. These timings do not distinguish GPU compute,
+host work and exposed wait latency inside each stage.
+
+`DreamerCore::sample_posterior_batch` and `imagine_and_target` give the following
+**source-derived payload counts per update**, not measured bus traffic:
+
+| Forward stage | Explicit readback waits | Readback payload, MiB | `set_input` payload, MiB |
+| --- | ---: | ---: | ---: |
+| Replay posterior, 64 × 16 rows | 64 | 10.00 | 32.39 |
+| Imagination, 1,024 starts × 15 transitions | 31 | 199.00 | 631.05 |
+
+The 12M state has 2,048 deterministic and 512 stochastic values. Each of the
+16 imagination states sends its 2,560-value feature separately to online and
+slow behavior heads, plus equivalent state inputs to world heads. Fifteen
+transition calls then send the state again. Each state reads action logits,
+three 255-bin predictions and continuation; each transition reads deterministic
+state and prior logits. The 31 waits are 16 combined-head reads plus 15
+transition reads; they are not 31 measured idle gaps. Posterior sampling has
+one read per replay time step.
+
+Inputs use Meganeura's host-visible writes; readback uses a transfer and wait.
+This inventory excludes parameter synchronization, training inputs/outputs,
+live collection/vision and additional CPU allocations/copies. It must not be
+turned into a claim about PCIe bandwidth or time saved. Exact shapes, source
+hashes, formulas' results and measured stage means are retained in
+`runs/levjepa-vector-pong-20260906/seed0-transfer-inventory-100000.json`.
+
+Even deleting both entire measured posterior and imagination stages at zero
+replacement cost would yield only 11.90 aggregate actions/s if other wall time
+stayed fixed. That deliberately optimistic bound is below the 15 actions/s
+needed for even aggregate 1× Pong at repeat four. Removing these round trips
+alone therefore cannot justify promising super-real-time learning.
+
+After the pinned queue, instrument packing, host-visible writes, readback waits,
+CPU sampling/decoding and GPU compute separately. The first copy-elimination
+candidate should keep deterministic state/features on the GPU while preserving
+CPU draw order and categorical/return arithmetic. Moving sampling or two-hot
+decoding onto the GPU is a separate numerical change requiring distribution,
+gradient and end-to-end checks, not a free optimization. Preserve full recurrence,
+replay credit, independent streams and the memory reserve. No live experiment
+binary or setting was changed for this inspection.
+
 ## Next measured changes
 
 Current CPU checks: 75 Kindle and five gym tests pass, with 17 hardware tests

@@ -236,6 +236,14 @@ safeguards and full-recurrence row batching. Earlier cached-read/materialization
 work already reduced a 12M canary from 7.42 to 1.05 s/update; full rows reach 0.54 s.
 Those measurements are in the kickoff report; do not repeat that investigation.
 
+The current [handoff inventory](experiments/2026-09-06-vectorization.md#remaining-handoffs-read-only-inventory)
+counts 95 explicit posterior/imagination readbacks per update. It is not a
+wait-time profile: instrument packing, transfers, sampling and GPU compute
+separately after the pinned queue. Prefer eliminating deterministic-state and
+feature copies before changing sampling/return arithmetic. Even removing both
+whole stages at zero cost would not reach aggregate real time at the current
+recipe; world training and perception also need measured improvements.
+
 Use one learner with batched live inference, not one full GPU model per game.
 Keep independent visual caches, beliefs, RNG streams and sequence replay. Sample
 uniformly over eligible per-stream sequence starts after the fresh-item queue;
