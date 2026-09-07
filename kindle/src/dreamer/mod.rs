@@ -11,6 +11,7 @@ mod checkpoint;
 mod config;
 mod cpu;
 mod distributions;
+mod initialization;
 mod intrinsic;
 mod networks;
 mod pretraining;
@@ -24,6 +25,7 @@ pub use agent::{
     ModelProvenance, VectorDreamerAgent, WorldMetrics,
 };
 pub use config::{DreamerConfig, LossScales, ModelSize, NetworkSize};
+pub use initialization::{WorldInitialization, WorldInitializationProvenance};
 pub use pretraining::{
     PretrainingFrame, PretrainingSource, WorldPretrainer, WorldPretrainingReport,
 };

@@ -1,5 +1,7 @@
 //! Online acting, replay learning, and latent imagination.
 
+#[cfg(test)]
+mod initialization_tests;
 mod vector;
 pub use vector::VectorDreamerAgent;
 
@@ -31,7 +33,10 @@ use super::runtime::{
     build_session, configure_d3_optimizer, ema_matching, initialize_d3, sync_matching,
 };
 use super::world;
-use super::{BLADE_REV, DREAMERV3_UPSTREAM_REV, MEGANEURA_REV};
+use super::{
+    BLADE_REV, DREAMERV3_UPSTREAM_REV, MEGANEURA_REV, WorldInitialization,
+    WorldInitializationProvenance,
+};
 use crate::env::{RgbFrame, Transition};
 use crate::vision::{
     OBSERVATION_CHANNELS, OBSERVATION_GRID, Observation, PROJECTION_SEED, Perception,
@@ -39,6 +44,7 @@ use crate::vision::{
 };
 
 const CHECKPOINT_FORMAT: u32 = 3;
+const INITIALIZED_CHECKPOINT_FORMAT: u32 = 4;
 const CHECKPOINT_ARCHITECTURE: &str = "dreamerv3-visual-features";
 const CHECKPOINT_METADATA: &str = "metadata.json";
 const RNG_POLICY: u64 = 0x706f_6c69_6379_0001;
@@ -59,6 +65,8 @@ struct CheckpointMetadata {
     projection_seed: u64,
     #[serde(default)]
     perception: Option<PerceptionIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    world_initialization: Option<WorldInitializationProvenance>,
     observation_grid: usize,
     observation_channels: usize,
     config: DreamerConfig,
@@ -95,8 +103,10 @@ pub struct ModelProvenance {
     pub blade_revision: &'static str,
     pub future_head_revision: Option<&'static str>,
     pub visitation_hash_version: Option<u32>,
-    /// Bound by the pixel agent; absent for a core fed precomputed features.
+    /// Bound by the pixel agent or a validated world-initialization source.
     pub perception: Option<PerceptionIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub world_initialization: Option<WorldInitializationProvenance>,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -297,6 +307,8 @@ pub struct DreamerCore {
     readback: Readback,
     config: DreamerConfig,
     perception_identity: Option<PerceptionIdentity>,
+    world_initialization: Option<WorldInitializationProvenance>,
+    initialization_allowed: bool,
     bins: TwoHotBins,
     replay: SequenceReplay,
     visitation: Option<VisitationBonus>,
@@ -353,7 +365,9 @@ impl DreamerCore {
         metadata: CheckpointMetadata,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut core = Self::with_gpu(metadata.config.clone(), gpu);
+        core.initialization_allowed = false;
         core.perception_identity = metadata.perception;
+        core.world_initialization = metadata.world_initialization;
         checkpoint::load_session(&mut core.world_train, &checkpoint.join(CHECKPOINT_WORLD))?;
         checkpoint::load_session(
             &mut core.behavior_train,
@@ -480,6 +494,8 @@ impl DreamerCore {
             collection_streams: 1,
             config,
             perception_identity: None,
+            world_initialization: None,
+            initialization_allowed: true,
             world_train,
             world_observe_batch,
             world_observe_live,
@@ -500,6 +516,54 @@ impl DreamerCore {
         &self.config
     }
 
+    /// Initialize only dynamics, representation and prediction weights in a new
+    /// runtime. Policy, reward/continuation/decoder/value heads, optimizer moments,
+    /// RNG, replay, normalizers and online counters retain their fresh values.
+    /// A restored or previously active runtime is never eligible.
+    pub fn initialize_world(&mut self, initialization: WorldInitialization) -> io::Result<()> {
+        if !self.initialization_allowed
+            || self.active
+            || self.pending_action.is_some()
+            || self.environment_step != 0
+            || self.learner_step != 0
+            || self.replay_len() != 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "world initialization requires a newly constructed, inactive agent",
+            ));
+        }
+        if self.config != initialization.target {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "initialization was checked for a different target configuration",
+            ));
+        }
+        let perception = self
+            .perception_identity
+            .clone()
+            .unwrap_or_else(|| initialization.provenance.source().perception.clone());
+        initialization
+            .provenance
+            .validate(&self.config, Some(&perception))?;
+        for (name, values) in &initialization.parameters {
+            if self.world_train.param_size(name) != Some(values.len()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("compiled target parameter differs: {name}"),
+                ));
+            }
+        }
+        for (name, values) in &initialization.parameters {
+            self.world_train.set_parameter(name, values);
+        }
+        self.sync_world_inference();
+        self.perception_identity = Some(perception);
+        self.world_initialization = Some(initialization.provenance);
+        self.initialization_allowed = false;
+        Ok(())
+    }
+
     pub fn provenance(&self) -> ModelProvenance {
         ModelProvenance {
             dreamerv3_revision: DREAMERV3_UPSTREAM_REV,
@@ -512,6 +576,7 @@ impl DreamerCore {
                 .visitation_bonus
                 .then_some(super::intrinsic::VERSION),
             perception: self.perception_identity.clone(),
+            world_initialization: self.world_initialization.clone(),
         }
     }
 
@@ -869,13 +934,18 @@ impl DreamerCore {
 
         let (return_low, return_high) = self.return_normalizer.state();
         let metadata = CheckpointMetadata {
-            format: CHECKPOINT_FORMAT,
+            format: if self.world_initialization.is_some() {
+                INITIALIZED_CHECKPOINT_FORMAT
+            } else {
+                CHECKPOINT_FORMAT
+            },
             architecture: CHECKPOINT_ARCHITECTURE.to_owned(),
             dreamerv3_revision: DREAMERV3_UPSTREAM_REV.to_owned(),
             meganeura_revision: MEGANEURA_REV.to_owned(),
             blade_revision: BLADE_REV.to_owned(),
             projection_seed: PROJECTION_SEED,
             perception: self.perception_identity.clone(),
+            world_initialization: self.world_initialization.clone(),
             observation_grid: OBSERVATION_GRID,
             observation_channels: OBSERVATION_CHANNELS,
             config: self.config.clone(),
@@ -2003,14 +2073,22 @@ fn validate_checkpoint_metadata(metadata: &CheckpointMetadata) -> io::Result<()>
             metadata.blade_revision.as_str(),
         ),
     ];
-    if metadata.format != CHECKPOINT_FORMAT {
+    let expected_format = if metadata.world_initialization.is_some() {
+        INITIALIZED_CHECKPOINT_FORMAT
+    } else {
+        CHECKPOINT_FORMAT
+    };
+    if metadata.format != expected_format {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
                 "unsupported Kindle checkpoint format {}, expected {}",
-                metadata.format, CHECKPOINT_FORMAT
+                metadata.format, expected_format
             ),
         ));
+    }
+    if let Some(initialization) = &metadata.world_initialization {
+        initialization.validate(&metadata.config, metadata.perception.as_ref())?;
     }
     for (name, wanted, actual) in expected {
         if actual != wanted {
@@ -2328,7 +2406,59 @@ mod tests {
                 PerceptionKind::DinoV3.identity(crate::vision::VITS16_CHECKPOINT_SHA256.to_owned()),
             ),
             tensor_sha256: None,
+            world_initialization: None,
         }
+    }
+
+    #[test]
+    fn initialized_checkpoint_format_requires_and_preserves_source_provenance() {
+        let mut checkpoint = valid_checkpoint_metadata();
+        let encoded = serde_json::to_value(&checkpoint).unwrap();
+        assert!(encoded.get("world_initialization").is_none());
+        let mut source_config = checkpoint.config.clone();
+        source_config.train_ratio = 0.0;
+        source_config.loss_scales.policy = 0.0;
+        source_config.loss_scales.value = 0.0;
+        source_config.loss_scales.replay_value = 0.0;
+        let source = super::super::pretraining::PretrainingMetadata {
+            format: 1,
+            architecture: "dreamerv3-world-pretraining".into(),
+            config: source_config,
+            source: super::super::PretrainingSource {
+                dataset_sha256: "a".repeat(64),
+                perception: checkpoint.perception.clone().unwrap(),
+                action_names: vec!["NOOP".into(), "LEFT".into(), "RIGHT".into()],
+                ticks_per_second: 60,
+                action_ticks: 4,
+            },
+            dreamerv3_revision: DREAMERV3_UPSTREAM_REV.into(),
+            meganeura_revision: MEGANEURA_REV.into(),
+            blade_revision: BLADE_REV.into(),
+            future_head_revision: None,
+            updates: 1,
+            sampled_observations: 8,
+            sampled_transitions: 6,
+            world_sha256: "b".repeat(64),
+        };
+        let provenance: WorldInitializationProvenance = serde_json::from_value(serde_json::json!({
+            "revision": "fresh-agent-dynamics-representation-predictor-v1", "metadata_sha256": "c".repeat(64), "metadata": source,
+        })).unwrap();
+        checkpoint.world_initialization = Some(provenance.clone());
+        assert!(
+            validate_checkpoint_metadata(&checkpoint).is_err(),
+            "format 3 must not hide prior training"
+        );
+        checkpoint.format = INITIALIZED_CHECKPOINT_FORMAT;
+        validate_checkpoint_metadata(&checkpoint).unwrap();
+        let encoded = serde_json::to_vec(&checkpoint).unwrap();
+        let decoded: CheckpointMetadata = serde_json::from_slice(&encoded).unwrap();
+        validate_checkpoint_metadata(&decoded).unwrap();
+        assert_eq!(decoded.world_initialization.as_ref(), Some(&provenance));
+        checkpoint.world_initialization = None;
+        assert!(
+            validate_checkpoint_metadata(&checkpoint).is_err(),
+            "format 4 requires its source history"
+        );
     }
 
     #[test]

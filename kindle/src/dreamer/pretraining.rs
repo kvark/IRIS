@@ -9,7 +9,7 @@ use meganeura::{Mode, Session};
 use rand::{SeedableRng, rngs::StdRng};
 
 use super::{
-    BLADE_REV, DreamerConfig, MEGANEURA_REV,
+    BLADE_REV, DREAMERV3_UPSTREAM_REV, DreamerConfig, MEGANEURA_REV,
     distributions::{TwoHotBins, sample_probabilities, softmax_unimix},
     readback::Readback,
     runtime::{build_session, configure_d3_optimizer, initialize_d3, sync_matching},
@@ -19,7 +19,8 @@ use crate::vision::{Observation, PerceptionIdentity};
 
 /// Identity asserted by the dataset reader. The reader must verify its manifest
 /// and feature contents; a matching feature shape alone does not establish identity.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PretrainingSource {
     pub dataset_sha256: String,
     pub perception: PerceptionIdentity,
@@ -32,7 +33,7 @@ pub struct PretrainingSource {
 }
 
 impl PretrainingSource {
-    fn validate(&self, config: &DreamerConfig) -> io::Result<()> {
+    pub(super) fn validate(&self, config: &DreamerConfig) -> io::Result<()> {
         self.perception.validate()?;
         require(
             self.dataset_sha256.len() == 64
@@ -54,6 +55,23 @@ impl PretrainingSource {
             "action names must be complete, nonempty and unique",
         )
     }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PretrainingMetadata {
+    pub format: u32,
+    pub architecture: String,
+    pub config: DreamerConfig,
+    pub source: PretrainingSource,
+    pub dreamerv3_revision: String,
+    pub meganeura_revision: String,
+    pub blade_revision: String,
+    pub future_head_revision: Option<String>,
+    pub updates: u64,
+    pub sampled_observations: u64,
+    pub sampled_transitions: u64,
+    pub world_sha256: String,
 }
 
 /// A resulting observation and the action/reward that preceded it.
@@ -251,7 +269,7 @@ impl WorldPretrainer {
         Ok(Self::with_gpu(config, source, gpu))
     }
 
-    fn with_gpu(
+    pub(super) fn with_gpu(
         config: DreamerConfig,
         source: PretrainingSource,
         gpu: Arc<blade_graphics::Context>,
@@ -439,8 +457,8 @@ impl WorldPretrainer {
         })
     }
 
-    /// A separate artifact type, deliberately not an online checkpoint. This does
-    /// not yet provide a supported transfer/restore workflow or save RNG state.
+    /// A separate artifact type, deliberately not an online checkpoint or exact
+    /// offline resume. World-only initialization must validate the complete bundle.
     pub fn export_world(
         &mut self,
         directory: impl AsRef<Path>,
@@ -450,13 +468,21 @@ impl WorldPretrainer {
         std::fs::create_dir(directory)?;
         let weights = directory.join("world.safetensors");
         self.train.save_checkpoint(&weights)?;
-        let metadata = serde_json::json!({
-            "format": 1, "architecture": "dreamerv3-world-pretraining", "config": self.config,
-            "source": self.source, "meganeura_revision": MEGANEURA_REV, "blade_revision": BLADE_REV,
-            "future_head_revision": (self.config.loss_scales.future_prediction > 0.0).then_some(world::FUTURE_HEAD_REVISION),
-            "updates": self.updates, "sampled_observations": self.sampled_observations,
-            "sampled_transitions": self.sampled_transitions, "world_sha256": crate::vision::checkpoint_sha256(&weights)?,
-        });
+        let metadata = PretrainingMetadata {
+            format: 1,
+            architecture: "dreamerv3-world-pretraining".into(),
+            config: self.config.clone(),
+            source: self.source.clone(),
+            dreamerv3_revision: DREAMERV3_UPSTREAM_REV.into(),
+            meganeura_revision: MEGANEURA_REV.into(),
+            blade_revision: BLADE_REV.into(),
+            future_head_revision: (self.config.loss_scales.future_prediction > 0.0)
+                .then(|| world::FUTURE_HEAD_REVISION.into()),
+            updates: self.updates,
+            sampled_observations: self.sampled_observations,
+            sampled_transitions: self.sampled_transitions,
+            world_sha256: crate::vision::checkpoint_sha256(&weights)?,
+        };
         let output = std::fs::File::create_new(directory.join("pretraining.json"))?;
         serde_json::to_writer_pretty(output, &metadata)?;
         Ok(())

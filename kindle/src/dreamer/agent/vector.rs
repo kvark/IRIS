@@ -35,6 +35,12 @@ fn check_capacity(config: &DreamerConfig, streams: usize) -> Result<(), &'static
 }
 
 impl VectorCore {
+    fn initialize_world(&mut self, initialization: WorldInitialization) -> io::Result<()> {
+        self.learner.initialize_world(initialization)?;
+        sync_matching(&self.learner.world_train, &mut self.observe, "world.");
+        Ok(())
+    }
+
     fn new(mut learner: DreamerCore, streams: usize) -> Self {
         check_capacity(&learner.config, streams).unwrap();
         assert_eq!(learner.replay_len(), 0);
@@ -336,6 +342,12 @@ impl VectorDreamerAgent {
     pub fn config(&self) -> &DreamerConfig {
         self.core.learner.config()
     }
+
+    /// Initialize the shared learner before any stream begins. All independent
+    /// beliefs, visual caches, RNG streams and the policy remain fresh.
+    pub fn initialize_world(&mut self, initialization: WorldInitialization) -> io::Result<()> {
+        self.core.initialize_world(initialization)
+    }
     pub fn provenance(&self) -> ModelProvenance {
         self.core.learner.provenance()
     }
@@ -443,6 +455,79 @@ mod tests {
         for (&a, &b) in left.iter().zip(right) {
             assert!((a - b).abs() < 1e-4, "{a} != {b}");
         }
+    }
+
+    #[test]
+    #[ignore = "requires GPU; verifies imported vector posterior weights and untouched independent live state"]
+    fn vector_world_initialization_syncs_observe_without_changing_live_state() {
+        use super::super::initialization_tests::{pretrained_bundle, snapshot, target};
+
+        let config = target();
+        let gpu = Arc::new(crate::init_gpu_context().unwrap());
+        let bundle = pretrained_bundle(&config, &gpu);
+        let load = || WorldInitialization::load(&bundle.path, &config, &bundle.source).unwrap();
+        let learner = DreamerCore::with_gpu(config.clone(), Arc::clone(&gpu));
+        let mut vector = VectorCore::new(learner, 3);
+        let observe_before = snapshot(&vector.observe);
+        let policy_before = snapshot(&vector.policy);
+        let rngs = |vector: &VectorCore| {
+            vector
+                .streams
+                .iter()
+                .map(|stream| {
+                    (
+                        stream.policy_rng.clone().random::<u64>(),
+                        stream.posterior_rng.clone().random::<u64>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let rngs_before = rngs(&vector);
+        vector.initialize_world(load()).unwrap();
+        assert_ne!(snapshot(&vector.observe), observe_before);
+        let names = vector.observe.param_names();
+        assert_eq!(
+            vector.observe.read_params(&names),
+            vector.learner.world_train.read_params(&names)
+        );
+        assert_eq!(snapshot(&vector.policy), policy_before);
+        assert_eq!(rngs(&vector), rngs_before);
+        for stream in &vector.streams {
+            assert!(!stream.active && !stream.needs_reset && stream.pending_action.is_none());
+            assert!(
+                stream
+                    .deter
+                    .iter()
+                    .chain(&stream.stoch)
+                    .chain(&stream.feature)
+                    .all(|&value| value == 0.0)
+            );
+        }
+        assert_eq!(vector.learner.replay_len(), 0);
+        assert_eq!(vector.learner.train_scheduler.credit, 0.0);
+        assert!(vector.initialize_world(load()).is_err());
+
+        let learner = DreamerCore::with_gpu(config.clone(), gpu);
+        let mut active = VectorCore::new(learner, 3);
+        active.ingest(vec![(
+            2,
+            observation(2, 0),
+            FrameFlags {
+                is_first: true,
+                ..Default::default()
+            },
+            Reward::default(),
+        )]);
+        assert_eq!(
+            (active.learner.environment_step, active.learner.learner_step),
+            (0, 0)
+        );
+        let before = snapshot(&active.observe);
+        assert!(
+            active.initialize_world(load()).is_err(),
+            "one started stream is not fresh"
+        );
+        assert_eq!(snapshot(&active.observe), before);
     }
 
     #[test]
