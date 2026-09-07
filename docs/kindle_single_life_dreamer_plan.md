@@ -344,6 +344,11 @@ policy/critic; its private world update is not a turnkey offline trainer.
 mind-games has gameplay datasets and other training stacks, but that does not
 mean the current Kindle world model is pretrained.
 
+An isolated [native world-only candidate](experiments/2026-09-07-world-pretraining.md)
+adds aligned feature-clip learning with explicit missing-label masks and no
+actor/critic sessions. It is CPU-validated only; a verified dataset reader,
+compatible-world initialization and hardware/adaptation gates remain unfinished.
+
 Separate the sources of prior knowledge:
 
 | Initialization | Data used | What transfers |

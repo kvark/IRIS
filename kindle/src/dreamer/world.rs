@@ -79,11 +79,11 @@ struct WorldModel {
     heads: WorldHeads,
     /// The behavior optimizer owns these parameters. They are frozen in this
     /// graph so replay-value gradients only shape the posterior/RSSM path.
-    replay_value: MlpHead,
+    replay_value: Option<MlpHead>,
 }
 
 impl WorldModel {
-    fn new(graph: &mut Graph, config: &DreamerConfig) -> Self {
+    fn new(graph: &mut Graph, config: &DreamerConfig, pretraining: bool) -> Self {
         let units = config.network().units;
         Self {
             dynamics: Dynamics::new(graph, config),
@@ -94,14 +94,16 @@ impl WorldModel {
             future_predictor: (config.loss_scales.future_prediction > 0.0)
                 .then(|| future_predictor(graph, config)),
             heads: WorldHeads::new(graph, config),
-            replay_value: MlpHead::new(
-                graph,
-                "behavior.value",
-                config.feature_dim(),
-                units,
-                3,
-                config.value_bins,
-            ),
+            replay_value: (!pretraining).then(|| {
+                MlpHead::new(
+                    graph,
+                    "behavior.value",
+                    config.feature_dim(),
+                    units,
+                    3,
+                    config.value_bins,
+                )
+            }),
         }
     }
 }
@@ -125,6 +127,16 @@ pub fn build_training_graph(config: &DreamerConfig, length: usize) -> Graph {
     build_training_graph_grouped(config, length, length)
 }
 
+/// Action-conditioned offline learning, without a critic or replay-value targets.
+///
+/// Each reward/continuation target has an explicit nonnegative weight. Missing
+/// labels use weight zero, not a fabricated zero reward or nonterminal target.
+/// Losses average over B*T, including masked rows, as the online objectives do.
+pub(super) fn build_pretraining_graph(config: &DreamerConfig, length: usize) -> Graph {
+    assert_eq!(config.loss_scales.replay_value, 0.0);
+    build_sequence_graph(config, length, length, true)
+}
+
 // The RSSM and posterior stay sequential. Only row-independent operations are
 // grouped across time; their RMS norms never mix rows. A one-step grouping is
 // retained privately as the numerical reference for this execution change.
@@ -132,6 +144,15 @@ fn build_training_graph_grouped(
     config: &DreamerConfig,
     length: usize,
     time_batch_length: usize,
+) -> Graph {
+    build_sequence_graph(config, length, time_batch_length, false)
+}
+
+fn build_sequence_graph(
+    config: &DreamerConfig,
+    length: usize,
+    time_batch_length: usize,
+    pretraining: bool,
 ) -> Graph {
     config.validate();
     assert!(length > 0 && length <= config.batch_length);
@@ -141,7 +162,7 @@ fn build_training_graph_grouped(
     let patches = OBSERVATION_GRID * OBSERVATION_GRID;
 
     let mut graph = Graph::new();
-    let model = WorldModel::new(&mut graph, config);
+    let model = WorldModel::new(&mut graph, config, pretraining);
     let mut deter = graph.input("initial_deter", &[batch, size.deter]);
     let mut stoch = graph.input("initial_stoch", &[batch * size.stoch, size.classes]);
 
@@ -277,10 +298,19 @@ fn build_training_graph_grouped(
         };
         let reward_target = target("reward_target", config.value_bins);
         let continuation_target = target("continuation_target", 1);
-        let replay_value_target = target("replay_value_target", config.value_bins);
-        let replay_slow_target = target("replay_slow_target", config.value_bins);
-        let replay_value_weight = target("replay_value_weight", 1);
-        let reward_weight = graph.constant(vec![1.0; rows], &[rows, 1]);
+        let replay_targets = (!pretraining).then(|| {
+            (
+                target("replay_value_target", config.value_bins),
+                target("replay_slow_target", config.value_bins),
+                target("replay_value_weight", 1),
+            )
+        });
+        let label_weights =
+            pretraining.then(|| (target("reward_weight", 1), target("continuation_weight", 1)));
+        let reward_weight = match label_weights {
+            Some((reward, _)) => reward,
+            None => graph.constant(vec![1.0; rows], &[rows, 1]),
+        };
 
         if let Some(predictor) = &model.future_predictor {
             // Each row uses deter_t, before posterior_t consumes observation_t.
@@ -311,7 +341,14 @@ fn build_training_graph_grouped(
             reconstruction_losses.push(scale(&mut graph, reconstruction_loss, 1.0 / rows as f32));
         }
 
-        let (reward, continuation) = model.heads.forward(&mut graph, state);
+        let (reward, continuation) = if pretraining {
+            (
+                model.heads.reward.forward(&mut graph, state),
+                model.heads.continuation.forward(&mut graph, state),
+            )
+        } else {
+            model.heads.forward(&mut graph, state)
+        };
         // Keep the reduction explicit because this value is composed into the
         // joint loss and exported as a metric. The fused backend loss stores
         // per-row partials and is only scalar when used as a terminal output.
@@ -321,25 +358,30 @@ fn build_training_graph_grouped(
             reward_target,
             reward_weight,
         ));
-        continuation_losses.push(mean_binary_cross_entropy(
-            &mut graph,
-            continuation,
-            continuation_target,
-            rows,
-        ));
-        let replay_value_state = if config.replay_value_gradient {
-            state
+        let continuation_loss = if let Some((_, weight)) = label_weights {
+            weighted_binary_cross_entropy(&mut graph, continuation, continuation_target, weight)
         } else {
-            graph.stop_gradient(state)
+            mean_binary_cross_entropy(&mut graph, continuation, continuation_target, rows)
         };
-        let value = model
-            .replay_value
-            .forward_frozen(&mut graph, replay_value_state);
-        let value_target =
-            weighted_cross_entropy(&mut graph, value, replay_value_target, replay_value_weight);
-        let slow_target =
-            weighted_cross_entropy(&mut graph, value, replay_slow_target, replay_value_weight);
-        replay_value_losses.push(graph.add(value_target, slow_target));
+        continuation_losses.push(continuation_loss);
+        if let Some((replay_value_target, replay_slow_target, replay_value_weight)) = replay_targets
+        {
+            let replay_value_state = if config.replay_value_gradient {
+                state
+            } else {
+                graph.stop_gradient(state)
+            };
+            let value = model
+                .replay_value
+                .as_ref()
+                .unwrap()
+                .forward_frozen(&mut graph, replay_value_state);
+            let value_target =
+                weighted_cross_entropy(&mut graph, value, replay_value_target, replay_value_weight);
+            let slow_target =
+                weighted_cross_entropy(&mut graph, value, replay_slow_target, replay_value_weight);
+            replay_value_losses.push(graph.add(value_target, slow_target));
+        }
     }
 
     let average = 1.0 / length as f32;
@@ -358,7 +400,7 @@ fn build_training_graph_grouped(
     let reward = scale(&mut graph, reward, head_average);
     let continuation = sum(&mut graph, &continuation_losses);
     let continuation = scale(&mut graph, continuation, head_average);
-    let replay_value = sum(&mut graph, &replay_value_losses);
+    let replay_value = sum_or_zero(&mut graph, &replay_value_losses);
     let replay_value = scale(&mut graph, replay_value, head_average);
 
     let scales = config.loss_scales;
@@ -410,6 +452,22 @@ fn mean_binary_cross_entropy(
         losses.push(scale(graph, loss, count as f32 / rows as f32));
     }
     sum(graph, &losses)
+}
+
+fn weighted_binary_cross_entropy(
+    graph: &mut Graph,
+    logits: NodeId,
+    target: NodeId,
+    weight: NodeId,
+) -> NodeId {
+    // BCE from logits has a scalar reduction for any row count. Unlike the
+    // online fused probability loss, individual unlabeled rows can be masked.
+    let softplus = graph.softplus(logits, 1.0);
+    let product = graph.mul(logits, target);
+    let negative_product = graph.neg(product);
+    let per_row = graph.add(softplus, negative_product);
+    let weighted = graph.mul(per_row, weight);
+    graph.mean_all(weighted)
 }
 
 impl HeadInputs {
@@ -709,6 +767,57 @@ mod tests {
         let graph = build_training_graph(&config, config.world_backprop_length);
         let (plan, _) = meganeura::compile_training_graph(&graph);
         assert!(!plan.dispatches.is_empty());
+    }
+
+    #[test]
+    #[ignore = "checks masked continuation loss and gradients beyond one GPU workgroup"]
+    fn masked_continuation_loss_has_zero_unlabeled_gradient_and_complete_reduction() {
+        use super::super::runtime::build_session;
+        use meganeura::Mode;
+        use std::sync::Arc;
+
+        let gpu = Arc::new(crate::init_gpu_context().unwrap());
+        for rows in [513, 1024] {
+            let mut graph = Graph::new();
+            let logits = graph.parameter("logits", &[rows, 1]);
+            let target = graph.input("target", &[rows, 1]);
+            let weight = graph.input("weight", &[rows, 1]);
+            let loss = weighted_binary_cross_entropy(&mut graph, logits, target, weight);
+            graph.set_outputs(vec![loss]);
+            let mut session = build_session(&graph, &gpu, Mode::Training, false);
+            let logits = (0..rows)
+                .map(|row| (row as f32 * 0.17).sin() * 40.0)
+                .collect::<Vec<_>>();
+            let target = (0..rows)
+                .map(|row| (row % 7) as f32 / 6.0)
+                .collect::<Vec<_>>();
+            let weights = (0..rows)
+                .map(|row| f32::from(row % 3 != 0))
+                .collect::<Vec<_>>();
+            session.set_parameter("logits", &logits);
+            session.set_input("target", &target);
+            session.set_input("weight", &weights);
+            session.step();
+            session.wait();
+            let mut actual_loss = [0.0];
+            let mut gradient = vec![0.0; rows];
+            session.read_output_by_index(0, &mut actual_loss);
+            session.read_param_grad("logits", &mut gradient);
+            let mut expected_loss = 0.0_f64;
+            for row in 0..rows {
+                let x = f64::from(logits[row]);
+                let target = f64::from(target[row]);
+                let weight = f64::from(weights[row]);
+                expected_loss +=
+                    weight * (x.max(0.0) + (-x.abs()).exp().ln_1p() - x * target) / rows as f64;
+                let expected = weight * (1.0 / (1.0 + (-x).exp()) - target) / rows as f64;
+                assert!((f64::from(gradient[row]) - expected).abs() < 1e-8);
+                if weight == 0.0 {
+                    assert_eq!(gradient[row], 0.0);
+                }
+            }
+            assert!((f64::from(actual_loss[0]) - expected_loss).abs() < 1e-5);
+        }
     }
 
     #[test]

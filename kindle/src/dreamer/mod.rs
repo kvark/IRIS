@@ -13,6 +13,7 @@ mod cpu;
 mod distributions;
 mod intrinsic;
 mod networks;
+mod pretraining;
 mod readback;
 mod replay;
 mod runtime;
@@ -23,6 +24,9 @@ pub use agent::{
     ModelProvenance, VectorDreamerAgent, WorldMetrics,
 };
 pub use config::{DreamerConfig, LossScales, ModelSize, NetworkSize};
+pub use pretraining::{
+    PretrainingFrame, PretrainingSource, WorldPretrainer, WorldPretrainingReport,
+};
 pub use replay::{FrameFlags, Reward};
 
 /// Upstream DreamerV3 revision used as the behavioral contract.
