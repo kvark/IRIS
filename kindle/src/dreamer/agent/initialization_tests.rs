@@ -119,6 +119,8 @@ fn world_initialization_preserves_fresh_behavior_and_survives_full_restore() {
         meganeura::data::safetensors::SafeTensorsModel::load(bundle.path.join("world.safetensors"))
             .unwrap();
     let mut core = DreamerCore::with_gpu(config.clone(), Arc::clone(&gpu));
+    core.ensure_world_prediction_live();
+    core.ensure_behavior_value_live();
     let names = core
         .world_train
         .param_names()
@@ -132,6 +134,7 @@ fn world_initialization_preserves_fresh_behavior_and_survives_full_restore() {
         &core.behavior_online,
         &core.behavior_slow,
         &core.policy_live,
+        core.behavior_value_live.as_ref().unwrap(),
     ]
     .map(snapshot);
     let policy_rng = core.rngs.policy.clone().random::<u64>();
@@ -169,6 +172,7 @@ fn world_initialization_preserves_fresh_behavior_and_survives_full_restore() {
             &core.behavior_online,
             &core.behavior_slow,
             &core.policy_live,
+            core.behavior_value_live.as_ref().unwrap(),
         ]
         .map(snapshot),
         behavior_before
@@ -178,6 +182,8 @@ fn world_initialization_preserves_fresh_behavior_and_survives_full_restore() {
         &core.world_observe_live,
         &core.world_transition,
         &core.world_transition_live,
+        &core.world_heads,
+        &core.world_heads_live,
         core.world_prediction_live.as_ref().unwrap(),
     ] {
         let names = session.param_names();
