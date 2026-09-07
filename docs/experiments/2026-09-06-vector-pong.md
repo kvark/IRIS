@@ -345,7 +345,7 @@ seed-1 budget or competence result.
 
 ## Seed 1 training progress
 
-Every 20k checkpoint through 100k passes all 241 tensor checks: expected
+Every 20k checkpoint through 120k passes all 241 tensor checks: expected
 names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
 second moments. The seed-0 zero-update checkpoint is a structural reference
 only; no cross-seed parameter-delta claim is made. Each preserved byte-exact
@@ -354,10 +354,10 @@ checks. The full-run auditor still rejects each for missing `run_end`;
 these are unfinished training diagnostics, not completed budgets or mastery.
 Reports are `seed1-{step:06d}-{inspection,prefix-accounting}.json`.
 
-The latest checkpoint was archived at **2026-09-07 12:49:25 UTC**. At 100k it
-has 399,931 actual frames and 100,109 replay insertions. Replay has reached its
-100,000-record capacity with exactly 109 FIFO evictions; the ledger validates
-through that boundary and training debt remains zero.
+The latest checkpoint was archived at **2026-09-07 13:35:11 UTC**. At 120k it
+has 479,922 actual frames and 120,115 replay insertions. Replay retains its
+100,000-record capacity with exactly 20,115 FIFO evictions; the ledger validates
+past the capacity boundary and training debt remains zero.
 
 | Aggregate actions | Updates | Natural games | Mean return | Wins | Last-100 future loss | Last-100 entropy |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -366,6 +366,7 @@ through that boundary and training debt remains zero.
 | 60,000 | 14,619 | 68 | −20.8971 | 0 | 60.32 | 0.8431 |
 | 80,000 | 19,619 | 90 | −20.8889 | 0 | 53.21 | 0.7462 |
 | 100,000 | 24,619 | 101 | −20.7426 | 0 | 57.96 | 0.5572 |
+| 120,000 | 29,619 | 107 | −20.6542 | 0 | 56.78 | 0.5670 |
 
 There are no timeouts or wins. The exact trailing training windows are:
 
@@ -376,6 +377,7 @@ There are no timeouts or wins. The exact trailing training windows are:
 | 55k–60k | 4 | −21.0000 | 1 / 122 | +0.15597 / −0.93605 / −0.00159 |
 | 75k–80k | 4 | −20.5000 | 2 / 105 | +0.39083 / −0.91065 / −0.00223 |
 | 95k–100k | 4 | −18.2500 | 2 / 50 | +0.51914 / −0.90889 / −0.00190 |
+| 115k–120k | 2 | −19.0000 | 4 / 38 | +0.67286 / −0.90965 / −0.00159 |
 
 Whole-game returns may include earlier play; point counts cover only window
 transitions, and replay samples are not limited to that interaction window.
@@ -396,8 +398,9 @@ per stream**, not super-real-time playing plus training.
 | 50k–60k | 1,391.40 | 7.187 | 60.02% | 136.00 |
 | 70k–80k | 1,390.54 | 7.191 | 59.59% | 135.77 |
 | 90k–100k | 1,379.25 | 7.250 | 59.29% | 136.32 |
+| 110k–120k | 1,385.31 | 7.219 | 59.83% | 135.86 |
 
-The latest learning/observation/environment times are 1,077.48/294.98/4.32 s;
+The latest learning/observation/environment times are 1,075.46/303.51/4.30 s;
 the measured bottleneck remains learning/perception, not environment stepping.
 Reports are `seed1-throughput-*.json`, including the CPU-work overlap notes.
 Two CPU-only profiler builds overlap 30k–40k; their start-to-observed-completion
@@ -409,6 +412,11 @@ documentation work; independent host activity was not controlled.
 The 90k–100k window includes CPU-only canary report-guard development, tests
 and historical report checks. The Nsight no-op tooling preflight and its
 12:18 UTC verification finished before this window.
+The 110k–120k window overlaps isolated batched-DINO/control CPU builds, Clippy,
+tests, documentation and historical trace reanalysis, approximately 13:10–13:34
+UTC. The candidate and its CPU-only proofs are in `runs/batched-dino-20260907/`;
+no DINO candidate GPU execution occurred. The unchanged live native extension
+and runners remain pinned to the original LeVJEPA protocol.
 These are run-health observations, not quiet-system timing comparisons or
 demonstrated speed changes. No extra GPU job ran. The isolated parent/candidate
 profiler canaries are built, but hardware parity and profiler overhead remain

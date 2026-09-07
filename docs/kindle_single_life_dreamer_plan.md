@@ -314,7 +314,7 @@ are representation diagnostics, not a trained-RSSM or gameplay comparison.
    protocol fixed in a bounded DINO/video comparison before broad Atari runs.
    Historical DINO versus the new vectorized LeVJEPA trajectory is not that control.
    The active `VectorDreamerAgent` is LeVJEPA-only. An isolated
-   [batched DINO candidate](https://github.com/kvark/kindle/blob/dafadd9f364d29aa1922a6dd5433e96e845c17dd/docs/experiments/2026-09-07-batched-dino.md)
+   [batched DINO candidate](https://github.com/kvark/kindle/blob/d1dbb054bd848426c6f0ece73fa17673e7ad0f03/docs/experiments/2026-09-07-batched-dino.md)
    passes CPU validation (83 Rust / 248 Python tests); frontend/stream GPU
    parity, learning integration and timing remain gates before adoption.
    Keep LeVJEPA primary; this is a control, not a silent frontend fallback.
