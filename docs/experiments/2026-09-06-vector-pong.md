@@ -345,63 +345,61 @@ seed-1 budget or competence result.
 
 ## Seed 1 training progress
 
-The 20k checkpoint was archived and inspected at **2026-09-07 09:44:07 UTC**.
-All 241 tensors have the expected names/shapes/dtypes, finite parameters and
-optimizer moments, and nonnegative second moments. The seed-0 zero-update
-checkpoint is a structural reference only; no cross-seed parameter-delta claim
-is made. The exact-byte prefix ledger also passes, with 79,991 actual frames,
-20,030 retained replay records, no eviction and zero debt. Reports are
-`seed1-020000-inspection.json` and `seed1-020000-prefix-accounting.json`.
-The latter deliberately remains rejected as a full run because `run_end` is
-absent; no completed budget or mastery result is inferred.
+The 20k, 40k and 60k checkpoints pass all 241 tensor checks: expected
+names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
+second moments. The seed-0 zero-update checkpoint is a structural reference
+only; no cross-seed parameter-delta claim is made. Each preserved byte-exact
+prefix passes the per-stream action/reward/reset, replay-credit and game-clock
+checks. The full-run auditor still rejects each for missing `run_end`;
+these are unfinished training diagnostics, not completed budgets or mastery.
+Reports are `seed1-{step:06d}-{inspection,prefix-accounting}.json`.
 
-The 40k checkpoint also passes all 241 tensor checks and the exact-byte prefix
-ledger: 159,986 actual frames, 40,055 replay records, no eviction and zero debt.
-Its reports are `seed1-040000-inspection.json` and
-`seed1-040000-prefix-accounting.json`; the full-run auditor still correctly
-rejects the unfinished prefix for missing `run_end`.
+The latest checkpoint was archived at **2026-09-07 11:17:08 UTC**. At 60k it
+has 239,971 actual frames, 60,076 replay records, no eviction and zero debt.
 
 | Aggregate actions | Updates | Natural games | Mean return | Wins | Last-100 future loss | Last-100 entropy |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 20,000 | 4,619 | 22 | −20.8636 | 0 | 169.81 | 0.0985 |
 | 40,000 | 9,619 | 47 | −20.9149 | 0 | 75.44 | 0.8758 |
+| 60,000 | 14,619 | 68 | −20.8971 | 0 | 60.32 | 0.8431 |
 
-There are no timeouts. In the exact 15k–20k training window, seven games finish
-with mean −20.8571; all transitions in that window contain 0 points scored and
-136 conceded. Sample-weighted replay reward predictions for positive/negative/
-zero events are −0.00455/−0.25571/−0.01858. Whole-game returns may include earlier
-play, and replay samples are not limited to the current interaction window.
-`seed1-window-15000-20000.json` uses the same recipe, frontend and executable
-as seed 0, differing in the declared model/environment seeds. It is early
-training evidence, not a causal explanation or frozen competence result.
+There are no timeouts or wins. The exact trailing training windows are:
 
-In the 35k–40k window, seven games finish with mean −20.8571 and no wins;
-window transitions contain 1 point scored and 104 conceded. Sample-weighted
-positive/negative/zero replay predictions are +0.00265/−0.88400/−0.00306.
-`seed1-window-35000-40000.json` is derived from the preserved byte-exact 40k
-prefix. Lower prediction loss and improved negative-reward predictions are not
-yet evidence of winning gameplay. The fixed final budget and gate are unchanged.
+| Actions | Completed games | Mean return | Points scored / conceded | Sample-weighted replay prediction: positive / negative / zero |
+| --- | ---: | ---: | ---: | --- |
+| 15k–20k | 7 | −20.8571 | 0 / 136 | −0.00455 / −0.25571 / −0.01858 |
+| 35k–40k | 7 | −20.8571 | 1 / 104 | +0.00265 / −0.88400 / −0.00306 |
+| 55k–60k | 4 | −21.0000 | 1 / 122 | +0.15597 / −0.93605 / −0.00159 |
 
-The 10k–20k steady window contains 2,500 updates in 1,382.00 s: **7.236 aggregate
-actions/s**, 0.4823× aggregate game time and about 0.0603× per stream. Across
-1,382 GPU samples, activity averages 60.09%, power 137.06 W, and memory stays
-exactly 14,148 MiB. Learning takes 1,072.72 s, observation handling 301.36 s and
-environment stepping 4.31 s; debt is zero. This is consistent with seed 0's
-7.216 actions/s and 60.22% activity at the same window, not a new speedup.
-The report is `seed1-throughput-10000-20000.json`; the measured bottleneck remains
-learning/perception. A post-checkpoint process snapshot is 8.35 GiB RSS with zero swap.
+Whole-game returns may include earlier play; point counts cover only window
+transitions, and replay samples are not limited to that interaction window.
+The `seed1-window-*.json` reports derive from preserved byte-exact prefixes
+and use the same recipe, frontend and executable as seed 0, differing in the
+declared model/environment seeds. Lower prediction loss and improved negative-
+reward predictions are not evidence of winning gameplay. The fixed final
+budget and gate are unchanged.
 
-The 30k–40k window takes 1,387.41 s for 2,500 updates: 7.208 aggregate actions/s,
-0.4805× aggregate game time and about 0.0601× per stream. Its 1,387 GPU samples
-average 60.02% activity and 136.49 W, with exactly 14,148 MiB throughout.
-Learning/observation/environment times are 1,078.33/301.03/4.22 s and debt is zero.
-Two CPU-only profiler canary builds overlap this window, each within a 70 s
-start-to-observed-completion interval. They are explicitly retained in
-`seed1-throughput-30000-40000.json` and
-`runs/readback-profile-20260907/builds.json`; this is not a quiet-system timing
-comparison or a demonstrated speed change. No extra GPU job ran. The isolated
-parent/candidate canaries are built, but hardware parity and profiler overhead
-remain untested until the pinned campaign finishes.
+Every throughput window below contains 2,500 updates with zero debt. GPU memory
+stays exactly 14,148 MiB. Game-time ratios are about **0.48× aggregate and 0.060×
+per stream**, not super-real-time playing plus training.
+
+| Actions | Wall seconds | Aggregate actions/s | Mean GPU activity | Mean power (W) |
+| --- | ---: | ---: | ---: | ---: |
+| 10k–20k | 1,382.00 | 7.236 | 60.09% | 137.06 |
+| 30k–40k | 1,387.41 | 7.208 | 60.02% | 136.49 |
+| 50k–60k | 1,391.40 | 7.187 | 60.02% | 136.00 |
+
+The latest learning/observation/environment times are 1,078.51/304.77/4.31 s;
+the measured bottleneck remains learning/perception, not environment stepping.
+Reports are `seed1-throughput-*.json`, including the CPU-work overlap notes.
+Two CPU-only profiler builds overlap 30k–40k; their start-to-observed-completion
+intervals are retained in `runs/readback-profile-20260907/builds.json`.
+The 50k–60k window overlaps CPU-only accounting checks and the separate 0.45 s
+scripted Freeway fixture; the eight-title CPU preflight finished before it.
+These are run-health observations, not quiet-system timing comparisons or
+demonstrated speed changes. No extra GPU job ran. The isolated parent/candidate
+profiler canaries are built, but hardware parity and profiler overhead remain
+untested until the pinned campaign finishes.
 
 ## Reconstructed gameplay footage
 

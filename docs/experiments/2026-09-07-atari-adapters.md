@@ -46,6 +46,17 @@ Do not change the active pinned runner/auditor. Before other vectorized learning
 runs, separate generic episode statistics from game-specific competence/win
 criteria. This checker reports returns and boundary counts, not wins.
 
+That correction is now staged separately on `exp/atari-episode-accounting`
+([candidate and validation plan](https://github.com/kvark/kindle/blob/e937c8046d2da5c4ed7df62e2a691fe83f61a315/docs/experiments/2026-09-07-atari-episode-accounting.md)).
+Its v2 runner emits descriptive episode counts; the generic auditor validates
+both v1 and v2 without claiming wins, and the Pong scorer rejects other games.
+All 198 candidate CPU tests pass. Read-only checks preserve the complete original
+v1 control/training/evaluation results and still reject unfinished seed-1
+prefixes. The exact-commit compatibility report is
+`runs/atari-accounting-20260907/legacy-compatibility.json`.
+It is **not adopted**: the active v1 files remain pinned, and a short native v2
+pixel run is required after this queue before using it for new Atari learning.
+
 Twenty CPU tests cover fresh-instance replay, unequal resets, unfinished tails,
 RGB8 validation, corrupted observations/actions/rewards/boundaries/clocks,
 nonfinite rewards, output preservation and explicit failed summaries. They
