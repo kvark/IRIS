@@ -28,9 +28,10 @@ reliable learning.
   action-conditioned objective that predicts an observation before consuming
   it. Predicting the current frozen DINO features from the posterior is already
   the existing feature-reconstruction control.
-  Current positive runs use DINOv3 plus causal prediction, not LeVJEPA. Complete
-  a bounded, matched causal-video frontend experiment with LeVJEPA as the first
-  candidate; do not describe the DINO stepping stone as the full video pivot.
+  Accepted frozen Pong controls use DINOv3 plus causal prediction. Native
+  LeVJEPA vector training now produces natural Pong wins; its final frozen
+  three-seed mastery gate remains unproven. Do not equate training wins with
+  frozen mastery or describe the DINO stepping stone as the full video pivot.
   Native LeVJEPA work and the stronger, predeclared three-seed Pong mastery gate
   are tracked in `docs/experiments/2026-09-06-levjepa-pong.md`. Its 16-arrival
   causal chunks reset only perception; episode boundaries also reset belief.

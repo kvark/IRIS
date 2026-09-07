@@ -36,15 +36,17 @@ for gameplay progress or a reason to split the agent.
 
 ## Architecture: measured stepping stone versus target
 
-The completed competence experiments still use frozen DINOv3 ViT-S/16. The native
-LeVJEPA frontend now passes numerical parity and short training/restore checks;
-its [experiment record](experiments/2026-09-06-levjepa-pong.md) contains the
-predeclared stronger Pong mastery gate. No LeVJEPA gameplay success or pretrained
-action-conditioned world model is claimed yet.
+The completed frozen competence controls still use DINOv3 ViT-S/16. Native
+LeVJEPA passes numerical parity and training/restore checks, and the ongoing
+[vector experiment](experiments/2026-09-06-vector-pong.md) now records natural
+Pong wins from the agent's own actions. These are live-training results from
+one evolving policy, not independent-seed or frozen mastery. The predeclared
+three-seed final frozen gate remains open. No pretrained action-conditioned
+world model is claimed yet.
 
 | Part | Running implementation | Target and missing work |
 | --- | --- | --- |
-| Perception | DINOv3 control; native LeVJEPA candidate, both projected/pooled to 7×7×64 | Validate causal video features in actual learning and measure their cost |
+| Perception | DINOv3 control; native LeVJEPA in ongoing learning, both projected/pooled to 7×7×64 | Validate final frozen competence across seeds and Atari; reduce measured runtime cost |
 | World model | Categorical Dreamer RSSM; causal feature prediction, reward, continuation, balanced KL and replay value | Retain this learning/control baseline; bootstrap compatible dynamics from other games |
 | Behavior | Imagined categorical actor and two-hot critic, trained from the agent's own rewarded actions | Retain behavior across compatible games; measure adaptation and forgetting |
 | Runtime | Serial control and native vectorized LeVJEPA/RSSM/policy inference; one shared learner | Eliminate measured learner bubbles; retain trustworthy per-stream clocks and recovery |

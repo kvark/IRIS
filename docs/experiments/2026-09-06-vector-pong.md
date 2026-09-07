@@ -170,6 +170,7 @@ not the contents of sampled replay tensors or a completed training budget.
 | 120,000 | 479,933 | 120,080 | 100,000 | 20,080 |
 | 140,000 | 559,920 | 140,087 | 100,000 | 40,087 |
 | 160,000 | 639,913 | 160,092 | 100,000 | 60,092 |
+| 180,000 | 719,904 | 180,097 | 100,000 | 80,097 |
 
 Nineteen CPU tests cover exact copying, checkpoint/progress ordering, corrupted
 ledgers, incomplete rounds and FIFO eviction at three small capacities.
@@ -181,8 +182,8 @@ names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
 second moments. World, actor, value and slow-value parameters have changed
 from the matched zero-update control. Every archived file matches the completed
 save's fingerprint; the rolling training target remains untouched. All listed
-games are natural completions, with **no wins or timeouts** and zero reported
-training debt.
+games are natural completions, with **no timeouts** and zero reported training
+debt. There are no wins through 160k, then five by 180k.
 
 | Aggregate actions | Updates | Games | Mean return | Future loss | Policy entropy |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -194,16 +195,17 @@ training debt.
 | 120,000 | 29,619 | 72 | −19.2083 | 67.34 | 0.3734 |
 | 140,000 | 34,619 | 79 | −18.4684 | 66.05 | 0.8925 |
 | 160,000 | 39,619 | 84 | −17.9048 | 62.69 | 0.7390 |
+| 180,000 | 44,619 | 89 | −16.2472 | 57.32 | 0.6293 |
 
 Loss and entropy are means over each prefix's last 100 updates; the first 100
 updates average 36,778.23 and 2.8903. These use changing training batches, not
 held-out data: decreasing model loss and a concentrated policy do not establish
 better control. Reports are `seed0-{step:06d}-inspection.json`; they do not
-replace full-run accounting or final frozen evaluation. The latest 160k
-inspection completed at **2026-09-07 06:26:04 UTC**; earlier timestamps remain
+replace full-run accounting or final frozen evaluation. The latest 180k
+inspection completed at **2026-09-07 07:11:50 UTC**; earlier timestamps remain
 in `checkpoint-watcher.log`.
 
-Exact 5k-action training windows show modest improvement, not mastery.
+Exact 5k-action training windows show learning progress, not mastery.
 Point counts cover all transitions in each window; whole-game returns cover
 only games that finish there and may include play before the window. With no
 completed games, the return mean is undefined, not zero. Reward predictions
@@ -221,6 +223,7 @@ below are sample-weighted replay means for positive/negative/zero events.
 | 115k–120k | 0 | undefined | 12 / 26 | +0.80539 / −0.88602 / −0.00102 |
 | 135k–140k | 1 | −9.00 | 19 / 23 | +0.85276 / −0.84386 / −0.00091 |
 | 155k–160k | 1 | −8.00 | 41 / 8 | +0.89375 / −0.87223 / −0.00053 |
+| 175k–180k | 0 | undefined | 44 / 4 | +0.94217 / −0.89381 / −0.00033 |
 
 These are the vector rows of the saved `learning-context-{start}-{end}.json`
 reports and the later `seed0-window-{start}-{end}.json` reports, not frozen
@@ -228,6 +231,12 @@ evaluations or accepted endpoints. The 155k–160k point balance is strongly
 positive, but its one completed game still loses: its earlier play precedes
 this window, while points also include unfinished games. No game has been won
 through 160k. Keep the declared final checkpoint and frozen gate unchanged.
+
+All five games completed during 160k–180k are natural wins: returns
+**+6, +10, +5, +17 and +20**, mean **+11.6**. The first is at action 160,344.
+They come from five collection streams sharing one evolving learner, not five
+independent training seeds. The 175k–180k point balance remains positive but
+contains no complete games. Neither result passes the final frozen mastery gate.
 
 The read-only `learning-context-{start}-{end}.json` reports compare exact
 5k-action windows with the interrupted serial LeVJEPA seed and historical DINO
@@ -249,7 +258,7 @@ always recorded LeVJEPA for the vector run; none were altered.
 
 Steady throughput windows each contain 10,000 aggregate actions and 2,500
 updates. GPU activity and power are means from the 1 Hz trace, with
-1,385/1,379/1,377/1,388/1,380/1,381/1,383/1,386 samples respectively:
+1,385/1,379/1,377/1,388/1,380/1,381/1,383/1,386/1,386 samples respectively:
 
 | Action window | Wall seconds | Aggregate actions/s | GPU activity | Power, W |
 | --- | ---: | ---: | ---: | ---: |
@@ -261,8 +270,9 @@ updates. GPU activity and power are means from the 1 Hz trace, with
 | 110k–120k | 1,381.38 | 7.239 | 59.66% | 137.80 |
 | 130k–140k | 1,382.93 | 7.231 | 59.45% | 137.60 |
 | 150k–160k | 1,386.43 | 7.213 | 59.88% | 137.24 |
+| 170k–180k | 1,386.57 | 7.212 | 59.80% | 136.91 |
 
-Peak memory remains 14,148 MiB (13.82 GiB) in all eight windows. Each spends
+Peak memory remains 14,148 MiB (13.82 GiB) in all nine windows. Each spends
 1,069–1,075 s learning, 300–310 s handling observations and only 4.3 s stepping
 environments, with zero reported training debt. Aggregate simulation speed is
 about 0.48× the game clock, or 0.060× per stream. Memory is stable, but the GPU
@@ -270,10 +280,10 @@ is not saturated and super-real-time training remains unachieved. CPU subprocess
 environments would not address the measured bottleneck.
 
 Throughput remains steady after replay reaches capacity. GPU memory is exactly
-14,148 MiB throughout the 90k–100k, 110k–120k, 130k–140k and 150k–160k traces.
-Endpoint learner RSS at 100k/120k/140k/160k is 10.22/10.08/10.23/10.23 GiB, each
-with zero process swap; these are snapshots, not a CPU high-water trace.
-At 160k, the host has 17.18 GiB available and the workspace disk has 331 GiB free.
+14,148 MiB throughout each measured trace from 90k–100k through 170k–180k.
+Endpoint learner RSS at 100k/120k/140k/160k/180k is
+10.22/10.08/10.23/10.23/10.10 GiB, each with zero process swap; these are
+snapshots, not a CPU high-water trace. At 180k, the host has 17.25 GiB available.
 
 ## Follow-up diagnosis if final gates fail
 
