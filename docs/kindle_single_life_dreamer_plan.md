@@ -258,6 +258,11 @@ recipe; world training and perception also need measured improvements.
 The backend's GPU trace places pass durations on a synthetic host-submission
 timeline, not a calibrated GPU clock. Use those durations for workload cost,
 not the drawn gaps as evidence of GPU idleness.
+The [bounded hardware/parity handoff](experiments/2026-09-06-vector-pong.md#queued-diagnostic-handoff)
+is queued behind the campaign and its checkpoint watcher. It checks three
+hardware tests and three alternating parent/candidate synthetic canary pairs;
+profiling overhead, calibrated queue gaps and pixel-loop validation remain
+separate gates. Do not launch overlapping GPU work when the campaign exits.
 
 Use one learner with batched live inference, not one full GPU model per game.
 Keep independent visual caches, beliefs, RNG streams and sequence replay. Sample

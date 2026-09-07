@@ -345,7 +345,7 @@ seed-1 budget or competence result.
 
 ## Seed 1 training progress
 
-Every 20k checkpoint through 120k passes all 241 tensor checks: expected
+Every 20k checkpoint through 140k passes all 241 tensor checks: expected
 names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
 second moments. The seed-0 zero-update checkpoint is a structural reference
 only; no cross-seed parameter-delta claim is made. Each preserved byte-exact
@@ -354,9 +354,9 @@ checks. The full-run auditor still rejects each for missing `run_end`;
 these are unfinished training diagnostics, not completed budgets or mastery.
 Reports are `seed1-{step:06d}-{inspection,prefix-accounting}.json`.
 
-The latest checkpoint was archived at **2026-09-07 13:35:11 UTC**. At 120k it
-has 479,922 actual frames and 120,115 replay insertions. Replay retains its
-100,000-record capacity with exactly 20,115 FIFO evictions; the ledger validates
+The latest checkpoint was archived at **2026-09-07 14:21:42 UTC**. At 140k it
+has 559,910 actual frames and 140,120 replay insertions. Replay retains its
+100,000-record capacity with exactly 40,120 FIFO evictions; the ledger validates
 past the capacity boundary and training debt remains zero.
 
 | Aggregate actions | Updates | Natural games | Mean return | Wins | Last-100 future loss | Last-100 entropy |
@@ -367,6 +367,7 @@ past the capacity boundary and training debt remains zero.
 | 80,000 | 19,619 | 90 | −20.8889 | 0 | 53.21 | 0.7462 |
 | 100,000 | 24,619 | 101 | −20.7426 | 0 | 57.96 | 0.5572 |
 | 120,000 | 29,619 | 107 | −20.6542 | 0 | 56.78 | 0.5670 |
+| 140,000 | 34,619 | 112 | −20.4643 | 0 | 60.00 | 0.5777 |
 
 There are no timeouts or wins. The exact trailing training windows are:
 
@@ -378,6 +379,7 @@ There are no timeouts or wins. The exact trailing training windows are:
 | 75k–80k | 4 | −20.5000 | 2 / 105 | +0.39083 / −0.91065 / −0.00223 |
 | 95k–100k | 4 | −18.2500 | 2 / 50 | +0.51914 / −0.90889 / −0.00190 |
 | 115k–120k | 2 | −19.0000 | 4 / 38 | +0.67286 / −0.90965 / −0.00159 |
+| 135k–140k | 2 | −15.5000 | 20 / 27 | +0.58199 / −0.89366 / −0.00123 |
 
 Whole-game returns may include earlier play; point counts cover only window
 transitions, and replay samples are not limited to that interaction window.
@@ -399,8 +401,9 @@ per stream**, not super-real-time playing plus training.
 | 70k–80k | 1,390.54 | 7.191 | 59.59% | 135.77 |
 | 90k–100k | 1,379.25 | 7.250 | 59.29% | 136.32 |
 | 110k–120k | 1,385.31 | 7.219 | 59.83% | 135.86 |
+| 130k–140k | 1,386.32 | 7.213 | 59.18% | 135.66 |
 
-The latest learning/observation/environment times are 1,075.46/303.51/4.30 s;
+The latest learning/observation/environment times are 1,082.33/298.29/4.34 s;
 the measured bottleneck remains learning/perception, not environment stepping.
 Reports are `seed1-throughput-*.json`, including the CPU-work overlap notes.
 Two CPU-only profiler builds overlap 30k–40k; their start-to-observed-completion
@@ -417,10 +420,54 @@ tests, documentation and historical trace reanalysis, approximately 13:10–13:3
 UTC. CPU-only candidate proofs are in `runs/batched-dino-20260907/`;
 no DINO candidate GPU execution occurred. The unchanged live native extension
 and runners remain pinned to the original LeVJEPA protocol.
+The 130k–140k window overlaps CPU-only diagnostic-worker development and tests
+at approximately 14:03–14:18 UTC. The separate DINO/release and readback test
+binary builds and CPU validation finished around 13:51 UTC, before this window.
 These are run-health observations, not quiet-system timing comparisons or
 demonstrated speed changes. No extra GPU job ran. The isolated parent/candidate
 profiler canaries are built, but hardware parity and profiler overhead remain
 untested until the pinned campaign finishes.
+
+## Queued diagnostic handoff
+
+The bounded readback worker started at **2026-09-07 14:26:18 UTC**, PID 1852657
+(execution session 64105), and has emitted `waiting_for_campaign_and_watcher`.
+It binds the original launcher and watcher by PID, start time and script identity;
+it runs no child command until both have exited. The full campaign auditor must
+then validate all three completed budgets and frozen evaluations into a fresh
+report. A valid failed mastery result allows diagnostics to proceed; a missing,
+interrupted or inconsistent campaign does not. The original launcher exits 1
+after writing a failed mastery decision, so exit status alone is insufficient.
+
+The worker runs the profiler's three relevant ignored hardware tests separately,
+then three eight-update parent/candidate canary pairs in AB, BA, AB order:
+12M/B16/T64/row16, prediction-only, 48 synthetic updates in total. Each hardware
+invocation must execute exactly one passing test. Each canary must finish with
+eight complete finite reports, expected candidate profile counters, all 241 checkpoint
+tensors with valid schemas and moments, and exact parent/candidate non-timing
+reports and named tensor bytes. The untrained LeVJEPA checkpoint supplies only
+the tensor schema; its perception identity and parameter values are not a
+synthetic-control reference. This schema check also passes on the preserved
+eight-update `head-batching-candidate-v2-20260906` checkpoint.
+
+All binaries, auditors, worker source and reference files are pinned in
+`runs/readback-hardware-20260907/manifest.json`. A selected-device memory/activity
+guard screens for obvious competing use before each GPU child, with one 1 Hz
+monitor for the diagnostic sequence. It is not a calibrated GPU-idle detector.
+Failures retain their artifacts and stop the worker; cancellation terminates
+only its own diagnostic children, never the original training processes.
+Do not start another GPU workload until this worker has exited.
+
+CPU validation passes 31 tests, including PID reuse, observed process errors,
+missing campaign output, zero-test invocations, changed pins, nonfinite tensors,
+negative second moments, timeout cleanup and early monitor failure. The worker
+source SHA-256 is `a1789caa6eaf788326635fb7ca341791cf0642a6d15439ab355007b73ef96c05`;
+its source and tests are in `runs/readback-profile-20260907/`.
+These are scheduling/CPU proofs only. Hardware results remain pending. Discard
+the first two updates of each canary for the subsequent warmed timing comparison;
+report all three paired ratios and their spread before interpreting overhead.
+This worker does not adopt the profiler, run Nsight, validate pixels or establish
+gameplay quality. Those require their own serialized follow-up checks.
 
 ## Reconstructed gameplay footage
 
