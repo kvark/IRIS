@@ -1,10 +1,31 @@
-"""CPU-only accounting checks for kindle-vector-v1 logs, not a competence gate."""
+"""CPU-only vector accounting with descriptive episode counts, not game wins."""
 
 from collections import deque
 import json
 import math
 from pathlib import Path
 import struct
+
+
+VECTOR_PROTOCOL = "kindle-vector-v2"
+
+
+def episode_summary(episodes):
+    for episode in episodes:
+        if type(episode["episode_return"]) not in (int, float):
+            raise ValueError("episode return must be a finite scalar")
+        require_numbers(episode["episode_return"])
+        if (type(episode["terminated"]) is not bool or type(episode["truncated"]) is not bool
+                or not (episode["terminated"] or episode["truncated"])):
+            raise ValueError("invalid completed episode boundary")
+    mean = sum(episode["episode_return"] for episode in episodes) / len(episodes) if episodes else None
+    if mean is not None:
+        require_numbers(mean)
+    return dict(completed_episodes=len(episodes),
+                natural_episodes=sum(ep["terminated"] and not ep["truncated"] for ep in episodes),
+                truncated_episodes=sum(ep["truncated"] for ep in episodes),
+                positive_return_natural_episodes=sum(ep["terminated"] and not ep["truncated"] and ep["episode_return"] > 0 for ep in episodes),
+                mean_completed_return=mean)
 
 
 def require_numbers(value):
@@ -28,7 +49,7 @@ def audit(path):
 
     with Path(path).open() as source:
         header = json.loads(next(source))
-        check(header["event"] == "run_start" and header["protocol"] == "kindle-vector-v1", "unknown vector protocol")
+        check(header["event"] == "run_start" and header["protocol"] in ("kindle-vector-v1", VECTOR_PROTOCOL), "unknown vector protocol")
         count, config = header["num_envs"], header["config"]
         check(type(count) is int and count > 0, "invalid stream count")
         check(header["steps"] > 0 and header["steps"] % count == 0, "invalid action budget")
@@ -154,18 +175,30 @@ def audit(path):
                     final = event
                     check(final["reason"] in ("budget_complete", "interrupted"), "unknown stop reason")
                     check(actions <= header["steps"] and (final["reason"] != "budget_complete" or actions == header["steps"]), "incomplete declared budget")
-                    check(final["learner_updates"] == updates and final["completed_games"] == len(completed), "final counts mismatch")
+                    check(final["learner_updates"] == updates, "final counts mismatch")
             elif kind == "checkpoint":
                 settled()
                 check(event["run_step"] == actions and event["learner_step"] == header["starting_learner_step"] + updates, "checkpoint counters mismatch")
             else:
                 raise ValueError(f"unknown event {kind}")
         check(final is not None, "missing run_end")
-        wins = sum(e["terminated"] and not e["truncated"] and e["episode_return"] > 0 for e in completed)
-        mean = sum(e["episode_return"] for e in completed) / len(completed) if completed else None
-        check(final["natural_wins"] == wins and final["mean_completed_return"] == mean, "final score mismatch")
-        return dict(path=str(path), actions=actions, updates=updates, num_envs=count,
-                    completed_games=len(completed), natural_wins=wins, mean_completed_return=mean,
+        scores = episode_summary(completed)
+        if header["protocol"] == "kindle-vector-v1":
+            expected = dict(completed_games=scores["completed_episodes"],
+                            natural_wins=scores["positive_return_natural_episodes"],
+                            mean_completed_return=scores["mean_completed_return"])
+            forbidden = set(scores) - {"mean_completed_return"}
+        else:
+            expected = scores
+            forbidden = {"completed_games", "natural_wins"}
+        check(not forbidden.intersection(final), "mixed vector episode-summary versions")
+        for field, value in expected.items():
+            check(field in final, f"missing final score field: {field}")
+            if value is not None:
+                require_numbers(final[field])
+            check(final[field] == value and (field == "mean_completed_return" or type(final[field]) is int), "final score mismatch")
+        return dict(path=str(path), protocol=header["protocol"], actions=actions, updates=updates, num_envs=count,
+                    **scores,
                     budget_complete=final["reason"] == "budget_complete", accounting_valid=True)
 
 

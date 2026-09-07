@@ -16,6 +16,7 @@ import ale_py
 import gymnasium as gym
 
 import kindle
+from kindle._vector_audit import VECTOR_PROTOCOL, episode_summary
 from atari import (
     ATARI_ACTION_REPEAT, ATARI_PROTOCOLS, DreamerAtariPreprocessing,
     checkpoint_identity, sha256_file,
@@ -98,7 +99,7 @@ def main():
         starting_actions, starting_updates = agent.environment_step, agent.learner_step
         started = time.perf_counter()
         agent.begin_episodes(ids, initial)
-        emit(dict(event="run_start", protocol="kindle-vector-v1", environment=args.environment,
+        emit(dict(event="run_start", protocol=VECTOR_PROTOCOL, environment=args.environment,
                   num_envs=args.num_envs, steps=args.steps, seed=args.seed, environment_seeds=env_seeds,
                   policy_seed_rule="config.seed + stream (wrapping u64)",
                   atari_protocol=args.atari_protocol, action_repeat=ATARI_ACTION_REPEAT,
@@ -211,8 +212,7 @@ def main():
                 save()
             event = progress("run_end")
             event.update(reason="interrupted" if stop else "budget_complete",
-                         completed_games=len(completed), natural_wins=sum(r["terminated"] and not r["truncated"] and r["episode_return"] > 0 for r in completed),
-                         mean_completed_return=(sum(r["episode_return"] for r in completed) / len(completed) if completed else None),
+                         **episode_summary(completed),
                          learner_updates=agent.learner_step - starting_updates)
             emit(event)
             print(json.dumps(event, indent=2), flush=True)

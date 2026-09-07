@@ -63,6 +63,7 @@ def audit_run(path: Path) -> dict:
         require(end is None, f"{path}: event after run_end")
         if kind == "run_start":
             require(start is None, f"{path}: multiple run segments")
+            require(event.get("environment") == "ALE/Pong-v5", f"{path}: Pong-only scorer")
             start = event
             continue
         require(start is not None, f"{path}: missing run_start")
@@ -165,6 +166,7 @@ def audit_vector_run(path: Path) -> dict:
         finite(event)
         kind = event["event"]
         if kind == "run_start":
+            require(event.get("environment") == "ALE/Pong-v5", f"{path}: Pong-only scorer")
             # Normalize only field names for the shared checkpoint/recipe audit.
             start = {**event, "perception": event["model_provenance"]["perception"],
                      "trainable_parameters": event["trainable_parameter_counts"]}
@@ -185,7 +187,7 @@ def audit_vector_run(path: Path) -> dict:
             and end["emulator_resets"] == [count + 1 for count in end["episode_counts"]],
             f"{path}: emulator clock/reset mismatch")
     natural = sum(ep["terminated"] and not ep["truncated"] for ep in episodes)
-    wins = accounting["natural_wins"]
+    wins = sum(ep["terminated"] and not ep["truncated"] and ep["episode_return"] > 0 for ep in episodes)
     return {"path": str(path), "sha256": sha256(path), "start": start, "end": end,
             "checkpoint": checkpoint, "natural_games": natural,
             "timeouts": sum(ep["truncated"] for ep in episodes), "natural_wins": wins,
