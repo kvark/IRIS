@@ -40,7 +40,7 @@ On 2026-09-07, using the pinned Cargo dependencies:
   19 GPU tests are ignored, including the two new hardware gates below.
 - Workspace and Python `cargo clippy --all-targets --locked ... -- -D warnings`
   and both Rust formatting checks pass.
-- All 238 Python tests pass using a separately built **debug** extension from
+- All 239 Python tests pass using a separately built **debug** extension from
   this worktree. No installation or replacement in the active Python checkout.
 - Graph tests cover N=1/2/3/8, identical parameter names/shapes/dtypes, batched
   input/output dimensions, one-image attention dimensions and repeated RoPE.
@@ -49,11 +49,12 @@ On 2026-09-07, using the pinned Cargo dependencies:
 - Mocked runner tests verify default/explicit selection, checkpoint-selected
   restore and cleanup without claiming a started run on construction failure.
   The throughput launcher preserves the selected frontend and model provenance.
+  The unchanged Pong mastery auditor still rejects DINO-labelled input.
 
 The debug extension SHA-256 is
 `1da97a3731940104786f5bab3a34ccec9f25f0c1edf38f4aeee728fc6170d642`.
 It was used only for CPU API checks, not gameplay, GPU parity or timing.
-Builds/checks overlapped seed 1 approximately 13:10–13:15 UTC; affected live
+Builds/checks overlapped seed 1 approximately 13:10–13:20 UTC; affected live
 throughput windows are not quiet-system performance comparisons.
 
 ## Hardware gates after the pinned queue

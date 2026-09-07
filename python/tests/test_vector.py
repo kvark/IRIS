@@ -269,6 +269,13 @@ def test_vector_mastery_protocol_preserves_declared_aggregate_budget_and_fronten
     audit_pong.validate_protocol(vector_protocol_run(), "train", 200_000, 4)
 
 
+def test_dino_control_cannot_be_relabelled_as_levjepa_mastery():
+    run = vector_protocol_run()
+    run["start"]["perception"]["kind"] = "dinov3"
+    with pytest.raises(ValueError, match="not the pinned LeVJEPA experiment"):
+        audit_pong.validate_protocol(run, "train", 200_000, 4)
+
+
 @pytest.mark.parametrize("field, value", [
     ("steps", 50_000), ("num_envs", 2), ("mode", "evaluate_greedy"),
     ("environment_seeds", [0, 0, 0, 0]), ("sticky_actions", 0.25),
