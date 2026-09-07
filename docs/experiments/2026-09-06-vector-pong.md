@@ -345,18 +345,19 @@ seed-1 budget or competence result.
 
 ## Seed 1 training progress
 
-Every 20k checkpoint through 180k passes all 241 tensor checks: expected
+Every 20k checkpoint through the final 200k passes all 241 tensor checks: expected
 names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
 second moments. The seed-0 zero-update checkpoint is a structural reference
-only; no cross-seed parameter-delta claim is made. Each preserved byte-exact
-prefix passes the per-stream action/reward/reset, replay-credit and game-clock
-checks. The full-run auditor still rejects each for missing `run_end`;
-these are unfinished training diagnostics, not completed budgets or mastery.
+only; no cross-seed parameter-delta claim is made. Each preserved intermediate
+byte-exact prefix passes the per-stream action/reward/reset, replay-credit and
+game-clock checks. The full-run auditor rejects those prefixes for missing
+`run_end`; they are not completed budgets or mastery. The final 200k log passes
+the complete-budget audit described below, including its real `run_end`.
 Reports are `seed1-{step:06d}-{inspection,prefix-accounting}.json`.
 
-The latest checkpoint was archived at **2026-09-07 15:54:00 UTC**. At 180k it
-has 719,893 actual frames and 180,129 replay insertions. Replay retains its
-100,000-record capacity with exactly 80,129 FIFO evictions; the ledger validates
+The final checkpoint was archived at **2026-09-07 16:40:31 UTC**. At 200k it
+has 799,888 actual frames and 200,134 replay insertions. Replay retains its
+100,000-record capacity with exactly 100,134 FIFO evictions; the ledger validates
 past the capacity boundary and training debt remains zero.
 
 | Aggregate actions | Updates | Natural games | Mean return | Wins | Last-100 future loss | Last-100 entropy |
@@ -370,8 +371,11 @@ past the capacity boundary and training debt remains zero.
 | 140,000 | 34,619 | 112 | −20.4643 | 0 | 60.00 | 0.5777 |
 | 160,000 | 39,619 | 118 | −20.0508 | 0 | 59.79 | 0.5191 |
 | 180,000 | 44,619 | 121 | −19.7025 | 0 | 61.08 | 0.7437 |
+| 200,000 | 49,619 | 126 | −19.0794 | 1 | 56.30 | 0.8618 |
 
-There are no timeouts or wins. The exact trailing training windows are:
+There are no timeouts. The only training win is **+1 at action 193,232**, from
+stream 3 after a 5,084-action game. This belongs to the evolving shared policy,
+not frozen evaluation or an independent seed. The exact trailing windows are:
 
 | Actions | Completed games | Mean return | Points scored / conceded | Sample-weighted replay prediction: positive / negative / zero |
 | --- | ---: | ---: | ---: | --- |
@@ -384,6 +388,7 @@ There are no timeouts or wins. The exact trailing training windows are:
 | 135k–140k | 2 | −15.5000 | 20 / 27 | +0.58199 / −0.89366 / −0.00123 |
 | 155k–160k | 1 | −13.0000 | 17 / 24 | +0.68514 / −0.87578 / −0.00088 |
 | 175k–180k | 2 | −5.5000 | 16 / 18 | +0.79010 / −0.87698 / −0.00043 |
+| 195k–200k | 0 | undefined | 17 / 20 | +0.83292 / −0.88707 / −0.00021 |
 
 Whole-game returns may include earlier play; point counts cover only window
 transitions, and replay samples are not limited to that interaction window.
@@ -408,8 +413,9 @@ per stream**, not super-real-time playing plus training.
 | 130k–140k | 1,386.32 | 7.213 | 59.18% | 135.66 |
 | 150k–160k | 1,382.23 | 7.235 | 58.89% | 135.95 |
 | 170k–180k | 1,386.13 | 7.214 | 59.43% | 135.53 |
+| 190k–200k | 1,391.23 | 7.188 | 59.15% | 135.24 |
 
-The latest learning/observation/environment times are 1,081.59/298.83/4.30 s;
+The latest learning/observation/environment times are 1,082.57/302.84/4.36 s;
 the measured bottleneck remains learning/perception, not environment stepping.
 Reports are `seed1-throughput-*.json`, including the CPU-work overlap notes.
 Two CPU-only profiler builds overlap 30k–40k; their start-to-observed-completion
@@ -435,6 +441,9 @@ the subsequent initializer review/implementation beginning around 15:01 UTC.
 The 170k–180k window overlaps the isolated initializer's debug tests, Clippy,
 release build and release CPU tests through 15:45:32 UTC, plus the short
 read-only host-memory sample below. No initializer hardware test ran.
+The 190k–200k window contains read-only process/log monitoring and audit-source
+inspection. Host-feature candidate builds and CPU tests finished by 16:10:09 UTC,
+before the window. Other host activity remained uncontrolled.
 These are run-health observations, not quiet-system timing comparisons or
 demonstrated speed changes. No extra GPU job ran. The isolated parent/candidate
 profiler canaries are built, but hardware parity and profiler overhead remain
@@ -451,6 +460,28 @@ measure allocated bytes, elapsed allocation cost or GPU idle time. This sample
 starts after the isolated release build, but other host activity is uncontrolled.
 Raw counters and thread deltas are in
 `seed1-host-memory-20260907-154836.json`. No live process was attached to or changed.
+
+## Seed 1 completed training and frozen handoff
+
+The launcher verified the completed training budget at **2026-09-07 16:39:51
+UTC**: 200,000 actions, 49,619 updates, 126 natural games, one win and no timeouts.
+The complete accounting/protocol audit passes, not just the intermediate-prefix
+check. Execution took 27,542.47 s (7.65 hours), plus 65.67 s construction.
+
+The declared N=1, 75,000-action frozen sampled evaluation then started from the
+final checkpoint. Its first header was written at **16:40:58 UTC**, after 66.80 s
+construction. A read-only audit matches the restore to the final logged save,
+rolling checkpoint and archived 200k checkpoint, including metadata and tensor
+fingerprints, config, encoder, implementation and action identities. Fresh
+recurrent histories and the recorded resumed RNG scheme are retained; this is
+not exact restoration of the live training trajectory.
+
+Reports are `seed1-train.accounting.json`, `seed1-200000-inspection.json` and
+`seed1-final-training-verification.json`. The latter verifies completed training
+and frozen startup only: it explicitly says evaluation is incomplete and mastery
+has not been evaluated. The recipe, final checkpoint and frozen budget remain
+unchanged. The all-seed mastery gate already fails on seed 0; finish the declared
+evaluations to measure variation rather than selecting checkpoints or thresholds.
 
 ## Queued diagnostic handoff
 
