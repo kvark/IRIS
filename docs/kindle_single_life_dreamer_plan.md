@@ -25,8 +25,9 @@ The order is:
 6. Only after strong single-actor GOG and transfer results, investigate swarms.
 
 Vectorized collection and batched live inference for one shared learner are
-now the immediate runtime priority, explicitly requested after inspecting GPU
-utilization. Independent environments are collection streams, not independent
+implemented, explicitly requested after inspecting GPU utilization. Removing
+the measured learner bubbles remains the runtime priority. Independent
+environments are collection streams, not independent
 learners or a swarm. Preserve each stream's causal history, belief, RNG and
 replay continuity; count all executed interactions and honor the training ratio.
 Separate learner services and swarm infrastructure remain deferred.
@@ -222,7 +223,7 @@ For B×T replay samples per update, train ratio R and update duration U:
     learner updates/s required = action rate × R / (B×T)
 
 At 15 actions/s and R256, B16×T64 requires 3.75 updates/s. Updates alone at
-about 0.53 s each exceed the wall-time budget. Removing a sleep or accelerating
+about 0.43 s each exceed the wall-time budget. Removing a sleep or accelerating
 only game rendering cannot fix that.
 
 The next performance target is sustained >1× playing plus training on simple

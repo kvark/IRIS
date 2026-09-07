@@ -131,11 +131,40 @@ the declared eight independent environment seeds. The first scheduled update
 is at aggregate action 1,528, as required by replay prefill. Its first 3,072
 actions match the N=8 throughput canary: all 384 vector transitions and 387
 learner model reports are identical, excluding timestamps/timings; config and
-implementation identities match. At the 8,000-action report it has 1,619 updates
-and zero debt. This is verified training startup, **not a Pong mastery result**.
-The fixed final budgets and frozen gates remain unchanged.
+implementation identities match. This verifies training startup, **not a Pong
+mastery result**. The fixed final budgets and frozen gates remain unchanged.
 
 The read-only control and training-prefix comparisons are saved as
 `control-comparison.json` and `training-prefix-comparison.json` in the artifact
 directory. No production binary, runner, auditor or learning setting was changed
 after launch.
+
+## First intermediate checkpoint
+
+Seed 0's 20,000-action save contains 4,619 updates, with zero reported training
+debt. Read-only inspection verifies every learner report through that save,
+its logged checkpoint identity, all 241 tensor names/shapes/dtypes, finite
+parameters and optimizer moments, and nonnegative second moments. World,
+actor, value and slow-value parameters have changed from the matched seed-0
+zero-update control. The four checkpoint files are preserved under
+`runs/levjepa-vector-pong-20260906/seed0-020000-checkpoint/`, with hashes matching
+the completed save; the rolling training target remains untouched.
+
+This prefix completes 17 natural games, mean return **−20.7647**, no wins or
+timeouts. It is not frozen evaluation or evidence of mastery. Over the first
+and last 100 updates, mean future-prediction loss falls from 36,778.23 to
+165.98, while policy entropy falls from 2.8903 to 0.2460. These use changing
+training batches, not held-out data: decreasing model loss and a concentrated
+policy do not establish better control. Do not tune or select an endpoint from
+this intermediate result. The inspection is saved in
+`seed0-020000-inspection.json`; it does not replace the full-run accounting or
+final frozen mastery audit.
+
+The steady 10,000–20,000-action window takes 1,385.86 s for 2,500 updates:
+**7.216 aggregate actions/s**, 0.902 per stream, and **0.481× aggregate game
+time** (0.060× per stream). Learning consumes 1,069.26 s, observation handling
+309.24 s and environment stepping only 4.31 s. The 1 Hz trace contains 1,385
+samples in this window: mean GPU activity 60.22%, mean power 138.12 W and peak
+14,148 MiB (13.82 GiB). Memory is stable, but the GPU is not saturated and
+super-real-time training remains unachieved. CPU subprocess environments would
+not address the measured bottleneck.
