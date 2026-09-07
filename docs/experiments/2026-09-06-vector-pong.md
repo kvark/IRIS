@@ -169,6 +169,7 @@ not the contents of sampled replay tensors or a completed training budget.
 | 100,000 | 399,942 | 100,076 | 100,000 | 76 |
 | 120,000 | 479,933 | 120,080 | 100,000 | 20,080 |
 | 140,000 | 559,920 | 140,087 | 100,000 | 40,087 |
+| 160,000 | 639,913 | 160,092 | 100,000 | 60,092 |
 
 Nineteen CPU tests cover exact copying, checkpoint/progress ordering, corrupted
 ledgers, incomplete rounds and FIFO eviction at three small capacities.
@@ -192,13 +193,14 @@ training debt.
 | 100,000 | 24,619 | 68 | −19.3676 | 68.43 | 0.3365 |
 | 120,000 | 29,619 | 72 | −19.2083 | 67.34 | 0.3734 |
 | 140,000 | 34,619 | 79 | −18.4684 | 66.05 | 0.8925 |
+| 160,000 | 39,619 | 84 | −17.9048 | 62.69 | 0.7390 |
 
 Loss and entropy are means over each prefix's last 100 updates; the first 100
 updates average 36,778.23 and 2.8903. These use changing training batches, not
 held-out data: decreasing model loss and a concentrated policy do not establish
 better control. Reports are `seed0-{step:06d}-inspection.json`; they do not
-replace full-run accounting or final frozen evaluation. The latest 140k
-inspection completed at **2026-09-07 05:39:33 UTC**; earlier timestamps remain
+replace full-run accounting or final frozen evaluation. The latest 160k
+inspection completed at **2026-09-07 06:26:04 UTC**; earlier timestamps remain
 in `checkpoint-watcher.log`.
 
 Exact 5k-action training windows show modest improvement, not mastery.
@@ -218,10 +220,14 @@ below are sample-weighted replay means for positive/negative/zero events.
 | 95k–100k | 3 | −12.33 | 7 / 35 | +0.75056 / −0.89997 / −0.00126 |
 | 115k–120k | 0 | undefined | 12 / 26 | +0.80539 / −0.88602 / −0.00102 |
 | 135k–140k | 1 | −9.00 | 19 / 23 | +0.85276 / −0.84386 / −0.00091 |
+| 155k–160k | 1 | −8.00 | 41 / 8 | +0.89375 / −0.87223 / −0.00053 |
 
 These are the vector rows of the saved `learning-context-{start}-{end}.json`
 reports and the later `seed0-window-{start}-{end}.json` reports, not frozen
-evaluations or accepted endpoints. No game has been won through 140k.
+evaluations or accepted endpoints. The 155k–160k point balance is strongly
+positive, but its one completed game still loses: its earlier play precedes
+this window, while points also include unfinished games. No game has been won
+through 160k. Keep the declared final checkpoint and frozen gate unchanged.
 
 The read-only `learning-context-{start}-{end}.json` reports compare exact
 5k-action windows with the interrupted serial LeVJEPA seed and historical DINO
@@ -243,7 +249,7 @@ always recorded LeVJEPA for the vector run; none were altered.
 
 Steady throughput windows each contain 10,000 aggregate actions and 2,500
 updates. GPU activity and power are means from the 1 Hz trace, with
-1,385/1,379/1,377/1,388/1,380/1,381/1,383 samples respectively:
+1,385/1,379/1,377/1,388/1,380/1,381/1,383/1,386 samples respectively:
 
 | Action window | Wall seconds | Aggregate actions/s | GPU activity | Power, W |
 | --- | ---: | ---: | ---: | ---: |
@@ -254,8 +260,9 @@ updates. GPU activity and power are means from the 1 Hz trace, with
 | 90k–100k | 1,380.52 | 7.244 | 59.69% | 138.01 |
 | 110k–120k | 1,381.38 | 7.239 | 59.66% | 137.80 |
 | 130k–140k | 1,382.93 | 7.231 | 59.45% | 137.60 |
+| 150k–160k | 1,386.43 | 7.213 | 59.88% | 137.24 |
 
-Peak memory remains 14,148 MiB (13.82 GiB) in all seven windows. Each spends
+Peak memory remains 14,148 MiB (13.82 GiB) in all eight windows. Each spends
 1,069–1,075 s learning, 300–310 s handling observations and only 4.3 s stepping
 environments, with zero reported training debt. Aggregate simulation speed is
 about 0.48× the game clock, or 0.060× per stream. Memory is stable, but the GPU
@@ -263,10 +270,10 @@ is not saturated and super-real-time training remains unachieved. CPU subprocess
 environments would not address the measured bottleneck.
 
 Throughput remains steady after replay reaches capacity. GPU memory is exactly
-14,148 MiB throughout the 90k–100k, 110k–120k and 130k–140k traces. Endpoint
-learner RSS at the 100k/120k/140k inspections is 10.22/10.08/10.23 GiB, each
+14,148 MiB throughout the 90k–100k, 110k–120k, 130k–140k and 150k–160k traces.
+Endpoint learner RSS at 100k/120k/140k/160k is 10.22/10.08/10.23/10.23 GiB, each
 with zero process swap; these are snapshots, not a CPU high-water trace.
-At 140k, the host has 17.21 GiB available and the workspace disk has 331 GiB free.
+At 160k, the host has 17.18 GiB available and the workspace disk has 331 GiB free.
 
 ## Follow-up diagnosis if final gates fail
 
