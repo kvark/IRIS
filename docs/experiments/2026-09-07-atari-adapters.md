@@ -49,9 +49,58 @@ criteria. This checker reports returns and boundary counts, not wins.
 Twenty CPU tests cover fresh-instance replay, unequal resets, unfinished tails,
 RGB8 validation, corrupted observations/actions/rewards/boundaries/clocks,
 nonfinite rewards, output preservation and explicit failed summaries. They
-forbid construction of either Kindle agent class. Real-ROM results are pending.
+forbid construction of either Kindle agent class. The complete CPU suite passes
+221 tests, including run-local Pong audits.
 
 ```sh
 python/.venv/bin/python python/examples/check_atari_adapter.py \
   runs/atari-adapters-20260907
 ```
+
+## Real-ROM result
+
+All eight titles pass. The run was observed from **10:51:16 to 10:52:08 UTC**,
+September 7; collection plus serial-replay work totals 52.43 s. It executes the
+declared 65,536 collection and 65,536 replay actions, with **261,923 actual frames
+in each phase**, zero learner updates and no agent construction. Every stream
+exercises all 18 actions. All games produce natural episode boundaries; no
+wrapper timeouts occur in these prefixes. Separate timeout coverage remains in
+the synthetic adapter tests, not this real-ROM run.
+
+| Game | Natural episodes | Diagnostic mean return | Positive / negative reward events |
+| --- | ---: | ---: | ---: |
+| Pong | 8 | −20.25 | 6 / 191 |
+| Breakout | 43 | 1.53 | 66 / 0 |
+| Boxing | 4 | +1.75 | 122 / 118 |
+| Freeway | 4 | 0 | 0 / 0 |
+| Seaquest | 16 | 55 | 44 / 0 |
+| Frostbite | 18 | 78.89 | 153 / 0 |
+| Qbert | 23 | 163.04 | 122 / 0 |
+| Private Eye | 2 | 100 | 3 / 0 |
+
+These are short forced-random adapter returns, not competence results. All 18
+Frostbite episodes have positive return, illustrating why Pong's positive-return
+win rule must not be generalized. Freeway's reward channel has not been exercised
+by this prefix. Boxing's repeated-action rewards include ±2, and Qbert's include
+325; do not apply Pong-only ±1 reward validation to this panel.
+
+Source is `e8c26533f386ad5adb4fdf8bd86a877106dc1837`; checker SHA-256 is
+`6bebb325845bd0035e5bf19bb15ab0e455a7f9a6decb141dc071f1a6f93ed9ba`.
+ALE 0.12.1 native SHA-256 is
+`b9c810858e2d791eaf51d75cf72fc2057a2191a2e87e19f81657e492896f330d`.
+Gymnasium/NumPy/Pillow are 1.3.0/2.5.2/12.3.0. Every game log records its actual
+ROM path and SHA-256 and the unchanged wrapper hash. Full logs, summaries and
+independent saved-ledger/hash checks are in `runs/atari-adapters-20260907/`,
+including `verification.json`. Incomplete episode tails remain in the logs.
+
+The active Pong native extension, wrapper, vector runner and auditors are
+unchanged. Native video/learner quality and GPU throughput remain separate gates.
+
+## Separate Freeway reward fixture
+
+Declared before execution: one fresh environment at seed 9,001, exactly 1,024
+constant `UP` actions, and the same published wrapper. This is a **scripted
+reward-wiring diagnostic**, not a random control, learned behavior, demonstration
+training or a competence result. It must log every actual action, observation
+hash, reward and frame count, and reports whether any positive game reward was
+observed. Do not extend the budget or include it in the panel's random returns.
