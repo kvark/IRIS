@@ -37,6 +37,10 @@ reliable learning.
   Do not confuse chunked prefixes with a sliding window or reset the RSSM every
   chunk. Checkpoint format 3 records the actual frontend and encoding semantics;
   historical format-2 runs require their original executable.
+  The fresh vectorized Pong protocol is in
+  `docs/experiments/2026-09-06-vector-pong.md`. Do not replace the binaries,
+  runners or auditors of an active pinned experiment. Stage follow-on candidates
+  separately and keep GPU-heavy checks serialized with measured training.
 - Change one scientific variable per comparison. Report real interactions,
   learner updates, wall time, model/data provenance, all seeds, and failures.
   A short integration test or an historical score is not a matched benchmark.

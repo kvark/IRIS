@@ -118,5 +118,24 @@ The queue launched **2026-09-07 00:01:17 UTC**, from clean source commit
 `9ecc733a82c2d02394a15411b85d23f7b3c27da4`. Launcher SHA-256:
 `cc1f917d30bb547b8b4b5e1488108d3fbfc10d929700b5f756b3730ad16f9c12`.
 The manifest, GPU trace and launcher log are in the artifact directory above.
-The initial control has reached its first 1,000-action report with zero updates;
-no training-seed or mastery result is claimed at this handoff.
+The initial control completed at **2026-09-07 00:18:32 UTC**: 20,000 actions,
+79,980 actual frames, 22 natural games, mean return −20.4545, no wins/timeouts
+and exactly zero updates. Execution took 968.58 s, plus 65.31 s construction.
+The complete accounting/protocol audit passes. Its 20 action-count/reward/frame
+intervals and all 22 episode records match the prior serial zero-update control;
+all 241 model/optimizer tensors match by value. This preserves initial behavior,
+not equivalence of the later vectorized learning trajectories.
+
+Seed 0 training started at **2026-09-07 00:18:32 UTC**, with fresh counters and
+the declared eight independent environment seeds. The first scheduled update
+is at aggregate action 1,528, as required by replay prefill. Its first 3,072
+actions match the N=8 throughput canary: all 384 vector transitions and 387
+learner model reports are identical, excluding timestamps/timings; config and
+implementation identities match. At the 8,000-action report it has 1,619 updates
+and zero debt. This is verified training startup, **not a Pong mastery result**.
+The fixed final budgets and frozen gates remain unchanged.
+
+The read-only control and training-prefix comparisons are saved as
+`control-comparison.json` and `training-prefix-comparison.json` in the artifact
+directory. No production binary, runner, auditor or learning setting was changed
+after launch.
