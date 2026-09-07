@@ -343,6 +343,40 @@ Its first scheduled update occurs at action 1,528; the 2,000-action progress
 record has 119 updates and zero debt. These are startup checks, not a completed
 seed-1 budget or competence result.
 
+## Seed 1 training progress
+
+The 20k checkpoint was archived and inspected at **2026-09-07 09:44:07 UTC**.
+All 241 tensors have the expected names/shapes/dtypes, finite parameters and
+optimizer moments, and nonnegative second moments. The seed-0 zero-update
+checkpoint is a structural reference only; no cross-seed parameter-delta claim
+is made. The exact-byte prefix ledger also passes, with 79,991 actual frames,
+20,030 retained replay records, no eviction and zero debt. Reports are
+`seed1-020000-inspection.json` and `seed1-020000-prefix-accounting.json`.
+The latter deliberately remains rejected as a full run because `run_end` is
+absent; no completed budget or mastery result is inferred.
+
+| Aggregate actions | Updates | Natural games | Mean return | Wins | Last-100 future loss | Last-100 entropy |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 20,000 | 4,619 | 22 | −20.8636 | 0 | 169.81 | 0.0985 |
+
+There are no timeouts. In the exact 15k–20k training window, seven games finish
+with mean −20.8571; all transitions in that window contain 0 points scored and
+136 conceded. Sample-weighted replay reward predictions for positive/negative/
+zero events are −0.00455/−0.25571/−0.01858. Whole-game returns may include earlier
+play, and replay samples are not limited to the current interaction window.
+`seed1-window-15000-20000.json` uses the same recipe, frontend and executable
+as seed 0, differing in the declared model/environment seeds. It is early
+training evidence, not a causal explanation or frozen competence result.
+
+The 10k–20k steady window contains 2,500 updates in 1,382.00 s: **7.236 aggregate
+actions/s**, 0.4823× aggregate game time and about 0.0603× per stream. Across
+1,382 GPU samples, activity averages 60.09%, power 137.06 W, and memory stays
+exactly 14,148 MiB. Learning takes 1,072.72 s, observation handling 301.36 s and
+environment stepping 4.31 s; debt is zero. This is consistent with seed 0's
+7.216 actions/s and 60.22% activity at the same window, not a new speedup.
+The report is `seed1-throughput-10000-20000.json`; the measured bottleneck remains
+learning/perception. A post-checkpoint process snapshot is 8.35 GiB RSS with zero swap.
+
 ## Reconstructed gameplay footage
 
 The run-local `replay_first_game.py` replays the first completed N=1 game from
