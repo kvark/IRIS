@@ -1,4 +1,4 @@
-# Learner input/readback timing candidate
+# Learner host and readback timing candidate
 
 Staged separately on `exp/learner-readback-profile`, based on `73273df`.
 The active LeVJEPA three-seed queue retains its original binary, runners,
@@ -18,12 +18,29 @@ each original input and its position relative to producer submission. These
 are also subsets of the corresponding stage totals. They do not measure when
 the GPU consumes the data or actual PCIe utilization.
 
+The host-only sections have separate wall timers, including allocation and
+worker coordination inside each named section, not summed CPU-thread time:
+
+| Field | Boundary |
+| --- | --- |
+| `posterior_sample_seconds` | Posterior categorical sampling |
+| `imagination_feature_seconds` | Initial state flattening/container preparation and per-state feature joining |
+| `imagination_decode_seconds` | Reward, online-value and slow-value two-hot decoding |
+| `imagination_sample_seconds` | Action preparation/sampling and prior categorical sampling |
+| `imagination_targets_seconds` | Post-rollout returns, normalization, flat feature/target assembly and diagnostic metrics |
+
+Target assembly includes the 150 MiB imagined-feature buffer at 12M/B16/T64/H15.
+That source-derived size is not a measured allocation cost. These timers do
+not overlap input-write or readback timers; all remain subsets of their parent
+stage, and none measures GPU idle time.
+
 Preparation includes validation, buffer growth and command recording. Wait
 time includes unfinished producer computation and the GPU transfer, not just
 idle bubbles. Requested bytes are payload, not measured PCIe bus traffic.
-The `Readback::read` wrapper allocation, input packing, producer dispatch,
-CPU sampling/decoding, training graphs and parameter synchronization are not
-separately timed by this patch. GPU kernel time still needs hardware timestamps.
+The `Readback::read` wrapper allocation, posterior mask/state packing, output
+buffer allocation, producer dispatch and local destruction are not separately
+timed. Training graphs and parameter synchronization retain their existing
+top-level totals. GPU kernel time still needs hardware timestamps.
 
 The patch adds clocks and counters around existing operations, without adding
 a wait, changing submission order, moving arithmetic or consuming RNG draws.
@@ -33,11 +50,12 @@ receives fresh input-write counters.
 
 ## Validation before measurement
 
-CPU checks pass: 77 Kindle tests and five gym tests, workspace/Python-library
+CPU checks pass: 78 Kindle tests and five gym tests, workspace/Python-library
 Clippy, and Rust formatting. Seventeen GPU tests are explicitly skipped by the
 ordinary test command. New hardware assertions check batched/prefix/empty reads,
-counter reset, exact per-stage calls/bytes, and phase totals bounded by the
-parent wall time during both fresh and restored learning.
+counter reset, exact per-stage calls/bytes, positive host-section timings, and
+combined host/input/readback totals bounded by the parent wall time during
+both fresh and restored learning.
 
 After the active queue exits, run each relevant GPU test in a fresh process on
 adapter `0x2c02`: the two `dreamer::readback::tests` hardware tests and

@@ -191,6 +191,11 @@ pub struct LearnTiming {
     pub imagination_readback: ReadbackTiming,
     pub posterior_inputs: InputWriteTiming,
     pub imagination_inputs: InputWriteTiming,
+    pub posterior_sample_seconds: f64,
+    pub imagination_feature_seconds: f64,
+    pub imagination_decode_seconds: f64,
+    pub imagination_sample_seconds: f64,
+    pub imagination_targets_seconds: f64,
     pub world_train_seconds: f64,
     pub replay_refresh_seconds: f64,
     pub world_sync_seconds: f64,
@@ -1090,15 +1095,14 @@ impl DreamerCore {
         };
         self.readback.take_timing();
         let stage = Instant::now();
-        let posterior = self.sample_posterior_batch(&batch, &mut timing.posterior_inputs);
+        let posterior = self.sample_posterior_batch(&batch, &mut timing);
         timing.posterior_seconds = stage.elapsed().as_secs_f64();
         timing.posterior_readback = self.readback.take_timing();
         // D3 forms all targets from the same pre-update parameters. Keeping
         // this ordering also gives the world graph replay-value targets while
         // its frozen critic routes that auxiliary gradient into the RSSM.
         let stage = Instant::now();
-        let behavior_batch =
-            self.imagine_and_target(&batch, &posterior, &mut timing.imagination_inputs);
+        let behavior_batch = self.imagine_and_target(&batch, &posterior, &mut timing);
         timing.imagination_seconds = stage.elapsed().as_secs_f64();
         timing.imagination_readback = self.readback.take_timing();
         let stage = Instant::now();
@@ -1175,8 +1179,9 @@ impl DreamerCore {
     fn sample_posterior_batch(
         &mut self,
         batch: &SequenceBatch,
-        inputs: &mut InputWriteTiming,
+        timing: &mut LearnTiming,
     ) -> PosteriorBatch {
+        let inputs = &mut timing.posterior_inputs;
         let size = self.config.network();
         let rows = self.config.batch_size;
         let mut previous_deter = batch.initial_deter.clone();
@@ -1215,6 +1220,7 @@ impl DreamerCore {
                 &self.world_observe_batch,
                 &mut [(0, &mut deter), (1, &mut logits)],
             );
+            let stage = Instant::now();
             let stoch = sample_latents(
                 &logits,
                 rows,
@@ -1223,6 +1229,7 @@ impl DreamerCore {
                 self.config.unimix,
                 &mut self.rngs.train_posterior,
             );
+            timing.posterior_sample_seconds += stage.elapsed().as_secs_f64();
             previous_deter = deter.clone();
             previous_stoch = stoch.clone();
             deters.push(deter);
@@ -1478,8 +1485,10 @@ impl DreamerCore {
         &mut self,
         batch: &SequenceBatch,
         posterior: &PosteriorBatch,
-        inputs: &mut InputWriteTiming,
+        timing: &mut LearnTiming,
     ) -> BehaviorTrainingBatch {
+        let inputs = &mut timing.imagination_inputs;
+        let stage = Instant::now();
         let size = self.config.network();
         let starts = self.config.batch_size * self.config.batch_length;
         let horizon = self.config.imagination_length;
@@ -1491,9 +1500,12 @@ impl DreamerCore {
         let mut continuations = Vec::with_capacity(horizon + 1);
         let mut values = Vec::with_capacity(horizon + 1);
         let mut slow_values = Vec::with_capacity(horizon + 1);
+        timing.imagination_feature_seconds += stage.elapsed().as_secs_f64();
 
         for time in 0..=horizon {
+            let stage = Instant::now();
             let state_feature = join_features(&deter, &stoch, starts, &self.config);
+            timing.imagination_feature_seconds += stage.elapsed().as_secs_f64();
             inputs.set_input(&mut self.behavior_online, "feature", &state_feature);
             self.behavior_online.step();
             let mut actor_logits = vec![0.0; starts * self.config.action_count];
@@ -1516,9 +1528,11 @@ impl DreamerCore {
                 (&self.world_heads, 1, &mut continuation),
             ]);
 
+            let stage = Instant::now();
             let decoded_reward = decode_rows(&reward_logits, starts, &self.bins);
             let decoded_value = decode_rows(&value_logits, starts, &self.bins);
             let decoded_slow = decode_rows(&slow_logits, starts, &self.bins);
+            timing.imagination_decode_seconds += stage.elapsed().as_secs_f64();
             features.push(state_feature);
             rewards.push(decoded_reward);
             continuations.push(continuation);
@@ -1528,6 +1542,7 @@ impl DreamerCore {
             if time == horizon {
                 break;
             }
+            let stage = Instant::now();
             let mut action_indices = vec![0; starts];
             let mut action_one_hot = vec![0.0; starts * self.config.action_count];
             let mut probabilities = vec![0.0; self.config.action_count];
@@ -1540,6 +1555,7 @@ impl DreamerCore {
                 action_one_hot[row * self.config.action_count + action] = 1.0;
             }
             actions.push(action_indices);
+            timing.imagination_sample_seconds += stage.elapsed().as_secs_f64();
             inputs.set_input(&mut self.world_transition, "deter", &deter);
             inputs.set_input(&mut self.world_transition, "stoch", &stoch);
             inputs.set_input(&mut self.world_transition, "action", &action_one_hot);
@@ -1550,6 +1566,7 @@ impl DreamerCore {
                 &self.world_transition,
                 &mut [(0, &mut next_deter), (1, &mut prior_logits)],
             );
+            let stage = Instant::now();
             let next_stoch = sample_latents(
                 &prior_logits,
                 starts,
@@ -1558,10 +1575,12 @@ impl DreamerCore {
                 self.config.unimix,
                 &mut self.rngs.imagination,
             );
+            timing.imagination_sample_seconds += stage.elapsed().as_secs_f64();
             deter = next_deter;
             stoch = next_stoch;
         }
 
+        let stage = Instant::now();
         let mut returns = (0..horizon).map(|_| vec![0.0; starts]).collect::<Vec<_>>();
         let mut weights = (0..horizon).map(|_| vec![0.0; starts]).collect::<Vec<_>>();
         for start in 0..starts {
@@ -1703,7 +1722,7 @@ impl DreamerCore {
             }
         }
 
-        BehaviorTrainingBatch {
+        let result = BehaviorTrainingBatch {
             imagined_feature,
             action_target,
             imagined_weight,
@@ -1737,7 +1756,9 @@ impl DreamerCore {
                 replay_continuation_prediction,
                 &replay_continuation_target,
             ),
-        }
+        };
+        timing.imagination_targets_seconds += stage.elapsed().as_secs_f64();
+        result
     }
 
     fn train_behavior(&mut self, batch: &BehaviorTrainingBatch) -> BehaviorMetrics {
@@ -2886,6 +2907,20 @@ mod tests {
         assert!(fields.values().all(|value| value.as_f64() == Some(0.0)));
     }
 
+    #[test]
+    fn learner_host_timings_serialize_as_seconds() {
+        let value = serde_json::to_value(LearnTiming::default()).unwrap();
+        for name in [
+            "posterior_sample_seconds",
+            "imagination_feature_seconds",
+            "imagination_decode_seconds",
+            "imagination_sample_seconds",
+            "imagination_targets_seconds",
+        ] {
+            assert_eq!(value[name].as_f64(), Some(0.0));
+        }
+    }
+
     fn assert_learner_transfer_ledger(report: &LearnReport, config: &DreamerConfig) {
         let size = config.network();
         let starts = config.batch_size * config.batch_length;
@@ -2924,16 +2959,23 @@ mod tests {
                 * ((horizon + 1) * head_width + horizon * state_width)
                 * std::mem::size_of::<f32>()
         );
-        for (readback, inputs, parent) in [
+        for (readback, inputs, parent, host) in [
             (
                 &report.timing.posterior_readback,
                 &report.timing.posterior_inputs,
                 report.timing.posterior_seconds,
+                &[report.timing.posterior_sample_seconds][..],
             ),
             (
                 &report.timing.imagination_readback,
                 &report.timing.imagination_inputs,
                 report.timing.imagination_seconds,
+                &[
+                    report.timing.imagination_feature_seconds,
+                    report.timing.imagination_decode_seconds,
+                    report.timing.imagination_sample_seconds,
+                    report.timing.imagination_targets_seconds,
+                ][..],
             ),
         ] {
             let phases = [
@@ -2948,7 +2990,8 @@ mod tests {
                     .iter()
                     .all(|value| value.is_finite() && *value >= 0.0)
             );
-            assert!(phases.iter().sum::<f64>() <= parent);
+            assert!(host.iter().all(|value| value.is_finite() && *value > 0.0));
+            assert!(phases.iter().chain(host).sum::<f64>() <= parent);
         }
     }
 
@@ -3215,9 +3258,8 @@ mod tests {
             );
         }
         let mut batch = left.replay.sample(&config, &mut left.rngs.replay).unwrap();
-        let posterior = left.sample_posterior_batch(&batch, &mut InputWriteTiming::default());
-        let behavior =
-            left.imagine_and_target(&batch, &posterior, &mut InputWriteTiming::default());
+        let posterior = left.sample_posterior_batch(&batch, &mut LearnTiming::default());
+        let behavior = left.imagine_and_target(&batch, &posterior, &mut LearnTiming::default());
         let metrics = left.train_world(&batch, &posterior, &behavior);
         assert!(metrics.future_prediction_loss > 0.0);
         assert_eq!(metrics.reconstruction_loss, 0.0);
@@ -3233,9 +3275,8 @@ mod tests {
         for flags in batch.flags.iter_mut().flatten() {
             flags.is_first = true;
         }
-        let posterior = left.sample_posterior_batch(&batch, &mut InputWriteTiming::default());
-        let behavior =
-            left.imagine_and_target(&batch, &posterior, &mut InputWriteTiming::default());
+        let posterior = left.sample_posterior_batch(&batch, &mut LearnTiming::default());
+        let behavior = left.imagine_and_target(&batch, &posterior, &mut LearnTiming::default());
         let reset = left.train_world(&batch, &posterior, &behavior);
         assert_eq!(reset.future_prediction_loss, 0.0);
         assert_eq!(reset.total_loss, 0.0);
