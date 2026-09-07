@@ -18,10 +18,17 @@ frontend or introducing another learner.
 - Restore uses the checkpoint's validated frontend identity and actual encoder
   SHA-256. The runner rejects frontend overrides on restore. No new checkpoint
   format, encoding revision, objective, optimizer, sampling or replay semantics.
-- DINO ViT-S/16 retains its F32 weights, 12 layers, letterbox224, fixed JL64
+- DINO ViT-S/16 retains its F32 weight storage, 12 layers, letterbox224, fixed JL64
   projection and 2x2 pooling. Its input is `[N * 196, 768]`; dense transformer
   layers process `[N * 201, 384]`. The five learned prefix tokens are repeated
   per image, and full attention sees exactly one image's 201 tokens.
+- DINO preserves its existing `SessionOptions` / `CoopPolicy::Auto`: on a device
+  with only F16 cooperative tiles, eligible forward kernels may use reduced
+  input precision. LeVJEPA retains `CoopPolicy::Disabled`. F32 parameter storage
+  does not guarantee all-F32 arithmetic. Keep each frontend's policy fixed and
+  disclose this runtime distinction; the GPU parity gates must detect any
+  unacceptable shape-dependent numerical change. No new precision setting or
+  device-kernel measurement is introduced by this candidate.
 - One weight set serves all streams. The existing stream slicing/stacking
   helpers are shared with LeVJEPA, whose graph math is unchanged by inspection.
   There is no cross-image attention mask approximation or serial encoder pool.
