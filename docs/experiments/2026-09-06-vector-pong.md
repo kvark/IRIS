@@ -525,31 +525,43 @@ training ledger or a competence result.
 
 ## Seed 2 training progress
 
-The first 20k checkpoint completes 4,619 updates and 79,983 actual frames,
-with 18 natural games, no wins or timeouts, and mean completed return −20.6667.
-All 241 tensor checks pass. The byte-exact prefix ledger reconciles 20,026
-replay insertions/retained records, no evictions and zero debt. The unchanged
-full-run auditor still rejects this unfinished prefix for missing `run_end`;
-this is not a completed budget or frozen evaluation. The archive and reports
-are `seed2-020000-{checkpoint,inspection.json,prefix-accounting.json}`.
+Both completed checkpoints pass all 241 tensor checks, with no wins or timeouts:
 
-The warmed 10k–20k window takes 1,376.84 s for 2,500 updates and 39,996 actual
-frames: **7.263 aggregate actions/s, 0.4842× aggregate game time and about
-0.0605× per stream**. Its 1,376 GPU samples average 59.65% activity and 136.67 W,
-with VRAM fixed at 14,148 MiB and a maximum sample gap of 1.018 s. Learner calls
-take 1,069.90 s, observation processing 299.48 s and environment stepping 4.28 s.
-No candidate build or CPU-heavy test overlaps this window; read-only monitoring,
-the checkpoint save and uncontrolled other host activity remain. This is a
-health window, not a quiet-system speed comparison or calibrated idle trace.
-`seed2-throughput-10000-20000.json` binds the action and GPU-log prefixes.
+| Actions | Updates | Actual frames | Natural games | Mean completed return |
+| ---: | ---: | ---: | ---: | ---: |
+| 20,000 | 4,619 | 79,983 | 18 | −20.6667 |
+| 40,000 | 9,619 | 159,979 | 43 | −20.8372 |
 
-The final 15k–20k training window has four completed games, all losses with
-mean −21, and 0 positive / 140 negative point events. Its learner metrics and
-sample-weighted reward predictions are in `seed2-window-15000-20000.json`.
-Keep these early diagnostics separate from the declared final frozen result.
+The byte-exact prefix ledgers reconcile 20,026 and 40,051 replay
+insertions/retained records, respectively, with no evictions and zero debt.
+The unchanged full-run auditor still rejects each unfinished prefix for missing
+`run_end`; these are not completed budgets or frozen evaluations. Archives and
+reports use `seed2-{step:06d}-{checkpoint,inspection.json,prefix-accounting.json}`.
+
+Each warmed window below contains 2,500 updates and 39,996 actual frames:
+
+| Actions | Wall seconds | Aggregate actions/s | GPU activity | Power W |
+| --- | ---: | ---: | ---: | ---: |
+| 10k–20k | 1,376.84 | 7.263 | 59.65% | 136.67 |
+| 30k–40k | 1,386.38 | 7.213 | 59.65% | 136.03 |
+
+These are 0.4842× and 0.4808× aggregate game time, about 0.0605× and 0.0601×
+per stream. The 1,376/1,386 GPU samples keep VRAM fixed at 14,148 MiB, with
+maximum gaps of 1.018 s. Learner calls take 1,069.90/1,073.30 s, observation
+processing 299.48/305.40 s and environment stepping 4.28/4.31 s, respectively.
+No candidate build or CPU-heavy test overlaps either window; read-only
+monitoring, checkpoint saves and uncontrolled other host activity remain.
+These are health windows, not quiet-system speed comparisons or calibrated
+idle traces. `seed2-throughput-*.json` binds the action and GPU-log prefixes.
+
+The 15k–20k training window has four completed games, mean −21 and
+0 positive / 140 negative point events. The 35k–40k window has three completed
+games, mean −20.6667 and 4 positive / 98 negative point events. Neither has a
+win. Learner metrics and sample-weighted reward predictions are retained in
+`seed2-window-*.json`; keep these diagnostics separate from final frozen results.
 
 `seed2-10000-20000-runtime-budget.json` derives a conditional cost model from
-this same window: 0.42796 s per full learner call, including cleanup outside
+the 10k–20k window: 0.42796 s per full learner call, including cleanup outside
 the internal `LearnTiming` total, and 30.6938 ms of other work per aggregate
 action. Holding those costs fixed projects 0.7918× at R128 and 1.1605× at R64;
 these recipes have not been run. At unchanged R256, aggregate 1× needs learner
