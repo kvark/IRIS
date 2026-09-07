@@ -414,7 +414,7 @@ and historical report checks. The Nsight no-op tooling preflight and its
 12:18 UTC verification finished before this window.
 The 110k–120k window overlaps isolated batched-DINO/control CPU builds, Clippy,
 tests, documentation and historical trace reanalysis, approximately 13:10–13:34
-UTC. The candidate and its CPU-only proofs are in `runs/batched-dino-20260907/`;
+UTC. CPU-only candidate proofs are in `runs/batched-dino-20260907/`;
 no DINO candidate GPU execution occurred. The unchanged live native extension
 and runners remain pinned to the original LeVJEPA protocol.
 These are run-health observations, not quiet-system timing comparisons or

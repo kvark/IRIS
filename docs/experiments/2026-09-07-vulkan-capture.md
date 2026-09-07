@@ -68,9 +68,16 @@ CPU diagnostic overlaps seed-1 training; it is not a quiet-system benchmark.
 1. Confirm the pinned launcher and learner have exited. Do not attach to their
    processes or replace their extension. Verify the prebuilt parent/candidate
    hashes in `runs/readback-profile-20260907/builds.json` before execution.
+   The launcher intentionally exits 1 after writing a failed mastery result;
+   require complete training/evaluation budgets and valid artifacts, not exit 0
+   alone. A crash or an interrupted run is not a completed campaign.
 2. Complete the host/readback candidate's hardware tests and eight-update
    parent/candidate parity check. Preserve the existing
    [validation plan](https://github.com/kvark/kindle/blob/ec074a5/docs/experiments/2026-09-07-readback-profile.md).
+   The release test binary is prebuilt and pinned in
+   `runs/readback-profile-20260907/hardware-test-build.json`; its 78 CPU tests
+   pass, but all 17 hardware tests remain unrun. Use exact test filters and
+   require one passed test per selected invocation, not a zero-test success.
 3. Capture a separate eight-update **parent** `dreamer_canary` with the flags
    above, adapter `MEGANEURA_DEVICE_ID=0x2c02`, and arguments
    `12m 64 16 --learn --prediction-only --updates 8 --checkpoint PATH`.
