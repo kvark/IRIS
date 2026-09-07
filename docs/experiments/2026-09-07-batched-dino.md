@@ -80,6 +80,17 @@ The N=8 window contains 1,024 actions, 256 updates and 4,096 actual frames:
 0.491085 aggregate game-clock speed and 0.061386 per stream. This validates the
 reporter against old LeVJEPA evidence, not the candidate's GPU implementation.
 
+Release artifacts were subsequently built from `d1dbb054` between 13:40 and
+13:49 UTC. Release CPU validation passes the same 78 Kindle / 5 gym / 248
+Python tests; 19 hardware tests remain ignored. The locally installed release
+package is separate from both the active LeVJEPA environment and the preserved
+debug extension. `runs/batched-dino-20260907/release-builds.json` records the
+commands, source/toolchain identities, artifact hashes and CPU-overlap intervals.
+Its release extension SHA-256 is
+`c447c4225a3539c636e892568f13802fa9974a23bcdbd34ba450ba3572c8c35e`.
+The wheel is for local CPython 3.14/Linux use, not a portability or publication
+claim. Nothing in this release check executes GPU inference or learning.
+
 ## Hardware gates after the pinned queue
 
 Run every GPU test in its own process, on adapter `0x2c02`, only after the
@@ -107,7 +118,7 @@ without an exact test filter: the shared device must remain serialized.
    3,072-action pixel canary against the preserved temporal-batching control,
    requiring identical non-timing transition/update ledgers. A helper move or
    frontend dispatch must not silently change the primary experiment.
-5. Build a release extension in isolation, record source/binary hashes, then run
+5. Verify the isolated release artifacts against `release-builds.json`, then run
    short DINO N=1/2/4/8 pixel/learning canaries with complete accounting audits.
    Keep B16/T64/full BPTT/row16, R256, 18 actions and the published Atari wrapper;
    report useful aggregate/per-stream speed, memory and sustained update credit.
