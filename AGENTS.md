@@ -98,9 +98,11 @@ reliable learning.
   input from single-frame feature probes.
 - Distinguish video-encoder initialization, action-conditioned world pretraining
   and policy-skill transfer. Missing action/reward labels are not NOOP/zero.
-  The isolated `exp/world-pretraining` candidate is a native world-only building
-  block, not supported dataset training or transfer. Require content-verified
-  ingestion, compatible initialization and GPU/adaptation gates before adoption.
+  The isolated `exp/world-pretraining` candidate includes world-only updates and
+  strict fresh-runtime dynamics initialization, not supported dataset training or
+  transfer. Require content-verified ingestion and GPU/adaptation gates before
+  adoption. Initialized checkpoints require format-4 offline source lineage;
+  do not silently reinterpret them as ordinary format-3 checkpoints.
   Hold target titles out of source data and tuning; measure adaptation and
   forgetting. Retain the source policy when testing full-policy transfer, while
   declaring head, optimizer, normalizer, replay and recurrent-state resets.

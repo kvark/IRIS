@@ -345,7 +345,7 @@ seed-1 budget or competence result.
 
 ## Seed 1 training progress
 
-Every 20k checkpoint through 140k passes all 241 tensor checks: expected
+Every 20k checkpoint through 160k passes all 241 tensor checks: expected
 names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
 second moments. The seed-0 zero-update checkpoint is a structural reference
 only; no cross-seed parameter-delta claim is made. Each preserved byte-exact
@@ -354,9 +354,9 @@ checks. The full-run auditor still rejects each for missing `run_end`;
 these are unfinished training diagnostics, not completed budgets or mastery.
 Reports are `seed1-{step:06d}-{inspection,prefix-accounting}.json`.
 
-The latest checkpoint was archived at **2026-09-07 14:21:42 UTC**. At 140k it
-has 559,910 actual frames and 140,120 replay insertions. Replay retains its
-100,000-record capacity with exactly 40,120 FIFO evictions; the ledger validates
+The latest checkpoint was archived at **2026-09-07 15:07:28 UTC**. At 160k it
+has 639,900 actual frames and 160,126 replay insertions. Replay retains its
+100,000-record capacity with exactly 60,126 FIFO evictions; the ledger validates
 past the capacity boundary and training debt remains zero.
 
 | Aggregate actions | Updates | Natural games | Mean return | Wins | Last-100 future loss | Last-100 entropy |
@@ -368,6 +368,7 @@ past the capacity boundary and training debt remains zero.
 | 100,000 | 24,619 | 101 | −20.7426 | 0 | 57.96 | 0.5572 |
 | 120,000 | 29,619 | 107 | −20.6542 | 0 | 56.78 | 0.5670 |
 | 140,000 | 34,619 | 112 | −20.4643 | 0 | 60.00 | 0.5777 |
+| 160,000 | 39,619 | 118 | −20.0508 | 0 | 59.79 | 0.5191 |
 
 There are no timeouts or wins. The exact trailing training windows are:
 
@@ -380,6 +381,7 @@ There are no timeouts or wins. The exact trailing training windows are:
 | 95k–100k | 4 | −18.2500 | 2 / 50 | +0.51914 / −0.90889 / −0.00190 |
 | 115k–120k | 2 | −19.0000 | 4 / 38 | +0.67286 / −0.90965 / −0.00159 |
 | 135k–140k | 2 | −15.5000 | 20 / 27 | +0.58199 / −0.89366 / −0.00123 |
+| 155k–160k | 1 | −13.0000 | 17 / 24 | +0.68514 / −0.87578 / −0.00088 |
 
 Whole-game returns may include earlier play; point counts cover only window
 transitions, and replay samples are not limited to that interaction window.
@@ -402,8 +404,9 @@ per stream**, not super-real-time playing plus training.
 | 90k–100k | 1,379.25 | 7.250 | 59.29% | 136.32 |
 | 110k–120k | 1,385.31 | 7.219 | 59.83% | 135.86 |
 | 130k–140k | 1,386.32 | 7.213 | 59.18% | 135.66 |
+| 150k–160k | 1,382.23 | 7.235 | 58.89% | 135.95 |
 
-The latest learning/observation/environment times are 1,082.33/298.29/4.34 s;
+The latest learning/observation/environment times are 1,086.46/290.04/4.31 s;
 the measured bottleneck remains learning/perception, not environment stepping.
 Reports are `seed1-throughput-*.json`, including the CPU-work overlap notes.
 Two CPU-only profiler builds overlap 30k–40k; their start-to-observed-completion
@@ -423,6 +426,9 @@ and runners remain pinned to the original LeVJEPA protocol.
 The 130k–140k window overlaps CPU-only diagnostic-worker development and tests
 at approximately 14:03–14:18 UTC. The separate DINO/release and readback test
 binary builds and CPU validation finished around 13:51 UTC, before this window.
+The 150k–160k window overlaps CPU-only world-pretraining implementation, builds,
+tests, Clippy and source-graph checks at approximately 14:30–14:57 UTC, plus
+the subsequent initializer review/implementation beginning around 15:01 UTC.
 These are run-health observations, not quiet-system timing comparisons or
 demonstrated speed changes. No extra GPU job ran. The isolated parent/candidate
 profiler canaries are built, but hardware parity and profiler overhead remain

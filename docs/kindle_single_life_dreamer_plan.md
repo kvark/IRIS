@@ -344,11 +344,13 @@ policy/critic; its private world update is not a turnkey offline trainer.
 mind-games has gameplay datasets and other training stacks, but that does not
 mean the current Kindle world model is pretrained.
 
-An isolated [native world-only candidate](https://github.com/kvark/kindle/blob/a7995a015ed5d7201314d806cb3faee70b34c306/docs/experiments/2026-09-07-world-pretraining.md)
+An isolated [native world-only candidate](https://github.com/kvark/kindle/blob/8196bd5666e9a79302ffd2d510b82509da965434/docs/experiments/2026-09-07-world-pretraining.md)
 adds aligned feature-clip learning with explicit missing-label masks and no
-actor/critic sessions. It passes 86 Rust CPU tests; a verified dataset reader,
-compatible-world initialization and hardware/adaptation gates remain unfinished.
-It is not adopted and has not trained a dataset or changed the active campaign.
+actor/critic sessions, plus strict dynamics-only initialization of fresh serial
+or vector runtimes. It passes 91 Rust CPU tests, but remains unadopted: verified
+dataset ingestion, GPU checks and adaptation/retention comparisons are unfinished.
+Initialized checkpoints use format 4 to retain the offline source history;
+the active format-3 campaign and Python runners are unchanged.
 
 Separate the sources of prior knowledge:
 
@@ -372,7 +374,7 @@ supervision is absent; unknown reward is not zero reward. Keep pretraining
 counters separate from online interactions. Verify that intended world parameters
 change while policy/critic parameters do not.
 
-Add explicit compatible-weight initialization, distinct from full checkpoint
+Validate explicit compatible-weight initialization, distinct from full checkpoint
 restore. Preserve strict completeness checks on ordinary restores. Before target
 adaptation, clear replay/recurrence and reset incompatible heads, optimizers and
 normalizers according to the declared transfer arm. Compare fresh, encoder-only
