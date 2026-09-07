@@ -113,3 +113,10 @@ MEGANEURA_DEVICE_ID=0x2c02 python/.venv/bin/python \
 
 Order: fresh zero-update control, then training and frozen evaluation for
 seeds 0, 1 and 2. Passing the launch checks does not pass the mastery gate.
+
+The queue launched **2026-09-07 00:01:17 UTC**, from clean source commit
+`9ecc733a82c2d02394a15411b85d23f7b3c27da4`. Launcher SHA-256:
+`cc1f917d30bb547b8b4b5e1488108d3fbfc10d929700b5f756b3730ad16f9c12`.
+The manifest, GPU trace and launcher log are in the artifact directory above.
+The initial control has reached its first 1,000-action report with zero updates;
+no training-seed or mastery result is claimed at this handoff.

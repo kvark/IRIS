@@ -1,6 +1,6 @@
 # Kindle: one actor learning to play
 
-Updated 2026-09-06. This is the single project roadmap. Detailed measurements
+Updated 2026-09-07. This is the single project roadmap. Detailed measurements
 and commands live in the [kickoff report](experiments/2026-09-05-kickoff.md) and
 [self-learning report](experiments/2026-09-05-self-learning.md), not a second plan.
 Working rules are in [AGENTS.md](../AGENTS.md).
