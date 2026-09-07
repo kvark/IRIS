@@ -523,6 +523,31 @@ pins remain unchanged. `seed2-startup-verification.json` binds the header,
 first-update log prefix and live launcher-child identity; it is not a completed
 training ledger or a competence result.
 
+## Seed 2 training progress
+
+The first 20k checkpoint completes 4,619 updates and 79,983 actual frames,
+with 18 natural games, no wins or timeouts, and mean completed return −20.6667.
+All 241 tensor checks pass. The byte-exact prefix ledger reconciles 20,026
+replay insertions/retained records, no evictions and zero debt. The unchanged
+full-run auditor still rejects this unfinished prefix for missing `run_end`;
+this is not a completed budget or frozen evaluation. The archive and reports
+are `seed2-020000-{checkpoint,inspection.json,prefix-accounting.json}`.
+
+The warmed 10k–20k window takes 1,376.84 s for 2,500 updates and 39,996 actual
+frames: **7.263 aggregate actions/s, 0.4842× aggregate game time and about
+0.0605× per stream**. Its 1,376 GPU samples average 59.65% activity and 136.67 W,
+with VRAM fixed at 14,148 MiB and a maximum sample gap of 1.018 s. Learner calls
+take 1,069.90 s, observation processing 299.48 s and environment stepping 4.28 s.
+No candidate build or CPU-heavy test overlaps this window; read-only monitoring,
+the checkpoint save and uncontrolled other host activity remain. This is a
+health window, not a quiet-system speed comparison or calibrated idle trace.
+`seed2-throughput-10000-20000.json` binds the action and GPU-log prefixes.
+
+The final 15k–20k training window has four completed games, all losses with
+mean −21, and 0 positive / 140 negative point events. Its learner metrics and
+sample-weighted reward predictions are in `seed2-window-15000-20000.json`.
+Keep these early diagnostics separate from the declared final frozen result.
+
 ## Queued diagnostic handoff
 
 The bounded readback worker started at **2026-09-07 14:26:18 UTC**, PID 1852657
