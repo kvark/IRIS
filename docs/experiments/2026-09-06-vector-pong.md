@@ -5,11 +5,10 @@ a fresh vector-collection protocol, not continuation of the interrupted serial
 [mastery experiment](2026-09-06-levjepa-pong.md). Its stronger competence gate is
 retained. No vectorized Pong mastery result is available at declaration.
 
-Status 2026-09-07: seed 0 completes training and final frozen evaluation, but
-fails the predeclared mastery gate. It wins 18/18 completed frozen games with
-mean return +10.2778. Seed 1 completes its 200k-action training budget and is
-under final frozen evaluation; seed 2 has not started. Remaining-seed results
-are unfinished.
+Status 2026-09-07: seeds 0 and 1 complete training and final frozen evaluation;
+both fail the predeclared mastery gate. Their frozen means/wins are +10.2778
+with 18/18 wins and +0.5 with 7/12 wins, respectively. Seed 2 is training; the
+three-seed campaign remains unfinished.
 
 ## Fixed protocol
 
@@ -484,6 +483,45 @@ and frozen startup only: it explicitly says evaluation is incomplete and mastery
 has not been evaluated. The recipe, final checkpoint and frozen budget remain
 unchanged. The all-seed mastery gate already fails on seed 0; finish the declared
 evaluations to measure variation rather than selecting checkpoints or thresholds.
+
+## Seed 1 final frozen result: mastery gate failed
+
+The launcher verified the complete evaluation at **2026-09-07 17:42:04 UTC**:
+75,000 sampled actions, 299,984 actual frames and zero learner updates.
+All 12 completed games ended naturally, with **7 wins and mean return +0.5**.
+There are no timeouts. The unfinished tail has 309 actions and return 0;
+it does not count as a completed game or win. The matched zero-update control
+has mean return −20.4545.
+
+| Predeclared criterion | Required | Seed 1 | Result |
+| --- | ---: | ---: | --- |
+| Natural completed games | ≥20 | 12 | Fail |
+| Mean return over all completed games | ≥+15 | +0.5 | Fail |
+| Natural wins / all completed games | ≥90% | 7/12 = 58.33% | Fail |
+
+The complete accounting/protocol/checkpoint audits pass. The final save,
+rolling and archived checkpoints, and frozen restore identities still match,
+including the same 241 tensors inspected after training. Source, encoder,
+recipe and action identities match the seed-0/control references. All 240
+positive and 234 negative point events reconcile with completed returns and
+the unfinished tail. `seed1-final-frozen-audit.json` retains these checks and
+all episode records; `seed1-eval.accounting.json` is the launcher's budget audit.
+The closed evaluation log SHA-256 is
+`a41bae482c8e54c97f37c162b3d9ef8de90bdb116875fcb7f3d5e5ba36dd9d66`.
+
+Frozen execution takes 3,664.55 s plus 66.80 s construction: 20.466 actions/s
+and 1.3644× the game clock. This is not playing-plus-training throughput.
+The poorer final result than seed 0 reinforces the need to diagnose learned
+belief and imagined reward/action predictions before scaling the recipe.
+No endpoint, budget or mastery threshold changes as a result.
+
+Seed 2 training started at **2026-09-07 17:42:04 UTC**, PID 1906792, with the
+unchanged eight-stream recipe. Its header at **17:43:11 UTC** has seed 2, fresh
+zero counters, no restore and the declared independent environment seeds.
+The first scheduled update is step 1 at action 1,528. All 17 campaign/diagnostic
+pins remain unchanged. `seed2-startup-verification.json` binds the header,
+first-update log prefix and live launcher-child identity; it is not a completed
+training ledger or a competence result.
 
 ## Queued diagnostic handoff
 

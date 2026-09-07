@@ -37,18 +37,18 @@ for gameplay progress or a reason to split the agent.
 ## Architecture: measured stepping stone versus target
 
 The original frozen competence controls use DINOv3 ViT-S/16. Native LeVJEPA
-now also wins under frozen evaluation: seed 0's final 200k-action model wins
-18/18 completed games with mean return +10.2778 in 75k sampled actions and
-zero updates. It nevertheless **fails the declared mastery gate**, which
-requires at least 20 natural games and mean return ≥+15 as well as ≥90% wins.
-The remaining seeds in the [vector experiment](experiments/2026-09-06-vector-pong.md)
-are unfinished; this recipe cannot pass the all-seeds gate after seed 0's failure.
+now also wins under frozen evaluation, but **both completed seeds fail the
+declared mastery gate**: at least 20 natural games, mean return ≥+15 and ≥90%
+wins. Each evaluates its final 200k-action model for 75k sampled actions with
+zero updates; the results below show substantial seed variation. Seed 2 in the
+[vector experiment](experiments/2026-09-06-vector-pong.md) is running, but this
+recipe cannot pass the all-seeds gate after the completed failures.
 Numerical parity and useful learned behavior are demonstrated, not consistent
 mastery or a pretrained action-conditioned world model.
 
 | Part | Running implementation | Target and missing work |
 | --- | --- | --- |
-| Perception | DINOv3 control; native LeVJEPA with one completed frozen seed, both projected/pooled to 7×7×64 | Finish seed-variation measurement, resolve the failed mastery gate and test Atari breadth; reduce runtime cost |
+| Perception | DINOv3 control; native LeVJEPA with two completed frozen seeds, both frontends projected/pooled to 7×7×64 | Finish seed-variation measurement, resolve the failed mastery gate and test Atari breadth; reduce runtime cost |
 | World model | Categorical Dreamer RSSM; causal feature prediction, reward, continuation, balanced KL and replay value | Retain this learning/control baseline; bootstrap compatible dynamics from other games |
 | Behavior | Imagined categorical actor and two-hot critic, trained from the agent's own rewarded actions | Retain behavior across compatible games; measure adaptation and forgetting |
 | Runtime | Serial control and native vectorized LeVJEPA/RSSM/policy inference; one shared learner | Reduce learner/perception cost and attribute GPU underutilization; retain trustworthy per-stream clocks and recovery |
@@ -114,12 +114,17 @@ at action 91,684, versus 44,075 for seed 0. Thus learning and winning are achiev
 consistent mastery, superiority to reconstruction and broad reliability are not.
 Preserve this variation while moving on; Pong remains a cheap regression anchor.
 
-The new native LeVJEPA vector recipe has a stronger, separately declared gate.
-Its first final frozen seed wins all 18 completed games but misses both the
-20-game minimum and +15 mean-return threshold. Keep the +10.2778 result and
-its unfinished −4 tail visible; do not extend the evaluation or lower the bar
-after seeing it. Complete the other two seeds to measure reliability before
-choosing a bounded follow-up. This is learned gameplay, not a passed mastery claim.
+The new native LeVJEPA vector recipe has a stronger, separately declared gate:
+
+| Seed | Frozen mean / natural wins | Mastery result |
+| --- | ---: | --- |
+| 0 | +10.2778 / 18 of 18 | Fails game count and mean return |
+| 1 | +0.5 / 7 of 12 | Fails game count, mean return and win fraction |
+
+Neither evaluation has timeouts. Unfinished tails are −4 over 5,408 actions
+and 0 over 309 actions, respectively. Do not extend the evaluation or lower
+the bar after seeing it. Complete seed 2 to measure reliability before choosing
+a bounded follow-up. This is learned gameplay, not a passed mastery claim.
 
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction
@@ -303,7 +308,8 @@ the no-time-control requirement.
 ### First: resolve the frontend's gameplay and runtime gates
 
 Native LeVJEPA inference, numerical parity and causal streaming checks are
-implemented; its first final frozen Pong seed wins but fails the mastery gate. The
+implemented; both completed frozen Pong seeds win games but fail the mastery
+gate. The
 [released model card](https://huggingface.co/galilai-group/LeVJEPA-VideoMix-Large)
 describes a 303.1M-parameter ViT-L/16 trained on 16-frame clips, with block-causal
 attention. It is much larger than today's ViT-S and cannot be assumed faster or
