@@ -37,12 +37,13 @@ for gameplay progress or a reason to split the agent.
 ## Architecture: measured stepping stone versus target
 
 The completed frozen competence controls still use DINOv3 ViT-S/16. Native
-LeVJEPA passes numerical parity and training/restore checks, and the ongoing
-[vector experiment](experiments/2026-09-06-vector-pong.md) now records natural
-Pong wins from the agent's own actions. These are live-training results from
-one evolving policy, not independent-seed or frozen mastery. The predeclared
-three-seed final frozen gate remains open. No pretrained action-conditioned
-world model is claimed yet.
+LeVJEPA passes numerical parity and training/restore checks. The ongoing
+[vector experiment](experiments/2026-09-06-vector-pong.md) has completed its
+first 200k-action training seed with 13 natural Pong wins from the agent's own
+actions; frozen evaluation of the exact final checkpoint is running. Training
+wins from one evolving policy are not independent-seed or frozen mastery.
+The predeclared three-seed final frozen gate remains open. No pretrained
+action-conditioned world model is claimed yet.
 
 | Part | Running implementation | Target and missing work |
 | --- | --- | --- |
@@ -188,32 +189,25 @@ about 0.48× real time, not super-real-time. Frozen evaluation is about 10.9×.
 GridWorld has no declared real-time clock, so its actions/s alone is not a
 speedup ratio.
 
-The much larger native LeVJEPA frontend adds roughly 47 ms per observation
-(growing with context). Its initial canary is slower still: around 0.35× in
-steady coupled learning, versus roughly 1.2× frozen. See the separate LeVJEPA
-experiment for construction costs, the cache-attention speedup and full-run
-results; do not transfer DINO throughput claims to the video encoder.
+The current native LeVJEPA run uses eight environments sharing one learner,
+batched live inference, temporal replay encoding and batched non-recurrent
+heads. Full RSSM recurrence and BPTT are preserved and production-sized losses
+and gradients are checked. Seed 0 completes 200k aggregate actions and 49,619
+updates in 7.63 hours of execution, with zero training debt. Its steady windows
+measure 7.2–7.3 aggregate actions/s, about 0.48× the game clock in aggregate
+and 0.060× per stream. GPU activity is roughly 60%, with stable 13.82 GiB usage
+and the memory reserve intact. Environments take under 1% of wall time; the
+learner and perception remain the bottleneck, not CPU environment stepping.
 
-The serial LeVJEPA mastery queue was interrupted at the user's request to make
-vectorization the priority. The 60k-action checkpoint is retained, not a passed
-mastery gate. The first vector matrix measures 5.39 / 5.85 / 6.03 aggregate
-actions/s at N=1/2/4, all at R256 and B16×T64. Batched inference is implemented,
-but the learner still dominates wall time. Numerics-preserving CPU/readback
-cleanup raises N=2 to 6.50 actions/s with every learner report and executed
-transition unchanged. A separate B32 experiment reaches 8.12 actions/s at the
-same replay ratio but changes optimizer cadence; learning quality is not yet
-validated. These are throughput measurements, not mastery claims. See the
-[vectorization record](experiments/2026-09-06-vectorization.md) for the controls,
-numerical checks, GPU traces and subsequent optimizations.
-
-Temporal replay encoding and non-recurrent heads pass production-sized
-loss/gradient checks while preserving full RSSM recurrence. Real-game N=2/4/8
-throughput is now 7.10/7.14/7.37 actions/s, at the same B16/R256 recipe. The
-N=8 result is about 37% faster than the original N=1 control, but GPU activity
-is still 58.5% and aggregate training speed only 0.49× the game clock. The
-predeclared throughput rule selects N=8 for fresh vectorized Pong training.
-Its [protocol](experiments/2026-09-06-vector-pong.md) retains three independent
-seeds and final frozen mastery gates. LeVJEPA mastery is still open.
+This replaces the interrupted serial LeVJEPA campaign with a fresh, declared
+vector protocol, not a resumed single-stream trajectory. The fixed-B16
+N=2/4/8 throughput rule selected N=8 before observing game scores. A separate
+B32 experiment is faster but changes optimizer cadence; learning quality is
+not yet validated. See the [vectorization record](experiments/2026-09-06-vectorization.md)
+for implementation checks and rejected candidates, and the
+[live experiment](experiments/2026-09-06-vector-pong.md) for the fixed recipe,
+complete training accounting and final frozen gates. Neither batched inference
+nor GPU busy percentage establishes super-real-time training or mastery.
 
 Measure acceleration as simulated game seconds / wall seconds. Report cold
 construction separately and also include end-to-end run cost. Track actual
@@ -310,8 +304,8 @@ explicit DINO control; do not silently rename that fallback LeVJEPA.
 
 ### Then: bootstrap the world model, not just perception
 
-Kindle currently loads pretrained DINO weights and complete online checkpoints.
-It has no supported video-dataset ingestion or world-only pretraining workflow.
+Kindle loads pretrained DINO or LeVJEPA encoder weights and complete online
+checkpoints. It has no supported video-dataset ingestion or world-only pretraining workflow.
 DreamerCore::learn also constructs imagination/behavior targets and trains the
 policy/critic; its private world update is not a turnkey offline trainer.
 mind-games has gameplay datasets and other training stacks, but that does not
@@ -467,10 +461,10 @@ contamination before any larger swarm or shared-optimizer design.
 
 ## Immediate work and invariants
 
-Current work is LeVJEPA numerical/gameplay validation, stronger Pong mastery and
-serial playing-plus-training throughput. Then broaden the Atari panel and add the
-world-only pretraining seam and current-Dreamer mind-games adapter as their gates
-are reached. Do not start actor/learner separation, multi-lane collection or
+Current work is LeVJEPA gameplay validation, stronger Pong mastery and
+single-learner vectorized playing-plus-training throughput. Then broaden the
+Atari panel and add the world-only pretraining seam and current-Dreamer mind-games
+adapter as their gates are reached. Do not start actor/learner separation, independent learner swarms or
 another arbitrary 100-hour run as a substitute for stronger behavior.
 
 For every experiment retain source/model/encoder hashes, environment and data

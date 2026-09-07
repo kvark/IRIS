@@ -139,7 +139,7 @@ The read-only control and training-prefix comparisons are saved as
 directory. No production binary, runner, auditor or learning setting was changed
 after launch.
 
-## Intermediate checkpoints
+## Training checkpoints and final handoff
 
 The run-local `watch_checkpoints.py` watches the specific live launcher and
 preserves each completed save under `seed{seed}-{step:06d}-checkpoint/` in the
@@ -183,7 +183,8 @@ second moments. World, actor, value and slow-value parameters have changed
 from the matched zero-update control. Every archived file matches the completed
 save's fingerprint; the rolling training target remains untouched. All listed
 games are natural completions, with **no timeouts** and zero reported training
-debt. There are no wins through 160k, then five by 180k.
+debt. There are no wins through 160k, then five by 180k and thirteen at the
+declared final 200k checkpoint.
 
 | Aggregate actions | Updates | Games | Mean return | Future loss | Policy entropy |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -196,14 +197,31 @@ debt. There are no wins through 160k, then five by 180k.
 | 140,000 | 34,619 | 79 | −18.4684 | 66.05 | 0.8925 |
 | 160,000 | 39,619 | 84 | −17.9048 | 62.69 | 0.7390 |
 | 180,000 | 44,619 | 89 | −16.2472 | 57.32 | 0.6293 |
+| 200,000 | 49,619 | 97 | −13.7423 | 52.33 | 0.6038 |
 
 Loss and entropy are means over each prefix's last 100 updates; the first 100
 updates average 36,778.23 and 2.8903. These use changing training batches, not
 held-out data: decreasing model loss and a concentrated policy do not establish
 better control. Reports are `seed0-{step:06d}-inspection.json`; they do not
-replace full-run accounting or final frozen evaluation. The latest 180k
-inspection completed at **2026-09-07 07:11:50 UTC**; earlier timestamps remain
+replace full-run accounting or final frozen evaluation. The final 200k tensor
+inspection completed at **2026-09-07 07:57:37 UTC**; earlier timestamps remain
 in `checkpoint-watcher.log`.
+
+Seed 0 completed its declared training budget at **2026-09-07 07:57:32 UTC**:
+200,000 actions, 799,884 actual frames and 49,619 updates. The unchanged full
+ledger audit passes, including the real `budget_complete` final event; this is
+not the intermediate-prefix check. Its 200,105 replay insertions leave 100,000
+retained records after 100,105 FIFO evictions, with zero training debt.
+Execution took 27,472.16 s (7.63 hours), excluding construction.
+
+The launcher then started the declared N=1, 75,000-action frozen sampled
+evaluation. A separate read-only check confirms that its restore matches the
+final save event, rolling checkpoint and archived 200k checkpoint, including
+all tensor hashes, config, frontend and implementation identities. Reports are
+`seed0-train.accounting.json` and `seed0-final-training-verification.json`.
+The latter verifies completed training and evaluation startup only; the frozen
+budget and three-seed mastery gate are still open. Intermediate saves are not
+evaluated and the training recipe remains unchanged.
 
 Exact 5k-action training windows show learning progress, not mastery.
 Point counts cover all transitions in each window; whole-game returns cover
@@ -224,6 +242,7 @@ below are sample-weighted replay means for positive/negative/zero events.
 | 135k–140k | 1 | −9.00 | 19 / 23 | +0.85276 / −0.84386 / −0.00091 |
 | 155k–160k | 1 | −8.00 | 41 / 8 | +0.89375 / −0.87223 / −0.00053 |
 | 175k–180k | 0 | undefined | 44 / 4 | +0.94217 / −0.89381 / −0.00033 |
+| 195k–200k | 0 | undefined | 24 / 12 | +0.96728 / −0.91029 / −0.00022 |
 
 These are the vector rows of the saved `learning-context-{start}-{end}.json`
 reports and the later `seed0-window-{start}-{end}.json` reports, not frozen
@@ -237,6 +256,8 @@ All five games completed during 160k–180k are natural wins: returns
 They come from five collection streams sharing one evolving learner, not five
 independent training seeds. The 175k–180k point balance remains positive but
 contains no complete games. Neither result passes the final frozen mastery gate.
+The eight games completed during 180k–200k are also natural wins, with mean
+return +14.125. These remain training outcomes from the same evolving policy.
 
 The read-only `learning-context-{start}-{end}.json` reports compare exact
 5k-action windows with the interrupted serial LeVJEPA seed and historical DINO
@@ -258,7 +279,7 @@ always recorded LeVJEPA for the vector run; none were altered.
 
 Steady throughput windows each contain 10,000 aggregate actions and 2,500
 updates. GPU activity and power are means from the 1 Hz trace, with
-1,385/1,379/1,377/1,388/1,380/1,381/1,383/1,386/1,386 samples respectively:
+1,385/1,379/1,377/1,388/1,380/1,381/1,383/1,386/1,386/1,376 samples respectively:
 
 | Action window | Wall seconds | Aggregate actions/s | GPU activity | Power, W |
 | --- | ---: | ---: | ---: | ---: |
@@ -271,16 +292,17 @@ updates. GPU activity and power are means from the 1 Hz trace, with
 | 130k–140k | 1,382.93 | 7.231 | 59.45% | 137.60 |
 | 150k–160k | 1,386.43 | 7.213 | 59.88% | 137.24 |
 | 170k–180k | 1,386.57 | 7.212 | 59.80% | 136.91 |
+| 190k–200k | 1,376.46 | 7.265 | 59.06% | 137.59 |
 
-Peak memory remains 14,148 MiB (13.82 GiB) in all nine windows. Each spends
-1,069–1,075 s learning, 300–310 s handling observations and only 4.3 s stepping
+Peak memory remains 14,148 MiB (13.82 GiB) in all ten windows. Each spends
+1,069–1,075 s learning, 296–310 s handling observations and only 4.3 s stepping
 environments, with zero reported training debt. Aggregate simulation speed is
 about 0.48× the game clock, or 0.060× per stream. Memory is stable, but the GPU
 is not saturated and super-real-time training remains unachieved. CPU subprocess
 environments would not address the measured bottleneck.
 
 Throughput remains steady after replay reaches capacity. GPU memory is exactly
-14,148 MiB throughout each measured trace from 90k–100k through 170k–180k.
+14,148 MiB throughout each measured trace from 90k–100k through 190k–200k.
 Endpoint learner RSS at 100k/120k/140k/160k/180k is
 10.22/10.08/10.23/10.23/10.10 GiB, each with zero process swap; these are
 snapshots, not a CPU high-water trace. At 180k, the host has 17.25 GiB available.
