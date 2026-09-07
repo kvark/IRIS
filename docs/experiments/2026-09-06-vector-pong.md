@@ -307,6 +307,28 @@ Endpoint learner RSS at 100k/120k/140k/160k/180k is
 10.22/10.08/10.23/10.23/10.10 GiB, each with zero process swap; these are
 snapshots, not a CPU high-water trace. At 180k, the host has 17.25 GiB available.
 
+## Reconstructed gameplay footage
+
+The run-local `replay_first_game.py` replays the first completed N=1 game from
+the frozen evaluation and zero-update control on the CPU. It reuses the pinned
+wrapper and existing recorder, checks every reward/boundary/actual-frame count
+against the original action log, and never constructs or trains an agent.
+The videos are **reconstructions of logged actions**, not original capture or
+new evaluations. Original pixel bytes were not retained for direct comparison.
+
+- `seed0-eval-first-game-reconstructed.mp4`: +14, natural completion,
+  2,816 actions / 11,262 frames / 187.70 s of game time.
+- `untrained-first-game-reconstructed.mp4`: −21, natural completion,
+  792 actions / 3,168 frames / 52.80 s of game time.
+
+Both use nominal 60 Hz, not the original acting wall clock. Their `.mp4.json`
+manifests bind the exact source-log prefix, original frontend/checkpoint header,
+reconstructed raw frames, video, wrapper and recorder identities. Fifteen
+run-local tests validate provenance and reject divergent outcomes, counters,
+learning logs and incomplete games; the nine existing recorder tests also pass.
+The first games are used without score-based selection. A single video does
+not replace the declared complete frozen budget or three-seed mastery gate.
+
 ## Follow-up diagnosis if final gates fail
 
 Probe the trained recurrent belief and imagined reward/action predictions
