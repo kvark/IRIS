@@ -400,6 +400,19 @@ current experiment's executable. Its bounded validation plan is
 [`2026-09-07-readback-profile.md`](https://github.com/kvark/kindle/blob/ec074a5/docs/experiments/2026-09-07-readback-profile.md)
 on that branch. A blocked host is not necessarily an idle GPU.
 
+Before paired checkpoint comparison, run the maintained CPU report guard:
+`python/examples/audit_canary.py REPORTS --updates 8`. It requires eight complete
+fresh learner reports, finite scalar metrics, the canary's 65-record replay and
+1,024 reward samples per update, and bounded stage times. Add
+`--readback-profile` for the 12M/B16/T64/H15 instrumented candidate to require
+its exact transfer counts/bytes and bounded host/readback subphases. The guard
+does not prove process completion, executable provenance or tensor parity;
+those remain separate prerequisites/checks. Fifty-nine tests cover malformed,
+empty, truncated and ambiguous reports. Read-only checks also pass on three
+preserved eight-update canary logs; the report and helper hash are in
+`runs/readback-profile-20260907/report-validation-cpu.json`. New native profiler
+counters are still unmeasured. No original pinned verifier was changed.
+
 The timestamp contract was checked against pinned Meganeura `35a410c` and
 Blade `b208f3b`. Blade resolves pass durations when a command buffer is reused;
 the public timing data does not retain absolute GPU timestamps.

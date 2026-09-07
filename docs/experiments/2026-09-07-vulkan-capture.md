@@ -82,11 +82,13 @@ CPU diagnostic overlaps seed-1 training; it is not a quiet-system benchmark.
    workload** records for the expected process/device/queue. A zero exit code,
    API-only trace or empty no-op report is insufficient. Retain failed artifacts.
    Use the explicit matching importer if automatic discovery fails again.
-5. Require eight complete reports with learner steps 1 through 8. Compare every
-   non-timing report and named model/optimizer tensor with the untraced parent
-   control using `runs/kickoff-compare-checkpoints.py`. Equal report lengths
-   alone are insufficient. Record capture wall/memory overhead and repeat
-   alternating warmed controls before interpreting any speed difference.
+5. Require eight complete reports with learner steps 1 through 8 using
+   `python/examples/audit_canary.py REPORTS --updates 8` on both target stdout
+   files. Compare every non-timing report and named model/optimizer tensor with
+   the untraced parent control using `runs/kickoff-compare-checkpoints.py`.
+   Equal report lengths alone are insufficient. Record capture wall/memory
+   overhead and repeat alternating warmed controls before interpreting any
+   speed difference.
 6. Only then capture a short separately declared N=8 pixel run. The synthetic
    canary excludes LeVJEPA and real game execution, so it cannot validate
    end-to-end playing-plus-training cost or gameplay quality.
