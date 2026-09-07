@@ -260,6 +260,9 @@ timeline, not a calibrated GPU clock. Use those durations for workload cost,
 not the drawn gaps as evidence of GPU idleness.
 Check repeated host feature-buffer allocation/copying as well: minor faults
 and historical swapped bytes do not establish disk paging or its elapsed cost.
+A small [host-buffer reuse candidate](https://github.com/kvark/kindle/blob/6ef7ba6bf9293367ffdeaf7985dcc6a615fb505e/docs/experiments/2026-09-07-host-feature-reuse.md)
+reproduces the allocation-fault reduction in a CPU packing test; native parity
+and end-to-end timing gates remain pending. It is not adopted.
 The [bounded hardware/parity handoff](experiments/2026-09-06-vector-pong.md#queued-diagnostic-handoff)
 is queued behind the campaign and its checkpoint watcher. It checks three
 hardware tests and three alternating parent/candidate synthetic canary pairs;
