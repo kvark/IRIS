@@ -525,39 +525,41 @@ training ledger or a competence result.
 
 ## Seed 2 training progress
 
-Both completed checkpoints pass all 241 tensor checks, with no wins or timeouts:
+All completed checkpoints pass all 241 tensor checks, with no wins or timeouts:
 
 | Actions | Updates | Actual frames | Natural games | Mean completed return |
 | ---: | ---: | ---: | ---: | ---: |
 | 20,000 | 4,619 | 79,983 | 18 | −20.6667 |
 | 40,000 | 9,619 | 159,979 | 43 | −20.8372 |
+| 60,000 | 14,619 | 239,963 | 57 | −20.7544 |
 
-The byte-exact prefix ledgers reconcile 20,026 and 40,051 replay
-insertions/retained records, respectively, with no evictions and zero debt.
+The byte-exact prefix ledgers reconcile replay and update credit. The latest
+prefix retains all 60,065 inserted records, with no evictions and zero debt.
 The unchanged full-run auditor still rejects each unfinished prefix for missing
 `run_end`; these are not completed budgets or frozen evaluations. Archives and
 reports use `seed2-{step:06d}-{checkpoint,inspection.json,prefix-accounting.json}`.
 
 Each warmed window below contains 2,500 updates and 39,996 actual frames:
 
-| Actions | Wall seconds | Aggregate actions/s | GPU activity | Power W |
-| --- | ---: | ---: | ---: | ---: |
-| 10k–20k | 1,376.84 | 7.263 | 59.65% | 136.67 |
-| 30k–40k | 1,386.38 | 7.213 | 59.65% | 136.03 |
+| Actions | Wall seconds | Aggregate actions/s | Aggregate game/wall | GPU activity | Power W | Full learner-call seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10k–20k | 1,376.84 | 7.263 | 0.4842× | 59.65% | 136.67 | 1,069.90 |
+| 30k–40k | 1,386.38 | 7.213 | 0.4808× | 59.65% | 136.03 | 1,073.30 |
+| 50k–60k | 1,382.57 | 7.233 | 0.4821× | 59.56% | 136.48 | 1,072.10 |
 
-These are 0.4842× and 0.4808× aggregate game time, about 0.0605× and 0.0601×
-per stream. The 1,376/1,386 GPU samples keep VRAM fixed at 14,148 MiB, with
-maximum gaps of 1.018 s. Learner calls take 1,069.90/1,073.30 s, observation
-processing 299.48/305.40 s and environment stepping 4.28/4.31 s, respectively.
-No candidate build or CPU-heavy test overlaps either window; read-only
-monitoring, checkpoint saves and uncontrolled other host activity remain.
+Per-stream game/wall ratios remain about 0.0601×–0.0605×. All measured GPU
+windows keep VRAM fixed at 14,148 MiB, with maximum sample gaps of 1.018 s.
+The latest window contains 1,382 GPU samples; observation processing takes
+304.50 s and environment stepping 4.32 s. No candidate build or CPU-heavy
+test overlaps these windows; read-only monitoring, checkpoint saves and
+uncontrolled other host activity remain.
 These are health windows, not quiet-system speed comparisons or calibrated
 idle traces. `seed2-throughput-*.json` binds the action and GPU-log prefixes.
 
-The 15k–20k training window has four completed games, mean −21 and
-0 positive / 140 negative point events. The 35k–40k window has three completed
-games, mean −20.6667 and 4 positive / 98 negative point events. Neither has a
-win. Learner metrics and sample-weighted reward predictions are retained in
+The latest 55k–60k training window has one completed game, a −20 loss,
+and 13 positive / 55 negative point events. The preceding 15k–20k and 35k–40k
+windows have 0/140 and 4/98 point events, respectively. Learner metrics,
+completed-game results and sample-weighted reward predictions are retained in
 `seed2-window-*.json`; keep these diagnostics separate from final frozen results.
 
 `seed2-10000-20000-runtime-budget.json` derives a conditional cost model from
