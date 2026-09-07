@@ -158,25 +158,21 @@ and the result explicitly says `budget_complete: false`. A closing checkpoint
 or progress record verifies that the last vector round is settled. This is
 prefix-ledger evidence, not full-run or mastery acceptance.
 
-At 80k, these checks cover 19,619 updates, 319,946 actual frames and 80,070
-inserted replay records, with no eviction yet and zero debt. The snapshot is
-bound to the archived checkpoint fingerprints. The result is
-`seed0-080000-prefix-accounting.json`; 19 CPU tests cover exact copying,
-checkpoint/progress ordering, corrupted ledgers, incomplete rounds and FIFO
-eviction at three small capacities. At 100k, the same checks cover 24,619
-updates and 399,942 actual frames: 100,076 replay insertions, capacity/length
-100,000, 76 FIFO evictions in the ledger and zero debt. This verifies logged
-accounting, not the contents of sampled replay tensors. The corresponding
-`seed0-100000-prefix-accounting.json` still rejects full-run acceptance because
-the run is unfinished. Production runners, native code and auditors remain
-unchanged.
+The following prefix ledgers pass with zero debt. Each snapshot is bound to
+its archived checkpoint fingerprints; reports are
+`seed0-{step:06d}-prefix-accounting.json`. This verifies logged accounting,
+not the contents of sampled replay tensors or a completed training budget.
 
-The 120k prefix passes the same checks with 29,619 updates, 479,933 actual
-frames and 120,080 replay insertions: 20,080 FIFO evictions in the ledger,
-100,000 retained records and zero debt. Its byte-exact snapshot and accounting
-report are bound to the newly archived checkpoint, not the later rolling save.
-This extends the capacity-boundary check across 20k further executed actions;
-full-run acceptance and mastery remain unproven.
+| Aggregate actions | Actual frames | Replay insertions | Retained records | FIFO evictions |
+| ---: | ---: | ---: | ---: | ---: |
+| 80,000 | 319,946 | 80,070 | 80,070 | 0 |
+| 100,000 | 399,942 | 100,076 | 100,000 | 76 |
+| 120,000 | 479,933 | 120,080 | 100,000 | 20,080 |
+| 140,000 | 559,920 | 140,087 | 100,000 | 40,087 |
+
+Nineteen CPU tests cover exact copying, checkpoint/progress ordering, corrupted
+ledgers, incomplete rounds and FIFO eviction at three small capacities.
+Production runners, native code and auditors remain unchanged.
 
 All listed seed-0 prefixes pass read-only inspection: finite learner reports
 with continuous counters, logged checkpoint identity, all 241 tensor
@@ -195,41 +191,37 @@ training debt.
 | 80,000 | 19,619 | 62 | −20.0161 | 73.60 | 0.2984 |
 | 100,000 | 24,619 | 68 | −19.3676 | 68.43 | 0.3365 |
 | 120,000 | 29,619 | 72 | −19.2083 | 67.34 | 0.3734 |
+| 140,000 | 34,619 | 79 | −18.4684 | 66.05 | 0.8925 |
 
 Loss and entropy are means over each prefix's last 100 updates; the first 100
 updates average 36,778.23 and 2.8903. These use changing training batches, not
 held-out data: decreasing model loss and a concentrated policy do not establish
 better control. Reports are `seed0-{step:06d}-inspection.json`; they do not
-replace full-run accounting or final frozen evaluation. The watcher completed
-the 40k/60k/80k/100k/120k inspections at
-2026-09-07 01:49:13/02:34:59/03:21:30/04:07:15/04:53:46 UTC.
+replace full-run accounting or final frozen evaluation. The latest 140k
+inspection completed at **2026-09-07 05:39:33 UTC**; earlier timestamps remain
+in `checkpoint-watcher.log`.
 
-In the 35k–40k window, four completed games average −20.75, with five positive
-points and 94 negative points observed. By 55k–60k, four completed games average
-−19.25, with 14 positive points and 58 negative points. Sample-weighted replay
-reward predictions improve from +0.0313/−0.8795/−0.00295 to
-+0.3526/−0.8670/−0.00243 for positive/negative/zero events. This is modest
-progress, not reliable gameplay.
+Exact 5k-action training windows show modest improvement, not mastery.
+Point counts cover all transitions in each window; whole-game returns cover
+only games that finish there and may include play before the window. With no
+completed games, the return mean is undefined, not zero. Reward predictions
+below are sample-weighted replay means for positive/negative/zero events.
 
-The 65k–70k window has no completed games: its episode-return mean is undefined,
-not zero. It scores 11 points and concedes 47. In the 75k–80k window, two games
-finish with mean −17.5; 13 positive points and 33 negative points are observed.
-Its sample-weighted positive/negative/zero replay predictions average
-+0.6401/−0.8864/−0.00169. The corresponding `seed0-window-{start}-{end}.json`
-reports preserve these diagnostics without treating either window as frozen
-evaluation or an accepted endpoint.
+| Action window | Games | Mean return | Points scored / conceded | Replay predictions + / − / 0 |
+| --- | ---: | ---: | ---: | --- |
+| 15k–20k | 2 | −20.50 | 1 / 132 | −0.01408 / −0.29602 / −0.01647 |
+| 25k–30k | 8 | −21.00 | 0 / 136 | −0.01162 / −0.67741 / −0.00801 |
+| 35k–40k | 4 | −20.75 | 5 / 94 | +0.03132 / −0.87953 / −0.00295 |
+| 55k–60k | 4 | −19.25 | 14 / 58 | +0.35263 / −0.86698 / −0.00243 |
+| 65k–70k | 0 | undefined | 11 / 47 | +0.49399 / −0.87213 / −0.00210 |
+| 75k–80k | 2 | −17.50 | 13 / 33 | +0.64014 / −0.88638 / −0.00169 |
+| 95k–100k | 3 | −12.33 | 7 / 35 | +0.75056 / −0.89997 / −0.00126 |
+| 115k–120k | 0 | undefined | 12 / 26 | +0.80539 / −0.88602 / −0.00102 |
+| 135k–140k | 1 | −9.00 | 19 / 23 | +0.85276 / −0.84386 / −0.00091 |
 
-At 95k–100k, three completed games average −12.3333, with seven positive and
-35 negative points observed in that window. Sample-weighted replay predictions
-average +0.7506/−0.9000/−0.00126 for positive/negative/zero events. No game has
-been won through 100k; neither these training returns nor the model predictions
-establish mastery.
-
-The 115k–120k window has no completed games, so its mean episode return is
-undefined. It scores 12 points and concedes 26; sample-weighted replay reward
-predictions average +0.8054/−0.8860/−0.00102. All games completed through 120k
-remain natural losses. The corresponding saved window report uses the corrected
-LeVJEPA frontend identity.
+These are the vector rows of the saved `learning-context-{start}-{end}.json`
+reports and the later `seed0-window-{start}-{end}.json` reports, not frozen
+evaluations or accepted endpoints. No game has been won through 140k.
 
 The read-only `learning-context-{start}-{end}.json` reports compare exact
 5k-action windows with the interrupted serial LeVJEPA seed and historical DINO
@@ -251,7 +243,7 @@ always recorded LeVJEPA for the vector run; none were altered.
 
 Steady throughput windows each contain 10,000 aggregate actions and 2,500
 updates. GPU activity and power are means from the 1 Hz trace, with
-1,385/1,379/1,377/1,388/1,380/1,381 samples respectively:
+1,385/1,379/1,377/1,388/1,380/1,381/1,383 samples respectively:
 
 | Action window | Wall seconds | Aggregate actions/s | GPU activity | Power, W |
 | --- | ---: | ---: | ---: | ---: |
@@ -261,22 +253,20 @@ updates. GPU activity and power are means from the 1 Hz trace, with
 | 70k–80k | 1,388.15 | 7.204 | 59.66% | 137.87 |
 | 90k–100k | 1,380.52 | 7.244 | 59.69% | 138.01 |
 | 110k–120k | 1,381.38 | 7.239 | 59.66% | 137.80 |
+| 130k–140k | 1,382.93 | 7.231 | 59.45% | 137.60 |
 
-Peak memory remains 14,148 MiB (13.82 GiB) in all six windows. Each spends
+Peak memory remains 14,148 MiB (13.82 GiB) in all seven windows. Each spends
 1,069–1,075 s learning, 300–310 s handling observations and only 4.3 s stepping
 environments, with zero reported training debt. Aggregate simulation speed is
 about 0.48× the game clock, or 0.060× per stream. Memory is stable, but the GPU
 is not saturated and super-real-time training remains unachieved. CPU subprocess
 environments would not address the measured bottleneck.
 
-At the 100k save, learner RSS is about 10.22 GiB with zero process swap;
-the host has 17.23 GiB available and the workspace disk has 331 GiB free.
-The 90k–100k trace shows no throughput or GPU-memory regression near capacity;
-the fully post-eviction 110k–120k window remains at 7.239 actions/s and exactly
-14,148 MiB throughout its GPU trace. At the 120k inspection, learner RSS is
-10.08 GiB with zero process swap; host available memory is 17.36 GiB.
-Throughput and GPU memory are stable across this post-eviction window; endpoint
-CPU RSS has not grown relative to the 100k inspection.
+Throughput remains steady after replay reaches capacity. GPU memory is exactly
+14,148 MiB throughout the 90k–100k, 110k–120k and 130k–140k traces. Endpoint
+learner RSS at the 100k/120k/140k inspections is 10.22/10.08/10.23 GiB, each
+with zero process swap; these are snapshots, not a CPU high-water trace.
+At 140k, the host has 17.21 GiB available and the workspace disk has 331 GiB free.
 
 ## Follow-up diagnosis if final gates fail
 
