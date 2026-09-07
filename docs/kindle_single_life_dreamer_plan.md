@@ -344,6 +344,12 @@ policy/critic; its private world update is not a turnkey offline trainer.
 mind-games has gameplay datasets and other training stacks, but that does not
 mean the current Kindle world model is pretrained.
 
+An isolated [native world-only candidate](https://github.com/kvark/kindle/blob/a7995a015ed5d7201314d806cb3faee70b34c306/docs/experiments/2026-09-07-world-pretraining.md)
+adds aligned feature-clip learning with explicit missing-label masks and no
+actor/critic sessions. It passes 86 Rust CPU tests; a verified dataset reader,
+compatible-world initialization and hardware/adaptation gates remain unfinished.
+It is not adopted and has not trained a dataset or changed the active campaign.
+
 Separate the sources of prior knowledge:
 
 | Initialization | Data used | What transfers |
