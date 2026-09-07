@@ -250,7 +250,7 @@ Those measurements are in the kickoff report; do not repeat that investigation.
 
 The current [handoff inventory](experiments/2026-09-06-vectorization.md#remaining-handoffs-read-only-inventory)
 counts 95 explicit posterior/imagination readbacks per update. It is not a
-wait-time profile: instrument packing, transfers, sampling and GPU compute
+wait-time profile: instrument allocation/packing, transfers, sampling and GPU compute
 separately after the pinned queue. Prefer eliminating deterministic-state and
 feature copies before changing sampling/return arithmetic. Even removing both
 whole stages at zero cost would not reach aggregate real time at the current
@@ -258,6 +258,8 @@ recipe; world training and perception also need measured improvements.
 The backend's GPU trace places pass durations on a synthetic host-submission
 timeline, not a calibrated GPU clock. Use those durations for workload cost,
 not the drawn gaps as evidence of GPU idleness.
+Check repeated host feature-buffer allocation/copying as well: minor faults
+and historical swapped bytes do not establish disk paging or its elapsed cost.
 The [bounded hardware/parity handoff](experiments/2026-09-06-vector-pong.md#queued-diagnostic-handoff)
 is queued behind the campaign and its checkpoint watcher. It checks three
 hardware tests and three alternating parent/candidate synthetic canary pairs;
