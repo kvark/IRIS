@@ -345,7 +345,7 @@ seed-1 budget or competence result.
 
 ## Seed 1 training progress
 
-The 20k, 40k and 60k checkpoints pass all 241 tensor checks: expected
+The 20k, 40k, 60k and 80k checkpoints pass all 241 tensor checks: expected
 names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
 second moments. The seed-0 zero-update checkpoint is a structural reference
 only; no cross-seed parameter-delta claim is made. Each preserved byte-exact
@@ -354,14 +354,15 @@ checks. The full-run auditor still rejects each for missing `run_end`;
 these are unfinished training diagnostics, not completed budgets or mastery.
 Reports are `seed1-{step:06d}-{inspection,prefix-accounting}.json`.
 
-The latest checkpoint was archived at **2026-09-07 11:17:08 UTC**. At 60k it
-has 239,971 actual frames, 60,076 replay records, no eviction and zero debt.
+The latest checkpoint was archived at **2026-09-07 12:02:54 UTC**. At 80k it
+has 319,948 actual frames, 80,098 replay records, no eviction and zero debt.
 
 | Aggregate actions | Updates | Natural games | Mean return | Wins | Last-100 future loss | Last-100 entropy |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 20,000 | 4,619 | 22 | −20.8636 | 0 | 169.81 | 0.0985 |
 | 40,000 | 9,619 | 47 | −20.9149 | 0 | 75.44 | 0.8758 |
 | 60,000 | 14,619 | 68 | −20.8971 | 0 | 60.32 | 0.8431 |
+| 80,000 | 19,619 | 90 | −20.8889 | 0 | 53.21 | 0.7462 |
 
 There are no timeouts or wins. The exact trailing training windows are:
 
@@ -370,6 +371,7 @@ There are no timeouts or wins. The exact trailing training windows are:
 | 15k–20k | 7 | −20.8571 | 0 / 136 | −0.00455 / −0.25571 / −0.01858 |
 | 35k–40k | 7 | −20.8571 | 1 / 104 | +0.00265 / −0.88400 / −0.00306 |
 | 55k–60k | 4 | −21.0000 | 1 / 122 | +0.15597 / −0.93605 / −0.00159 |
+| 75k–80k | 4 | −20.5000 | 2 / 105 | +0.39083 / −0.91065 / −0.00223 |
 
 Whole-game returns may include earlier play; point counts cover only window
 transitions, and replay samples are not limited to that interaction window.
@@ -388,14 +390,17 @@ per stream**, not super-real-time playing plus training.
 | 10k–20k | 1,382.00 | 7.236 | 60.09% | 137.06 |
 | 30k–40k | 1,387.41 | 7.208 | 60.02% | 136.49 |
 | 50k–60k | 1,391.40 | 7.187 | 60.02% | 136.00 |
+| 70k–80k | 1,390.54 | 7.191 | 59.59% | 135.77 |
 
-The latest learning/observation/environment times are 1,078.51/304.77/4.31 s;
+The latest learning/observation/environment times are 1,078.05/304.92/4.31 s;
 the measured bottleneck remains learning/perception, not environment stepping.
 Reports are `seed1-throughput-*.json`, including the CPU-work overlap notes.
 Two CPU-only profiler builds overlap 30k–40k; their start-to-observed-completion
 intervals are retained in `runs/readback-profile-20260907/builds.json`.
 The 50k–60k window overlaps CPU-only accounting checks and the separate 0.45 s
 scripted Freeway fixture; the eight-title CPU preflight finished before it.
+The 70k–80k window overlaps read-only monitoring/source inspection and
+documentation work; independent host activity was not controlled.
 These are run-health observations, not quiet-system timing comparisons or
 demonstrated speed changes. No extra GPU job ran. The isolated parent/candidate
 profiler canaries are built, but hardware parity and profiler overhead remain
