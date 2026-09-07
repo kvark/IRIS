@@ -413,6 +413,11 @@ optimizer/clipping/accumulation and profiles only the final row microbatch's
 fixed inputs, not the complete learning update. Keep unexplained wall time
 unattributed until measured; actual cross-submission GPU gaps require retained
 GPU start/end timestamps or a suitable external timeline capture.
+The [external Vulkan capture preflight](2026-09-07-vulkan-capture.md) verifies
+the installed Nsight capture/import/export plumbing on a CPU no-op. It catches
+an automatic-import failure and confirms a direct matching-importer workaround
+without changing host security. Native GPU capture, parity and overhead remain
+separate post-queue gates.
 
 Read-only seed-1 host checks on September 7 found about 117 MiB in swap despite
 roughly 19 GiB available RAM. Over 30.07 s, the trainer had zero major faults,

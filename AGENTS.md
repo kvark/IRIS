@@ -62,6 +62,8 @@ reliable learning.
   parent stage totals, not additional elapsed time.
   GPU traces synthesized from host submission times are not calibrated
   GPU idle-gap measurements; distinguish pass durations from timeline placement.
+  External captures require usable imported output and expected GPU workload
+  records; a successful CLI exit alone is insufficient.
   Batch row-independent replay encoding and heads across time without batching
   away recurrence or introducing future inputs. Check production-sized losses,
   all parameter gradients and reset causality; composed losses need complete
