@@ -535,20 +535,21 @@ All completed checkpoints pass all 241 tensor checks, with no timeouts:
 | 80,000 | 19,619 | 319,953 | 66 | 0 | −20.3485 |
 | 100,000 | 24,619 | 399,934 | 75 | 5 | −17.9600 |
 | 120,000 | 29,619 | 479,916 | 87 | 17 | −13.0000 |
+| 140,000 | 34,619 | 559,896 | 97 | 27 | −9.6598 |
 
 The first training win is +1 at aggregate action 86,352 on stream 6
 (10,794 stream actions). The five winning returns through 100k are
 +1, +1, +17, +18 and +12, in their original order.
 
 The byte-exact prefix ledgers reconcile replay and update credit. The latest
-prefix has 120,095 inserted records, 100,000 retained and 20,095 FIFO evictions,
+prefix has 140,105 inserted records, 100,000 retained and 40,105 FIFO evictions,
 with zero training debt. Earlier checkpoints through 80k have no evictions.
 The unchanged full-run auditor still rejects each unfinished prefix for missing
 `run_end`; these are not completed budgets or frozen evaluations. Archives and
 reports use `seed2-{step:06d}-{checkpoint,inspection.json,prefix-accounting.json}`.
 
 Each warmed window below contains 2,500 updates. Game/wall ratios use actual
-emulator frames; the latest window contains 39,989.
+emulator frames; the latest window contains 39,992.
 
 | Actions | Wall seconds | Aggregate actions/s | Aggregate game/wall | GPU activity | Power W | Full learner-call seconds |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -558,19 +559,20 @@ emulator frames; the latest window contains 39,989.
 | 70k–80k | 1,376.67 | 7.264 | 0.4842× | 59.88% | 137.16 | 1,069.92 |
 | 90k–100k | 1,383.93 | 7.226 | 0.4816× | 59.93% | 136.94 | 1,071.66 |
 | 110k–120k | 1,386.50 | 7.212 | 0.4807× | 59.64% | 137.37 | 1,073.56 |
+| 130k–140k | 1,385.57 | 7.217 | 0.4811× | 59.82% | 137.55 | 1,072.26 |
 
 Per-stream game/wall ratios remain about 0.0601×–0.0605×. All measured GPU
 windows keep VRAM fixed at 14,148 MiB, with maximum sample gaps of 1.018 s.
-The latest window contains 1,386 GPU samples; observation processing takes
-306.07 s and environment stepping 4.32 s. No candidate build or CPU-heavy
+The latest window contains 1,385 GPU samples; observation processing takes
+307.03 s and environment stepping 4.32 s. No candidate build or CPU-heavy
 test overlaps these windows; read-only monitoring, checkpoint saves and
 uncontrolled other host activity remain.
 These are health windows, not quiet-system speed comparisons or calibrated
 idle traces. `seed2-throughput-*.json` binds the action and GPU-log prefixes.
 
-The 100k–120k training interval completes 12 games, all wins with mean return
-+18. Its latest 115k–120k window has four wins averaging +17.75 and 50 positive /
-9 negative point events. Learner metrics, completed-game results and
+The 120k–140k training interval completes ten games, all wins with mean return
++19.4. Its latest 135k–140k window has two wins averaging +19 and 53 positive /
+8 negative point events. Learner metrics, completed-game results and
 sample-weighted reward predictions for every sampled window are retained in
 `seed2-window-*.json`. These are training diagnostics, not final frozen results
 or a passed mastery gate.
