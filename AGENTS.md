@@ -29,6 +29,8 @@ reliable learning.
   it. Predicting the current frozen DINO features from the posterior is already
   the existing feature-reconstruction control.
   Retain the accepted DINOv3 plus causal-prediction Pong controls. Native
+  batched DINO is an explicit matched-control candidate, not a default frontend
+  switch; require GPU stream parity and a newly declared comparison before use.
   LeVJEPA now also wins under final frozen evaluation, but its first vectorized
   seed fails the predeclared mastery gate; remaining seeds are unfinished.
   Do not equate training wins or one frozen seed with three-seed mastery,

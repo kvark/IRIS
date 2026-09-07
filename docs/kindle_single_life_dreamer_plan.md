@@ -313,8 +313,10 @@ are representation diagnostics, not a trained-RSSM or gameplay comparison.
 2. Hold the causal world objective, actor settings, executable and collection
    protocol fixed in a bounded DINO/video comparison before broad Atari runs.
    Historical DINO versus the new vectorized LeVJEPA trajectory is not that control.
-   `VectorDreamerAgent` is currently LeVJEPA-only: a matched vector comparison
-   first needs a batched DINO control path with frontend/stream parity checks.
+   The active `VectorDreamerAgent` is LeVJEPA-only. An isolated
+   [batched DINO candidate](https://github.com/kvark/kindle/blob/11c313e212f06e579a0dda395d21cdbdc2706841/docs/experiments/2026-09-07-batched-dino.md)
+   passes CPU validation (83 Rust / 239 Python tests); frontend/stream GPU
+   parity, learning integration and timing remain gates before adoption.
    Keep LeVJEPA primary; this is a control, not a silent frontend fallback.
 3. Measure downstream learning and complete playing-plus-training cost, not
    only representation loss. Retain causal/reset/cache checks when changing the
