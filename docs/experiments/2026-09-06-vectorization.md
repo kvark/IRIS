@@ -379,15 +379,20 @@ gradient and end-to-end checks, not a free optimization. Preserve full recurrenc
 replay credit, independent streams and the memory reserve. No live experiment
 binary or setting was changed for this inspection.
 
-The first readback-boundary timer candidate is staged separately at `ed4a818`
+The input/readback timer candidate is staged separately at `69a9de9`
 on `exp/learner-readback-profile`, based on `73273df`. It counts nonempty
 readbacks and requested bytes and separates preparation, submission, completion
 wait and CPU output copying inside the existing posterior/imagination totals.
-It adds no GPU work or waits. CPU tests (76 Kindle, five gym), workspace/Python
+It also counts successful host input writes and their f32 payload and times
+the `set_input` calls, preserving their order relative to producer submission.
+At B16/T64/12M the expected input counts are 448 posterior and 109 imagination
+writes per update; measured counters must confirm the source inventory.
+Neither host write time nor requested bytes measures PCIe utilization.
+The candidate adds no GPU work or waits. CPU tests (77 Kindle, five gym), workspace/Python
 Clippy and formatting pass; hardware tests, numerical parity and instrumentation
 overhead remain unmeasured until the active queue exits. It is not part of the
 current experiment's executable. Its bounded validation plan is
-[`2026-09-07-readback-profile.md`](https://github.com/kvark/kindle/blob/ed4a818/docs/experiments/2026-09-07-readback-profile.md)
+[`2026-09-07-readback-profile.md`](https://github.com/kvark/kindle/blob/69a9de9/docs/experiments/2026-09-07-readback-profile.md)
 on that branch. A blocked host is not necessarily an idle GPU.
 
 ## Next measured changes
