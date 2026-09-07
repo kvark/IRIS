@@ -400,6 +400,20 @@ current experiment's executable. Its bounded validation plan is
 [`2026-09-07-readback-profile.md`](https://github.com/kvark/kindle/blob/ec074a5/docs/experiments/2026-09-07-readback-profile.md)
 on that branch. A blocked host is not necessarily an idle GPU.
 
+The timestamp contract was checked against pinned Meganeura `35a410c` and
+Blade `b208f3b`. Blade resolves pass durations when a command buffer is reused;
+the public timing data does not retain absolute GPU timestamps.
+Meganeura's `profiler::record_gpu_passes` lays these durations consecutively
+from a CPU submission offset. Its exported GPU track is therefore **synthetic
+placement, not a calibrated queue timeline**. Do not interpret drawn gaps or
+overlaps as measured GPU idleness or concurrency. Normal pass durations include
+barrier/dispatch cost; per-dispatch instrumentation changes that cost and needs
+its own overhead comparison. `DreamerCore::profile_sessions` also excludes
+optimizer/clipping/accumulation and profiles only the final row microbatch's
+fixed inputs, not the complete learning update. Keep unexplained wall time
+unattributed until measured; actual cross-submission GPU gaps require retained
+GPU start/end timestamps or a suitable external timeline capture.
+
 Read-only seed-1 host checks on September 7 found about 117 MiB in swap despite
 roughly 19 GiB available RAM. Over 30.07 s, the trainer had zero major faults,
 unchanged swap residency and no increase in memory-pressure stall totals.

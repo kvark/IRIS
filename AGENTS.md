@@ -60,6 +60,8 @@ reliable learning.
   Host readback waits include unfinished producer computation and transfers;
   do not relabel them GPU idle time. Substage timings are contained in their
   parent stage totals, not additional elapsed time.
+  GPU traces synthesized from host submission times are not calibrated
+  GPU idle-gap measurements; distinguish pass durations from timeline placement.
   Batch row-independent replay encoding and heads across time without batching
   away recurrence or introducing future inputs. Check production-sized losses,
   all parameter gradients and reset causality; composed losses need complete

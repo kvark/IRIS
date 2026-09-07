@@ -25,8 +25,8 @@ The order is:
 6. Only after strong single-actor GOG and transfer results, investigate swarms.
 
 Vectorized collection and batched live inference for one shared learner are
-implemented, explicitly requested after inspecting GPU utilization. Removing
-the measured learner bubbles remains the runtime priority. Independent
+implemented, explicitly requested after inspecting GPU utilization. Reducing
+measured learner/perception costs remains the runtime priority. Independent
 environments are collection streams, not independent
 learners or a swarm. Preserve each stream's causal history, belief, RNG and
 replay continuity; count all executed interactions and honor the training ratio.
@@ -51,7 +51,7 @@ mastery or a pretrained action-conditioned world model.
 | Perception | DINOv3 control; native LeVJEPA with one completed frozen seed, both projected/pooled to 7×7×64 | Finish seed-variation measurement, resolve the failed mastery gate and test Atari breadth; reduce runtime cost |
 | World model | Categorical Dreamer RSSM; causal feature prediction, reward, continuation, balanced KL and replay value | Retain this learning/control baseline; bootstrap compatible dynamics from other games |
 | Behavior | Imagined categorical actor and two-hot critic, trained from the agent's own rewarded actions | Retain behavior across compatible games; measure adaptation and forgetting |
-| Runtime | Serial control and native vectorized LeVJEPA/RSSM/policy inference; one shared learner | Eliminate measured learner bubbles; retain trustworthy per-stream clocks and recovery |
+| Runtime | Serial control and native vectorized LeVJEPA/RSSM/policy inference; one shared learner | Reduce learner/perception cost and attribute GPU underutilization; retain trustworthy per-stream clocks and recovery |
 
 The JEPA-inspired change that actually landed is prediction before observation:
 the predictive head reads the deterministic prior state, not the posterior that
@@ -255,6 +255,9 @@ separately after the pinned queue. Prefer eliminating deterministic-state and
 feature copies before changing sampling/return arithmetic. Even removing both
 whole stages at zero cost would not reach aggregate real time at the current
 recipe; world training and perception also need measured improvements.
+The backend's GPU trace places pass durations on a synthetic host-submission
+timeline, not a calibrated GPU clock. Use those durations for workload cost,
+not the drawn gaps as evidence of GPU idleness.
 
 Use one learner with batched live inference, not one full GPU model per game.
 Keep independent visual caches, beliefs, RNG streams and sequence replay. Sample
