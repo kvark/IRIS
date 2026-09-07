@@ -139,7 +139,15 @@ The read-only control and training-prefix comparisons are saved as
 directory. No production binary, runner, auditor or learning setting was changed
 after launch.
 
-## First intermediate checkpoint
+## Intermediate checkpoints
+
+The run-local `watch_checkpoints.py` watches the specific live launcher and
+preserves each completed save under `seed{seed}-{step:06d}-checkpoint/` in the
+artifact directory. It checks the logged fingerprints and runs the CPU-only
+tensor/report inspection. It never stops, restarts or restores training. The
+zero-update control is a structural reference for all seeds; parameter deltas
+are reported only for its matching seed 0. These model archives are diagnostic
+artifacts, not exact recovery of replay, RNGs or live environment state.
 
 Seed 0's 20,000-action save contains 4,619 updates, with zero reported training
 debt. Read-only inspection verifies every learner report through that save,
@@ -160,6 +168,23 @@ this intermediate result. The inspection is saved in
 `seed0-020000-inspection.json`; it does not replace the full-run accounting or
 final frozen mastery audit.
 
+The watcher preserved and inspected the **40,000-action** save at
+**2026-09-07 01:49:13 UTC**: 9,619 finite learner reports, all 241 saved tensors
+valid, 42 natural games, mean **−20.8333**, no wins or timeouts. The last 100
+updates average future-prediction loss 82.80 and policy entropy 0.6299. In the
+35k–40k window, four completed games average −20.75; five positive points and
+94 negative points were observed. Sample-weighted replay reward predictions
+average +0.0313/−0.8795/−0.00295 for positive/negative/zero events. Negative-event
+prediction is improving, but reliable gameplay is not demonstrated.
+
+`seed0-040000-inspection.json` records the complete intermediate inspection.
+The read-only `learning-context-{start}-{end}.json` reports compare exact
+5k-action windows with the interrupted serial LeVJEPA seed and historical DINO
+seeds. At 35k–40k, the historical DINO seeds average −8.67 and −17.67, versus
+−20.75 here. Different collection protocols and executables make this context,
+not a matched frontend comparison. Do not select an earlier checkpoint or
+change the live recipe in response to these intermediate scores.
+
 The steady 10,000–20,000-action window takes 1,385.86 s for 2,500 updates:
 **7.216 aggregate actions/s**, 0.902 per stream, and **0.481× aggregate game
 time** (0.060× per stream). Learning consumes 1,069.26 s, observation handling
@@ -168,3 +193,9 @@ samples in this window: mean GPU activity 60.22%, mean power 138.12 W and peak
 14,148 MiB (13.82 GiB). Memory is stable, but the GPU is not saturated and
 super-real-time training remains unachieved. CPU subprocess environments would
 not address the measured bottleneck.
+
+The 30,000–40,000-action window remains similar: 1,379.31 s, 2,500 updates,
+**7.250 aggregate actions/s**, mean GPU activity 59.62%, power 138.82 W and the
+same 14,148 MiB peak. Learning takes 1,071.22 s, observation handling 300.44 s,
+and environment stepping 4.31 s. There is no reported training debt or growing
+GPU-memory footprint in these windows.
