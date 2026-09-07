@@ -345,7 +345,7 @@ seed-1 budget or competence result.
 
 ## Seed 1 training progress
 
-The 20k, 40k, 60k and 80k checkpoints pass all 241 tensor checks: expected
+Every 20k checkpoint through 100k passes all 241 tensor checks: expected
 names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
 second moments. The seed-0 zero-update checkpoint is a structural reference
 only; no cross-seed parameter-delta claim is made. Each preserved byte-exact
@@ -354,8 +354,10 @@ checks. The full-run auditor still rejects each for missing `run_end`;
 these are unfinished training diagnostics, not completed budgets or mastery.
 Reports are `seed1-{step:06d}-{inspection,prefix-accounting}.json`.
 
-The latest checkpoint was archived at **2026-09-07 12:02:54 UTC**. At 80k it
-has 319,948 actual frames, 80,098 replay records, no eviction and zero debt.
+The latest checkpoint was archived at **2026-09-07 12:49:25 UTC**. At 100k it
+has 399,931 actual frames and 100,109 replay insertions. Replay has reached its
+100,000-record capacity with exactly 109 FIFO evictions; the ledger validates
+through that boundary and training debt remains zero.
 
 | Aggregate actions | Updates | Natural games | Mean return | Wins | Last-100 future loss | Last-100 entropy |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -363,6 +365,7 @@ has 319,948 actual frames, 80,098 replay records, no eviction and zero debt.
 | 40,000 | 9,619 | 47 | −20.9149 | 0 | 75.44 | 0.8758 |
 | 60,000 | 14,619 | 68 | −20.8971 | 0 | 60.32 | 0.8431 |
 | 80,000 | 19,619 | 90 | −20.8889 | 0 | 53.21 | 0.7462 |
+| 100,000 | 24,619 | 101 | −20.7426 | 0 | 57.96 | 0.5572 |
 
 There are no timeouts or wins. The exact trailing training windows are:
 
@@ -372,6 +375,7 @@ There are no timeouts or wins. The exact trailing training windows are:
 | 35k–40k | 7 | −20.8571 | 1 / 104 | +0.00265 / −0.88400 / −0.00306 |
 | 55k–60k | 4 | −21.0000 | 1 / 122 | +0.15597 / −0.93605 / −0.00159 |
 | 75k–80k | 4 | −20.5000 | 2 / 105 | +0.39083 / −0.91065 / −0.00223 |
+| 95k–100k | 4 | −18.2500 | 2 / 50 | +0.51914 / −0.90889 / −0.00190 |
 
 Whole-game returns may include earlier play; point counts cover only window
 transitions, and replay samples are not limited to that interaction window.
@@ -391,8 +395,9 @@ per stream**, not super-real-time playing plus training.
 | 30k–40k | 1,387.41 | 7.208 | 60.02% | 136.49 |
 | 50k–60k | 1,391.40 | 7.187 | 60.02% | 136.00 |
 | 70k–80k | 1,390.54 | 7.191 | 59.59% | 135.77 |
+| 90k–100k | 1,379.25 | 7.250 | 59.29% | 136.32 |
 
-The latest learning/observation/environment times are 1,078.05/304.92/4.31 s;
+The latest learning/observation/environment times are 1,077.48/294.98/4.32 s;
 the measured bottleneck remains learning/perception, not environment stepping.
 Reports are `seed1-throughput-*.json`, including the CPU-work overlap notes.
 Two CPU-only profiler builds overlap 30k–40k; their start-to-observed-completion
@@ -401,6 +406,9 @@ The 50k–60k window overlaps CPU-only accounting checks and the separate 0.45 s
 scripted Freeway fixture; the eight-title CPU preflight finished before it.
 The 70k–80k window overlaps read-only monitoring/source inspection and
 documentation work; independent host activity was not controlled.
+The 90k–100k window includes CPU-only canary report-guard development, tests
+and historical report checks. The Nsight no-op tooling preflight and its
+12:18 UTC verification finished before this window.
 These are run-health observations, not quiet-system timing comparisons or
 demonstrated speed changes. No extra GPU job ran. The isolated parent/candidate
 profiler canaries are built, but hardware parity and profiler overhead remain
