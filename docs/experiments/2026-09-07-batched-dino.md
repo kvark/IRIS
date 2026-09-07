@@ -40,7 +40,7 @@ On 2026-09-07, using the pinned Cargo dependencies:
   19 GPU tests are ignored, including the two new hardware gates below.
 - Workspace and Python `cargo clippy --all-targets --locked ... -- -D warnings`
   and both Rust formatting checks pass.
-- All 239 Python tests pass using a separately built **debug** extension from
+- All 248 Python tests pass using a separately built **debug** extension from
   this worktree. No installation or replacement in the active Python checkout.
 - Graph tests cover N=1/2/3/8, identical parameter names/shapes/dtypes, batched
   input/output dimensions, one-image attention dimensions and repeated RoPE.
@@ -54,8 +54,24 @@ On 2026-09-07, using the pinned Cargo dependencies:
 The debug extension SHA-256 is
 `1da97a3731940104786f5bab3a34ccec9f25f0c1edf38f4aeee728fc6170d642`.
 It was used only for CPU API checks, not gameplay, GPU parity or timing.
-Builds/checks overlapped seed 1 approximately 13:10–13:20 UTC; affected live
+Builds/checks overlapped seed 1 approximately 13:10–13:27 UTC; affected live
 throughput windows are not quiet-system performance comparisons.
+
+The short-run profiler now requires a complete interaction/replay/update ledger,
+consistent window clocks, monotone finite GPU samples with approximately 1 Hz
+coverage, and nonnegative stage deltas. It reports actual emulator frames and
+both aggregate/per-stream game-clock speed, retains frontend provenance and input
+hashes, and distinguishes the measurement-window memory peak from the peak over
+the entire per-job monitor trace, including construction. Both are selected-device
+memory, not exclusive per-process allocation. A zero process exit with an invalid
+ledger or trace is retained as a failed measurement, never a completed benchmark.
+
+Nine added CPU tests cover these reports and rejection paths. A CPU-only reread
+of the preserved `runs/vector-20260906-temporal/` N=2/4/8 logs and GPU traces passes
+the stronger checks and reproduces all compared historical metrics exactly.
+The N=8 window contains 1,024 actions, 256 updates and 4,096 actual frames:
+0.491085 aggregate game-clock speed and 0.061386 per stream. This validates the
+reporter against old LeVJEPA evidence, not the candidate's GPU implementation.
 
 ## Hardware gates after the pinned queue
 
