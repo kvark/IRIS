@@ -5,6 +5,10 @@ a fresh vector-collection protocol, not continuation of the interrupted serial
 [mastery experiment](2026-09-06-levjepa-pong.md). Its stronger competence gate is
 retained. No vectorized Pong mastery result is available at declaration.
 
+Status 2026-09-07: seed 0 completes training and final frozen evaluation, but
+fails the predeclared mastery gate. It wins 18/18 completed frozen games with
+mean return +10.2778. Seed 1 has started; remaining-seed results are unfinished.
+
 ## Fixed protocol
 
 - One native F32 LeVJEPA frontend, one shared Dreamer world model/policy/learner,
@@ -219,9 +223,9 @@ evaluation. A separate read-only check confirms that its restore matches the
 final save event, rolling checkpoint and archived 200k checkpoint, including
 all tensor hashes, config, frontend and implementation identities. Reports are
 `seed0-train.accounting.json` and `seed0-final-training-verification.json`.
-The latter verifies completed training and evaluation startup only; the frozen
-budget and three-seed mastery gate are still open. Intermediate saves are not
-evaluated and the training recipe remains unchanged.
+The latter verifies completed training and evaluation startup only; the
+completed frozen result below has its own full audit. Intermediate saves are
+not evaluated and the training recipe remains unchanged.
 
 Exact 5k-action training windows show learning progress, not mastery.
 Point counts cover all transitions in each window; whole-game returns cover
@@ -306,6 +310,38 @@ Throughput remains steady after replay reaches capacity. GPU memory is exactly
 Endpoint learner RSS at 100k/120k/140k/160k/180k is
 10.22/10.08/10.23/10.23/10.10 GiB, each with zero process swap; these are
 snapshots, not a CPU high-water trace. At 180k, the host has 17.25 GiB available.
+
+## Seed 0 final frozen result: mastery gate failed
+
+The final evaluation completed at **2026-09-07 08:59:39 UTC**: 75,000 sampled
+actions, 299,958 actual emulator frames and exactly zero learner updates.
+All 18 completed games are natural wins; there are no timeouts. Mean completed
+return is **+10.2778**, compared with −20.4545 for the matched zero-update control.
+An unfinished tail has 5,408 actions and return −4; it is reported separately,
+not counted as a completed game or win.
+
+| Predeclared criterion | Required | Seed 0 | Result |
+| --- | ---: | ---: | --- |
+| Natural completed games | ≥20 | 18 | Fail |
+| Mean return over all completed games | ≥+15 | +10.2778 | Fail |
+| Natural wins / all completed games | ≥90% | 18/18 = 100% | Pass |
+
+The unchanged accounting/protocol/checkpoint checks pass. The restored model
+matches the declared final save, archived checkpoint, config and implementation
+identities; all checkpoint tensors remain finite and fingerprint-valid.
+`seed0-final-frozen-audit.json` retains the complete seed/control audits,
+all episode records, criterion results and unfinished tail. This is a completed
+single-seed result, not an accepted three-seed campaign. Since every seed must
+pass, this recipe already fails the overall gate; the remaining runs measure
+seed variation without changing budgets or selecting different checkpoints.
+
+Frozen execution takes 3,660.12 s plus 65.66 s construction: 20.491 actions/s
+and 1.3659× the game clock. This is not playing-plus-training throughput.
+Seed 1 training started at **2026-09-07 08:59:39 UTC**, with fresh counters,
+the declared eight environment seeds, no restore and the unchanged recipe.
+Its first scheduled update occurs at action 1,528; the 2,000-action progress
+record has 119 updates and zero debt. These are startup checks, not a completed
+seed-1 budget or competence result.
 
 ## Reconstructed gameplay footage
 

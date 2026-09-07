@@ -36,18 +36,19 @@ for gameplay progress or a reason to split the agent.
 
 ## Architecture: measured stepping stone versus target
 
-The completed frozen competence controls still use DINOv3 ViT-S/16. Native
-LeVJEPA passes numerical parity and training/restore checks. The ongoing
-[vector experiment](experiments/2026-09-06-vector-pong.md) has completed its
-first 200k-action training seed with 13 natural Pong wins from the agent's own
-actions; frozen evaluation of the exact final checkpoint is running. Training
-wins from one evolving policy are not independent-seed or frozen mastery.
-The predeclared three-seed final frozen gate remains open. No pretrained
-action-conditioned world model is claimed yet.
+The original frozen competence controls use DINOv3 ViT-S/16. Native LeVJEPA
+now also wins under frozen evaluation: seed 0's final 200k-action model wins
+18/18 completed games with mean return +10.2778 in 75k sampled actions and
+zero updates. It nevertheless **fails the declared mastery gate**, which
+requires at least 20 natural games and mean return ≥+15 as well as ≥90% wins.
+The remaining seeds in the [vector experiment](experiments/2026-09-06-vector-pong.md)
+are unfinished; this recipe cannot pass the all-seeds gate after seed 0's failure.
+Numerical parity and useful learned behavior are demonstrated, not consistent
+mastery or a pretrained action-conditioned world model.
 
 | Part | Running implementation | Target and missing work |
 | --- | --- | --- |
-| Perception | DINOv3 control; native LeVJEPA in ongoing learning, both projected/pooled to 7×7×64 | Validate final frozen competence across seeds and Atari; reduce measured runtime cost |
+| Perception | DINOv3 control; native LeVJEPA with one completed frozen seed, both projected/pooled to 7×7×64 | Finish seed-variation measurement, resolve the failed mastery gate and test Atari breadth; reduce runtime cost |
 | World model | Categorical Dreamer RSSM; causal feature prediction, reward, continuation, balanced KL and replay value | Retain this learning/control baseline; bootstrap compatible dynamics from other games |
 | Behavior | Imagined categorical actor and two-hot critic, trained from the agent's own rewarded actions | Retain behavior across compatible games; measure adaptation and forgetting |
 | Runtime | Serial control and native vectorized LeVJEPA/RSSM/policy inference; one shared learner | Eliminate measured learner bubbles; retain trustworthy per-stream clocks and recovery |
@@ -97,8 +98,9 @@ explicit. Keep that distinction useful for frozen evaluation and diagnostics.
 Pong is already an Atari game. The next challenge is Atari breadth, not another
 proof that learning can happen in Pong.
 
-All rows below use the declared final 100k-action checkpoint, followed by 50k
-frozen sampled actions with zero updates. There is no checkpoint selection.
+The historical DINO rows below use the declared final 100k-action checkpoint,
+followed by 50k frozen sampled actions with zero updates. There is no checkpoint
+selection.
 
 | Objective / seed | Final training mean / games | Frozen mean / natural wins |
 | --- | ---: | ---: |
@@ -111,6 +113,13 @@ baseline is −20.3455. Seed 1 nevertheless loses most frozen games and first wi
 at action 91,684, versus 44,075 for seed 0. Thus learning and winning are achieved;
 consistent mastery, superiority to reconstruction and broad reliability are not.
 Preserve this variation while moving on; Pong remains a cheap regression anchor.
+
+The new native LeVJEPA vector recipe has a stronger, separately declared gate.
+Its first final frozen seed wins all 18 completed games but misses both the
+20-game minimum and +15 mean-return threshold. Keep the +10.2778 result and
+its unfinished −4 tail visible; do not extend the evaluation or lower the bar
+after seeing it. Complete the other two seeds to measure reliability before
+choosing a bounded follow-up. This is learned gameplay, not a passed mastery claim.
 
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction
@@ -169,7 +178,7 @@ Report the full seed distribution and which threshold each title passed.
 Not every Atari game has a final ending.
 
 Do not spend weeks on an unprofiled full sweep. At the present 3.8 hours per
-100k run, 26 games × 3 seeds would cost roughly 300 GPU hours before controls.
+100k aggregate actions, 26 games × 3 seeds would cost roughly 300 GPU hours before controls.
 Use the panel to resolve failure modes and improve serial throughput first.
 
 ## Runtime: uncapped, accelerated, and eventually free-running
@@ -271,29 +280,32 @@ the no-time-control requirement.
 
 ## LeVJEPA and video/world pretraining
 
-### First: complete the missing frontend experiment
+### First: resolve the frontend's gameplay and runtime gates
 
-LeVJEPA is implemented but has not yet passed the gameplay gate. The
+Native LeVJEPA inference, numerical parity and causal streaming checks are
+implemented; its first final frozen Pong seed wins but fails the mastery gate. The
 [released model card](https://huggingface.co/galilai-group/LeVJEPA-VideoMix-Large)
 describes a 303.1M-parameter ViT-L/16 trained on 16-frame clips, with block-causal
 attention. It is much larger than today's ViT-S and cannot be assumed faster or
 better for small game objects. Record its code/weight revision, license and
 measured memory/latency.
 
-1. Inspect the reference on bounded gameplay clips: temporal sampling, small
-   moving objects, action-sensitive prediction and reward-relevant probes.
-   Compare against DINO plus the trained RSSM, not only isolated DINO frames.
-2. Select current-time spatial tokens with bounded past context. The released
-   CLS token summarizes the whole clip; do not use it as a target for earlier
-   times. Check special-token attention, future-frame invariance, reset handling
-   and streaming/window equivalence.
-3. Implement native Meganeura/Blade inference and numerical parity for that
-   one candidate. Reuse compact 7×7×64 spatial targets initially if they preserve
-   useful cues; version encoder, temporal sampling, projection and features.
-   Any cache needs bounded memory and an explicit positional/window policy.
-4. Hold the causal world objective and actor settings fixed in a small matched
-   DINO/video comparison before broad Atari runs. Measure downstream learning
-   and total playing-plus-training cost, not only representation loss.
+The [LeVJEPA experiment](experiments/2026-09-06-levjepa-pong.md) records the
+pinned checkpoint, native reference parity, future-frame invariance and bounded
+16-arrival causal chunks. Current-time spatial tokens exclude the clip-level
+CLS output. Frozen-feature probes compare position and motion cues against
+DINO and compare the projected 14×14 grid with pooled 7×7×64 targets. These
+are representation diagnostics, not a trained-RSSM or gameplay comparison.
+
+1. Complete the declared training seeds and retain failed final endpoints.
+   Probe the trained recurrent belief and imagined reward/action predictions
+   before inferring that weak control requires more temporal input or a larger grid.
+2. Hold the causal world objective, actor settings, executable and collection
+   protocol fixed in a bounded DINO/video comparison before broad Atari runs.
+   Historical DINO versus the new vectorized LeVJEPA trajectory is not that control.
+3. Measure downstream learning and complete playing-plus-training cost, not
+   only representation loss. Retain causal/reset/cache checks when changing the
+   frontend runtime; version temporal sampling, projection and feature semantics.
 
 Freeze the encoder during initial online learning. Do not load a DINO world
 checkpoint or old latent replay into a different representation just because
@@ -305,7 +317,8 @@ explicit DINO control; do not silently rename that fallback LeVJEPA.
 ### Then: bootstrap the world model, not just perception
 
 Kindle loads pretrained DINO or LeVJEPA encoder weights and complete online
-checkpoints. It has no supported video-dataset ingestion or world-only pretraining workflow.
+checkpoints. It has no supported video-dataset ingestion or world-only
+pretraining workflow.
 DreamerCore::learn also constructs imagination/behavior targets and trains the
 policy/critic; its private world update is not a turnkey offline trainer.
 mind-games has gameplay datasets and other training stacks, but that does not
@@ -464,8 +477,9 @@ contamination before any larger swarm or shared-optimizer design.
 Current work is LeVJEPA gameplay validation, stronger Pong mastery and
 single-learner vectorized playing-plus-training throughput. Then broaden the
 Atari panel and add the world-only pretraining seam and current-Dreamer mind-games
-adapter as their gates are reached. Do not start actor/learner separation, independent learner swarms or
-another arbitrary 100-hour run as a substitute for stronger behavior.
+adapter as their gates are reached. Do not start actor/learner separation,
+independent learner swarms or another arbitrary 100-hour run as a substitute
+for stronger behavior.
 
 For every experiment retain source/model/encoder hashes, environment and data
 manifests, actual action/reward/boundary logs, all seeds, fixed final evaluations,
@@ -475,9 +489,10 @@ Apply mind-games' job isolation and environment contract when using its runtime.
 
 Preserve the recovered exp/dreamerv3-baseline-12m work: full-recurrence row
 microbatching, F32 gradient safeguards and strict score/provenance checks.
-Current anchors are Dreamer e3f02248693a79dc8b0ebd62c93683888ddaccfe,
+Historical DINO/control anchors are Dreamer e3f02248693a79dc8b0ebd62c93683888ddaccfe,
 Meganeura bd6be0882c53b94f65f164f88464cc6b24e9df4d and
 Blade b208f3b1f97196c2971436b5726e61e71b149c37.
 DINO snapshot 114c1379950215c8b35dfcd4e90a5c251dde0d32 has SHA-256
 4610ad75edef83e75afdebf162d148dc628045ea6cbb83d67d4708c709c4f91d.
-These are the completed runs' identities, not future LeVJEPA provenance.
+These identify the historical controls. Use the LeVJEPA/vector experiment
+manifests for the current source, executable, encoder and backend pins.
