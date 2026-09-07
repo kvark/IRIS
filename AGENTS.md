@@ -56,6 +56,9 @@ reliable learning.
   Judge useful throughput at the declared replay ratio, not GPU busy percentage
   alone. Retain the GPU memory safety margin; a larger batch needs both a timing
   win and a learning-quality comparison before becoming the new control.
+  Host readback waits include unfinished producer computation and transfers;
+  do not relabel them GPU idle time. Substage timings are contained in their
+  parent stage totals, not additional elapsed time.
   Batch row-independent replay encoding and heads across time without batching
   away recurrence or introducing future inputs. Check production-sized losses,
   all parameter gradients and reset causality; composed losses need complete
