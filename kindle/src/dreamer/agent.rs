@@ -2383,18 +2383,26 @@ mod tests {
             std::process::id(),
         ));
         fs::create_dir(&directory).unwrap();
-        fs::write(
-            directory.join(CHECKPOINT_METADATA),
-            serde_json::to_vec(&valid_checkpoint_metadata()).unwrap(),
-        )
-        .unwrap();
         let weights = directory.join("wrong-weights.safetensors");
         fs::write(&weights, b"not the pinned encoder").unwrap();
-        let error = DreamerAgent::restore(&directory, weights, None)
-            .err()
-            .expect("different encoder must be rejected");
+        for kind in [PerceptionKind::DinoV3, PerceptionKind::LeVJepa] {
+            let mut metadata = valid_checkpoint_metadata();
+            metadata.perception = Some(kind.identity("0".repeat(64)));
+            fs::write(
+                directory.join(CHECKPOINT_METADATA),
+                serde_json::to_vec(&metadata).unwrap(),
+            )
+            .unwrap();
+            let error = DreamerAgent::restore(&directory, &weights, None)
+                .err()
+                .expect("different encoder must be rejected");
+            assert!(error.to_string().contains("perception checkpoint SHA-256"));
+            let error = VectorDreamerAgent::restore(&directory, 2, &weights)
+                .err()
+                .expect("vector restore must verify either encoder before GPU setup");
+            assert!(error.to_string().contains("perception checkpoint SHA-256"));
+        }
         fs::remove_dir_all(directory).unwrap();
-        assert!(error.to_string().contains("perception checkpoint SHA-256"));
     }
 
     #[test]

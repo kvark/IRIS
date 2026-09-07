@@ -18,6 +18,7 @@
 //! 3. **LayerScale.** Each residual branch is scaled by a learned
 //!    per-channel vector before being added back.
 
+use super::{stack_streams, stream_rows};
 use meganeura::{Graph, NodeId};
 
 /// Architecture hyperparameters, mirroring HuggingFace's `DINOv3ViTConfig`.
@@ -281,6 +282,13 @@ fn layer_scale(g: &mut Graph, x: NodeId, gain: NodeId, tokens: usize, hidden: us
 /// are the registers, and the patch features follow in row-major grid
 /// order.
 pub fn build_encoder(g: &mut Graph, config: &Config) -> NodeId {
+    build_batched_encoder(g, config, 1)
+}
+
+/// Stream-major images: dense layers share one weight set, but each image
+/// attends only to its own prefix and patches. Returns `[streams * tokens, hidden]`.
+pub fn build_batched_encoder(g: &mut Graph, config: &Config, streams: usize) -> NodeId {
+    assert!(streams > 0, "DINOv3 needs at least one stream");
     assert!(
         !config.use_gated_mlp,
         "gated MLP (ViT-L and larger) is not implemented"
@@ -290,7 +298,7 @@ pub fn build_encoder(g: &mut Graph, config: &Config) -> NodeId {
     let eps = config.layer_norm_eps;
     let heads = config.num_attention_heads;
     let head_dim = config.head_dim();
-    let tokens = config.num_tokens();
+    let tokens = streams * config.num_tokens();
     let prefix = config.num_prefix_tokens();
 
     // Projection weights, in whichever storage the config asks for. Only
@@ -310,7 +318,10 @@ pub fn build_encoder(g: &mut Graph, config: &Config) -> NodeId {
     // patches turns it into a single matmul and keeps the (cheap,
     // memory-bound) patch extraction outside the graph, where a render
     // pass can do it straight from the camera texture later.
-    let patches = g.input("patches", &[config.num_patches(), config.patch_dim()]);
+    let patches = g.input(
+        "patches",
+        &[streams * config.num_patches(), config.patch_dim()],
+    );
     let patch_w = g.parameter(
         "embeddings.patch_embeddings.weight",
         &[config.patch_dim(), hidden],
@@ -325,10 +336,11 @@ pub fn build_encoder(g: &mut Graph, config: &Config) -> NodeId {
     // register_tokens nodes: the loader concatenates them, which costs one
     // memcpy offline and saves a concat per forward pass.
     let prefix_tokens = g.parameter("prefix_tokens", &[prefix, hidden]);
+    let prefix_tokens = stack_streams(g, &vec![prefix_tokens; streams], prefix * hidden);
     let mut x = g.concat(
         prefix_tokens,
         patch_embeds,
-        1,
+        streams as u32,
         (prefix * hidden) as u32,
         (config.num_patches() * hidden) as u32,
         1,
@@ -338,8 +350,8 @@ pub fn build_encoder(g: &mut Graph, config: &Config) -> NodeId {
     // RoPE tables are the same for every layer and for both Q and K, so
     // they become two constant buffers shared by all 24 uses.
     let (cos_data, sin_data) = rope_tables(config);
-    let cos = g.constant(cos_data, &[tokens, hidden]);
-    let sin = g.constant(sin_data, &[tokens, hidden]);
+    let cos = g.constant(cos_data.repeat(streams), &[tokens, hidden]);
+    let sin = g.constant(sin_data.repeat(streams), &[tokens, hidden]);
 
     for i in 0..config.num_hidden_layers {
         let p = format!("layer.{i}");
@@ -377,9 +389,24 @@ pub fn build_encoder(g: &mut Graph, config: &Config) -> NodeId {
         let q = apply_rope(g, q, cos, sin, tokens, heads, head_dim);
         let k = apply_rope(g, k, cos, sin, tokens, heads, head_dim);
 
-        // Non-causal: every token attends to every other. meganeura
-        // scales by head_dim^-0.5 internally, matching the reference.
-        let attn = g.full_attention(q, k, v, heads, heads, head_dim);
+        // Bidirectional within each image, never across streams.
+        let attn = if streams == 1 {
+            g.full_attention(q, k, v, heads, heads, head_dim)
+        } else {
+            let attention: Vec<_> = (0..streams)
+                .map(|stream| {
+                    let mut inputs = [q, k, v];
+                    for input in &mut inputs {
+                        let slice =
+                            stream_rows(g, *input, stream, streams, config.num_tokens() * hidden);
+                        *input = g.reshape(slice, &[config.num_tokens(), hidden]);
+                    }
+                    g.full_attention(inputs[0], inputs[1], inputs[2], heads, heads, head_dim)
+                })
+                .collect();
+            let attn = stack_streams(g, &attention, config.num_tokens() * hidden);
+            g.reshape(attn, &[tokens, hidden])
+        };
 
         let wo = weight(
             g,
@@ -516,5 +543,68 @@ mod tests {
         let mut g = Graph::new();
         let out = build_encoder(&mut g, &c);
         assert_eq!(g.node(out).ty.shape, vec![c.num_tokens(), c.hidden_size]);
+    }
+
+    #[test]
+    fn batched_graph_shares_parameters_and_keeps_attention_per_image() {
+        use meganeura::graph::Op;
+
+        let c = Config::vits16();
+        let parameters = |g: &Graph| {
+            g.nodes()
+                .iter()
+                .filter_map(|node| match &node.op {
+                    Op::Parameter { name } => {
+                        Some((name.clone(), node.ty.shape.clone(), node.ty.dtype))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut serial = Graph::new();
+        build_encoder(&mut serial, &c);
+        for streams in [1, 2, 3, 8] {
+            let mut g = Graph::new();
+            let out = build_batched_encoder(&mut g, &c, streams);
+            assert_eq!(
+                g.node(out).ty.shape,
+                [streams * c.num_tokens(), c.hidden_size]
+            );
+            assert_eq!(parameters(&g), parameters(&serial));
+            let input = g
+                .nodes()
+                .iter()
+                .find(|node| matches!(&node.op, Op::Input { name } if name == "patches"))
+                .unwrap();
+            assert_eq!(input.ty.shape, [streams * c.num_patches(), c.patch_dim()]);
+            let attentions: Vec<_> = g
+                .nodes()
+                .iter()
+                .filter(|node| matches!(node.op, Op::FullAttention { .. }))
+                .collect();
+            assert_eq!(attentions.len(), streams * c.num_hidden_layers);
+            for node in attentions {
+                assert_eq!(node.ty.shape, [c.num_tokens(), c.hidden_size]);
+                for &input in &node.inputs {
+                    assert_eq!(g.node(input).ty.shape, [c.num_tokens(), c.hidden_size]);
+                }
+            }
+            let (cos, sin) = rope_tables(&c);
+            let tables: Vec<_> = g
+                .nodes()
+                .iter()
+                .filter_map(|node| match &node.op {
+                    Op::Constant { data } => Some(data.as_slice()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(tables, [cos.repeat(streams), sin.repeat(streams)]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "at least one stream")]
+    fn empty_batch_is_not_a_valid_encoder() {
+        build_batched_encoder(&mut Graph::new(), &Config::vits16(), 0);
     }
 }

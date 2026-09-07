@@ -1,7 +1,6 @@
 //! Synchronous vector collection for one learner. No independent model replicas.
 
 use super::*;
-use crate::vision::levjepa::LeVJepaPerception;
 
 struct LiveStream {
     deter: Vec<f32>,
@@ -268,10 +267,10 @@ impl VectorCore {
     }
 }
 
-/// Multiple independent environments using one frozen LeVJEPA and Dreamer learner.
+/// Multiple independent environments using one frozen encoder and Dreamer learner.
 /// Dense perception, posterior and policy inference are batched on the GPU.
 pub struct VectorDreamerAgent {
-    perception: LeVJepaPerception,
+    perception: Perception,
     core: VectorCore,
 }
 
@@ -281,16 +280,26 @@ impl VectorDreamerAgent {
         streams: usize,
         encoder_checkpoint: impl AsRef<Path>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_perception(config, PerceptionKind::LeVJepa, streams, encoder_checkpoint)
+    }
+
+    pub fn with_perception(
+        config: DreamerConfig,
+        kind: PerceptionKind,
+        streams: usize,
+        encoder_checkpoint: impl AsRef<Path>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         config.check()?;
         check_capacity(&config, streams)?;
-        let identity = PerceptionKind::LeVJepa.identity(crate::vision::checkpoint_sha256(
+        let identity = kind.identity(crate::vision::checkpoint_sha256(
             encoder_checkpoint.as_ref(),
         )?);
         let gpu = Arc::new(crate::init_gpu_context()?);
-        let perception = LeVJepaPerception::load_batched(
-            encoder_checkpoint,
+        let perception = Perception::load_batched(
+            kind,
+            encoder_checkpoint.as_ref(),
             streams,
-            Some(Arc::clone(&gpu)),
+            Arc::clone(&gpu),
             None,
         )?;
         let mut learner = DreamerCore::with_gpu(config, gpu);
@@ -315,15 +324,13 @@ impl VectorDreamerAgent {
             .perception
             .as_ref()
             .ok_or("missing perception identity")?;
-        if identity.kind != PerceptionKind::LeVJepa {
-            return Err("vector perception requires LeVJEPA".into());
-        }
         identity.verify_file(encoder_checkpoint.as_ref())?;
         let gpu = Arc::new(crate::init_gpu_context()?);
-        let perception = LeVJepaPerception::load_batched(
-            encoder_checkpoint,
+        let perception = Perception::load_batched(
+            identity.kind,
+            encoder_checkpoint.as_ref(),
             streams,
-            Some(Arc::clone(&gpu)),
+            Arc::clone(&gpu),
             None,
         )?;
         let learner = DreamerCore::restore_with_gpu(checkpoint.as_ref(), gpu, metadata)?;
@@ -617,5 +624,117 @@ mod tests {
         assert!(check_capacity(&config, usize::MAX).is_err());
         config.replay_capacity += config.replay_context + config.batch_length - 1;
         assert!(check_capacity(&config, 2).is_ok());
+    }
+
+    #[test]
+    #[ignore = "requires GPU and pinned DINOv3 weights; full pixel-vector path and restore"]
+    fn dino_pixel_vector_matches_serial_and_restores_recorded_frontend() {
+        let weights = std::env::var_os("KINDLE_DINOV3_WEIGHTS").expect("set KINDLE_DINOV3_WEIGHTS");
+        assert_eq!(
+            crate::vision::checkpoint_sha256(Path::new(&weights)).unwrap(),
+            crate::vision::VITS16_CHECKPOINT_SHA256
+        );
+        let mut config = config();
+        config.train_ratio = 0.0;
+        let mut vector = VectorDreamerAgent::with_perception(
+            config.clone(),
+            PerceptionKind::DinoV3,
+            2,
+            &weights,
+        )
+        .unwrap();
+        let mut serial: Vec<_> = (0..2)
+            .map(|id| {
+                let mut agent = DreamerAgent::with_perception(
+                    config.clone(),
+                    PerceptionKind::DinoV3,
+                    &weights,
+                    None,
+                )
+                .unwrap();
+                agent.core.rngs = DreamerRngs::new(config.seed + id);
+                agent
+            })
+            .collect();
+        let frame = |id: usize, time: usize| {
+            RgbFrame::new(
+                64,
+                64,
+                (0..64 * 64 * 3)
+                    .map(|i| ((i * 37 + id * 71 + time * 13) % 251) as u8)
+                    .collect(),
+            )
+        };
+        vector.begin_episodes(&[(1, frame(1, 0)), (0, frame(0, 0))]);
+        for (id, agent) in serial.iter_mut().enumerate() {
+            agent.begin_episode(&frame(id, 0));
+            assert_close(
+                agent.core.latent_feature(),
+                &vector.core.streams[id].feature,
+            );
+        }
+        for time in 1..12 {
+            let actions = vector.act(ActionMode::Sample);
+            let mut arrivals = Vec::new();
+            for (id, agent) in serial.iter_mut().enumerate() {
+                assert_eq!(actions[id], agent.act(ActionMode::Sample, None));
+                let last = time % (3 + id) == 0;
+                let transition = Transition {
+                    frame: frame(id, time),
+                    reward: Reward {
+                        extrinsic: (time % 3) as f32 - 1.0,
+                        intrinsic: 0.0,
+                    },
+                    terminated: last && id == 0,
+                    truncated: last && id == 1,
+                };
+                agent.observe(&transition);
+                arrivals.push((id, transition));
+            }
+            arrivals.reverse();
+            vector.observe(&arrivals);
+            let mut resets = Vec::new();
+            for (id, agent) in serial.iter_mut().enumerate() {
+                assert_close(
+                    agent.core.latent_feature(),
+                    &vector.core.streams[id].feature,
+                );
+                if agent.core.needs_reset {
+                    agent.begin_episode(&frame(id, 100 + time));
+                    resets.push((id, frame(id, 100 + time)));
+                }
+            }
+            vector.begin_episodes(&resets);
+            for (id, agent) in serial.iter().enumerate() {
+                assert_close(
+                    agent.core.latent_feature(),
+                    &vector.core.streams[id].feature,
+                );
+            }
+            assert!(vector.learn_scheduled(usize::MAX).is_empty());
+            assert_eq!(vector.environment_step(), 2 * time as u64);
+            assert_eq!(vector.training_debt(), 0.0);
+        }
+        assert_eq!(
+            vector.provenance().perception.as_ref().unwrap().kind,
+            PerceptionKind::DinoV3
+        );
+        let checkpoint =
+            std::env::temp_dir().join(format!("kindle-dino-vector-test-{}", std::process::id()));
+        assert!(!checkpoint.exists());
+        vector.save_checkpoint(&checkpoint).unwrap();
+        drop(vector);
+        drop(serial);
+        let mut restored = VectorDreamerAgent::restore(&checkpoint, 2, &weights).unwrap();
+        assert_eq!(
+            restored.provenance().perception.as_ref().unwrap().kind,
+            PerceptionKind::DinoV3
+        );
+        assert_eq!(restored.environment_step(), 22);
+        assert_eq!(restored.learner_step(), 0);
+        assert_eq!(restored.replay_len(), 0);
+        restored.begin_episodes(&[(0, frame(0, 20)), (1, frame(1, 20))]);
+        assert_eq!(restored.act(ActionMode::Sample).len(), 2);
+        fs::remove_dir_all(checkpoint).unwrap();
     }
 }

@@ -49,12 +49,14 @@ def summarize(log, gpu_trace):
                 stage_seconds={k: final["stage_seconds"][k] - start["stage_seconds"][k] for k in final["stage_seconds"]},
                 construction_seconds=header["agent_construction_seconds"],
                 native_extension_sha256=header["native_extension_sha256"],
-                runner_sha256=header["runner_sha256"], config=header["config"])
+                runner_sha256=header["runner_sha256"], config=header["config"],
+                model_provenance=header["model_provenance"])
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("encoder_checkpoint")
+    parser.add_argument("--encoder", choices=("levjepa", "dinov3"), default="levjepa")
     parser.add_argument("directory", type=Path)
     parser.add_argument("--num-envs", nargs="+", type=int, default=[1, 2, 4])
     parser.add_argument("--batch-size", type=int, default=16)
@@ -78,6 +80,7 @@ def main():
         path = args.directory / f"n{count}"
         log, trace = path.with_suffix(".jsonl"), path.with_suffix(".gpu.csv")
         command = [sys.executable, str(runner), args.encoder_checkpoint,
+                   "--encoder", args.encoder,
                    "--num-envs", str(count), "--steps", str(args.steps),
                    "--batch-size", str(args.batch_size), "--output", str(log), "--report-every", "512"]
         if args.evaluate:
@@ -98,7 +101,7 @@ def main():
         results.append(result)
         with path.with_suffix(".summary.json").open("x") as output:
             json.dump(result, output, indent=2, allow_nan=False)
-        print(json.dumps({k: v for k, v in result.items() if k not in ("config", "stage_seconds")}), flush=True)
+        print(json.dumps({k: v for k, v in result.items() if k not in ("config", "stage_seconds", "model_provenance")}), flush=True)
     with (args.directory / "summary.json").open("x") as output:
         json.dump(results, output, indent=2, allow_nan=False)
     if any(result["status"] != "complete" for result in results):

@@ -212,12 +212,18 @@ separability, open-loop feature error against persistence/unrelated actions,
 actor/model agreement and critic calibration. Each example's `--help` describes
 the exact protocol.
 
-### Vectorized LeVJEPA collection
+### Vectorized collection
 
 `VectorAgent` shares one encoder and learner across independent Atari streams.
-LeVJEPA's dense layers and Dreamer's live posterior/policy are GPU-batched;
-visual caches, beliefs, RNGs and replay sequences remain separate. CPU emulator
-steps are synchronous: measured environment work is below 1% of wall time.
+LeVJEPA is the default; `--encoder dinov3` explicitly selects the image-encoder
+control. Both batch dense perception and live posterior/policy inference, while
+keeping attention, beliefs, RNGs and replay sequences separate. Only LeVJEPA
+has a temporal visual cache. CPU emulator steps are synchronous: environment
+work was below 1% of wall time in the measured LeVJEPA runs.
+
+The [batched DINO candidate](docs/experiments/2026-09-07-batched-dino.md) passes
+CPU validation but still needs GPU numerical parity and runtime measurements.
+It is not an adopted control or a change to the active LeVJEPA experiment.
 
 ```bash
 python python/examples/profile_atari_vector.py /models/levjepa/model.safetensors \
@@ -238,6 +244,9 @@ completed vector round and save when `--checkpoint` is supplied. Output and
 checkpoint paths must be fresh. Restore starts fresh environment histories and
 replay; it is not exact lifetime recovery. `--restore ... --evaluate` is frozen,
 sampled evaluation; a throughput check or accounting audit is not Pong mastery.
+Restore selects and verifies the checkpoint's encoder identity; it rejects an
+explicit `--encoder` override. The Python constructor uses the same explicit
+selection: `VectorAgent(weights, num_envs, config, encoder="dinov3")`.
 
 `python python/examples/check_atari_adapter.py runs/atari-adapters` checks the
 eight-game Atari panel on CPU, comparing two interleaved random-action streams

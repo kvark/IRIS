@@ -13,7 +13,7 @@ use meganeura::{Graph, Mode, NodeId, Session, SessionConfig, data::safetensors::
 
 use super::{
     OBSERVATION_CHANNELS, Observation, PROJECTION_SEED, fixed_projection, pool_2x2_token_major,
-    preprocess,
+    preprocess, stack_streams, stream_rows,
 };
 
 pub const MODEL_ID: &str = "galilai-group/LeVJEPA-VideoMix-Large";
@@ -308,25 +308,6 @@ fn rope_tables() -> (Vec<f32>, Vec<f32>) {
         }
     }
     (cos, sin)
-}
-
-fn stream_rows(g: &mut Graph, x: NodeId, stream: usize, streams: usize, width: usize) -> NodeId {
-    let mut x = x;
-    if stream > 0 {
-        x = g.split_b(x, 1, stream as u32, (streams - stream) as u32, width as u32);
-    }
-    if stream + 1 < streams {
-        x = g.split_a(x, 1, 1, (streams - stream - 1) as u32, width as u32);
-    }
-    x
-}
-
-fn stack_streams(g: &mut Graph, rows: &[NodeId], width: usize) -> NodeId {
-    let mut x = rows[0];
-    for (stream, &row) in rows.iter().enumerate().skip(1) {
-        x = g.concat(x, row, 1, stream as u32, 1, width as u32);
-    }
-    x
 }
 
 fn build_encoder(g: &mut Graph, streams: usize) -> NodeId {

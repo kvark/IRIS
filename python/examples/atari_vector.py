@@ -1,4 +1,4 @@
-"""Independent Atari streams, one native batched LeVJEPA/Dreamer learner.
+"""Independent Atari streams, one native batched visual encoder/Dreamer learner.
 
 --steps counts aggregate executed actions, not vector ticks or per-env actions.
 CPU environment stepping is synchronous; GPU inference is batched. Terminal
@@ -25,6 +25,8 @@ from atari import (
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("encoder_checkpoint")
+    parser.add_argument("--encoder", choices=("levjepa", "dinov3"),
+                        help="fresh-run frontend (default: levjepa); restore uses checkpoint identity")
     parser.add_argument("environment", nargs="?", default="ALE/Pong-v5")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--num-envs", type=int, default=4)
@@ -52,6 +54,8 @@ def main():
         parser.error("world-microbatch-size must be positive")
     if args.greedy and not args.evaluate:
         parser.error("greedy actions are only supported for frozen evaluation")
+    if args.restore and args.encoder is not None:
+        parser.error("restore selects the checkpoint encoder; omit --encoder")
     training_options = {"--model-size", "--batch-size", "--batch-length", "--world-microbatch-size", "--train-ratio", "--learning-rate"}
     if args.restore and any(arg.split("=", 1)[0] in training_options for arg in sys.argv[1:]):
         parser.error("training overrides require a fresh run; restore uses checkpoint config")
@@ -90,7 +94,8 @@ def main():
         construction = time.perf_counter()
         restored = checkpoint_identity(args.restore) if args.restore else None
         agent = (kindle.VectorAgent.restore(str(args.restore), args.encoder_checkpoint, args.num_envs)
-                 if args.restore else kindle.VectorAgent(args.encoder_checkpoint, args.num_envs, config))
+                 if args.restore else kindle.VectorAgent(args.encoder_checkpoint, args.num_envs, config,
+                                                        encoder=args.encoder or "levjepa"))
         if agent.config["action_count"] != actions:
             raise ValueError("checkpoint action vocabulary differs from environment")
         construction = time.perf_counter() - construction

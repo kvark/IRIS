@@ -23,12 +23,26 @@ def test_vector_api_rejects_invalid_config_before_loading_weights():
         kindle.VectorAgent("unused", 4, config)
 
 
+@pytest.mark.parametrize("encoder", ["dinov3", "levjepa"])
+def test_vector_encoder_selection_validates_config_before_gpu(encoder):
+    config = kindle.default_config(18)
+    config["batch_size"] = 0
+    with pytest.raises(ValueError, match="batch_size"):
+        kindle.VectorAgent("unused", 2, config, encoder=encoder)
+
+
+def test_vector_api_rejects_unknown_encoder_before_loading_weights():
+    with pytest.raises(ValueError, match="encoder must be dinov3 or levjepa"):
+        kindle.VectorAgent("unused", 2, {}, encoder="unknown")
+
+
 @pytest.mark.parametrize("args, message", [
     (["--steps", "7", "--num-envs", "2"], "multiple"),
     (["--num-envs", "0"], "multiple"),
     (["--greedy"], "frozen evaluation"),
     (["--world-microbatch-size", "0"], "must be positive"),
     (["--restore", "unused", "--batch-size", "32"], "overrides require a fresh run"),
+    (["--restore", "unused", "--encoder", "dinov3"], "restore selects the checkpoint encoder"),
 ])
 def test_runner_rejects_ambiguous_budgets_before_gpu(monkeypatch, capsys, tmp_path, args, message):
     monkeypatch.setattr(sys, "argv", ["atari_vector.py", "unused", "--output", str(tmp_path / "log.jsonl"), *args])
@@ -36,6 +50,49 @@ def test_runner_rejects_ambiguous_budgets_before_gpu(monkeypatch, capsys, tmp_pa
         atari_vector.main()
     assert error.value.code == 2
     assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("encoder,restore", [(None, False), ("dinov3", False), ("levjepa", False), (None, True)])
+def test_runner_passes_explicit_frontend_or_restores_identity(monkeypatch, tmp_path, encoder, restore):
+    calls, environments = [], []
+
+    class BeforeGpu(Exception):
+        pass
+
+    class Agent:
+        def __new__(cls, weights, streams, config, *, encoder):
+            calls.append(("new", weights, streams, encoder))
+            raise BeforeGpu
+
+        @classmethod
+        def restore(cls, checkpoint, weights, streams):
+            calls.append(("restore", checkpoint, weights, streams))
+            raise BeforeGpu
+
+    def make(*_, **__):
+        env = SimpleNamespace(action_space=SimpleNamespace(n=18), closed=False)
+        env.reset = lambda **_: (None, {})
+        env.close = lambda: setattr(env, "closed", True)
+        environments.append(env)
+        return env
+
+    output = tmp_path / "log.jsonl"
+    args = ["atari_vector.py", "weights", "--output", str(output), "--num-envs", "2"]
+    if encoder is not None:
+        args += ["--encoder", encoder]
+    if restore:
+        args += ["--restore", "saved"]
+    monkeypatch.setattr(sys, "argv", args)
+    monkeypatch.setattr(atari_vector.gym, "make", make)
+    monkeypatch.setattr(atari_vector, "DreamerAtariPreprocessing", lambda env, **_: env)
+    monkeypatch.setattr(atari_vector, "checkpoint_identity", lambda _: {"fixture": True})
+    monkeypatch.setattr(kindle, "VectorAgent", Agent)
+    with pytest.raises(BeforeGpu):
+        atari_vector.main()
+    expected = ("restore", "saved", "weights", 2) if restore else ("new", "weights", 2, encoder or "levjepa")
+    assert calls == [expected]
+    assert len(environments) == 2 and all(env.closed for env in environments)
+    assert output.read_text() == ""  # no run_start claims for a failed construction
 
 
 @pytest.mark.parametrize("args, message", [
@@ -53,9 +110,10 @@ def test_profiler_rejects_unusable_windows_before_starting_jobs(monkeypatch, cap
     assert not directory.exists()
 
 
-def test_profiler_retains_failed_jobs_without_claiming_a_completed_matrix(monkeypatch, tmp_path):
+@pytest.mark.parametrize("encoder", ["levjepa", "dinov3"])
+def test_profiler_retains_failed_jobs_without_claiming_a_completed_matrix(monkeypatch, tmp_path, encoder):
     directory = tmp_path / "matrix"
-    monkeypatch.setattr(sys, "argv", ["profile_atari_vector.py", "unused", str(directory), "--num-envs", "2"])
+    monkeypatch.setattr(sys, "argv", ["profile_atari_vector.py", "unused", str(directory), "--num-envs", "2", "--encoder", encoder])
     monitor = SimpleNamespace(terminate=lambda: None, wait=lambda **_: None)
     monkeypatch.setattr(profile_atari_vector.subprocess, "Popen", lambda *_, **__: monitor)
     monkeypatch.setattr(profile_atari_vector.subprocess, "run", lambda *_, **__: SimpleNamespace(returncode=1))
@@ -66,6 +124,8 @@ def test_profiler_retains_failed_jobs_without_claiming_a_completed_matrix(monkey
     assert results[0]["status"] == "failed"
     assert results[0]["num_envs"] == 2 and results[0]["exit_code"] == 1
     assert "actions_per_second" not in results[0]
+    command = results[0]["command"]
+    assert command[command.index("--encoder") + 1] == encoder
 
 
 @pytest.mark.parametrize("bad", [None, float("nan"), float("inf"), "0.0", True])

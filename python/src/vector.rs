@@ -26,7 +26,14 @@ fn validate_streams(streams: &[usize], count: usize, items: usize) -> PyResult<(
 impl PyVectorAgent {
     /// The config is the complete dictionary returned by kindle.default_config.
     #[new]
-    fn new(encoder_checkpoint: &str, num_envs: usize, config: &Bound<'_, PyAny>) -> PyResult<Self> {
+    #[pyo3(signature = (encoder_checkpoint, num_envs, config, *, encoder = "levjepa"))]
+    fn new(
+        encoder_checkpoint: &str,
+        num_envs: usize,
+        config: &Bound<'_, PyAny>,
+        encoder: &str,
+    ) -> PyResult<Self> {
+        let kind = parse_perception_kind(encoder)?;
         if num_envs == 0 {
             return Err(PyValueError::new_err("num_envs must be positive"));
         }
@@ -38,7 +45,7 @@ impl PyVectorAgent {
         let config: DreamerConfig =
             serde_json::from_str(&encoded).map_err(|e| PyValueError::new_err(e.to_string()))?;
         config.check().map_err(PyValueError::new_err)?;
-        let inner = VectorDreamerAgent::new(config, num_envs, encoder_checkpoint)
+        let inner = VectorDreamerAgent::with_perception(config, kind, num_envs, encoder_checkpoint)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(Self { inner })
     }

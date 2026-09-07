@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use meganeura::data::safetensors::SafeTensorsModel;
-use meganeura::{Graph, Mode, Session, SessionConfig};
+use meganeura::{Graph, Mode, NodeId, Session, SessionConfig};
 
 pub mod dinov3;
 pub mod levjepa;
@@ -124,14 +124,26 @@ impl Perception {
         gpu: Arc<blade_graphics::Context>,
         cache: Option<&Path>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::load_batched(kind, checkpoint, 1, gpu, cache)
+    }
+
+    pub(crate) fn load_batched(
+        kind: PerceptionKind,
+        checkpoint: &Path,
+        streams: usize,
+        gpu: Arc<blade_graphics::Context>,
+        cache: Option<&Path>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         match kind {
-            PerceptionKind::DinoV3 => Ok(Self::Dino(DinoPerception::load_vits16(
+            PerceptionKind::DinoV3 => Ok(Self::Dino(DinoPerception::load_batched(
                 checkpoint,
+                streams,
                 Some(gpu),
                 cache,
             )?)),
-            PerceptionKind::LeVJepa => Ok(Self::LeVJepa(levjepa::LeVJepaPerception::load(
+            PerceptionKind::LeVJepa => Ok(Self::LeVJepa(levjepa::LeVJepaPerception::load_batched(
                 checkpoint,
+                streams,
                 Some(gpu),
                 cache,
             )?)),
@@ -153,6 +165,16 @@ impl Perception {
         match self {
             Self::Dino(encoder) => encoder.encode_frame_rgb8(rgb, width, height),
             Self::LeVJepa(encoder) => encoder.encode_frame_rgb8(rgb, width, height),
+        }
+    }
+
+    pub(crate) fn encode_frames_rgb8(
+        &mut self,
+        arrivals: &[(usize, &crate::RgbFrame, bool)],
+    ) -> Vec<Observation> {
+        match self {
+            Self::Dino(encoder) => encoder.encode_frames_rgb8(arrivals),
+            Self::LeVJepa(encoder) => encoder.encode_frames_rgb8(arrivals),
         }
     }
 }
@@ -216,6 +238,7 @@ pub struct DinoEncoder {
 /// and never changes, so cached replay observations remain valid forever.
 pub struct DinoPerception {
     config: dinov3::Config,
+    streams: usize,
     session: Session,
     input: Vec<f32>,
     projected: Vec<f32>,
@@ -228,17 +251,39 @@ impl DinoPerception {
         gpu: Option<Arc<blade_graphics::Context>>,
         plan_cache: Option<&Path>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::load_batched(checkpoint, 1, gpu, plan_cache)
+    }
+
+    /// One frozen ViT-S/16, with batched dense layers and independent image attention.
+    pub fn load_batched(
+        checkpoint: impl AsRef<Path>,
+        streams: usize,
+        gpu: Option<Arc<blade_graphics::Context>>,
+        plan_cache: Option<&Path>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        if streams == 0 {
+            return Err("DINOv3 needs at least one stream".into());
+        }
         let gpu = match gpu {
             Some(gpu) => gpu,
             None => Arc::new(crate::init_gpu_context()?),
         };
         let config = dinov3::Config::vits16();
         let mut graph = Graph::new();
-        let tokens = dinov3::build_encoder(&mut graph, &config);
+        let tokens = dinov3::build_batched_encoder(&mut graph, &config, streams);
         let prefix_values = config.num_prefix_tokens() * config.hidden_size;
         let patch_values = config.num_patches() * config.hidden_size;
-        let patches = graph.split_b(tokens, 1, prefix_values as u32, patch_values as u32, 1);
-        let patches = graph.reshape(patches, &[config.num_patches(), config.hidden_size]);
+        let patches = graph.split_b(
+            tokens,
+            streams as u32,
+            prefix_values as u32,
+            patch_values as u32,
+            1,
+        );
+        let patches = graph.reshape(
+            patches,
+            &[streams * config.num_patches(), config.hidden_size],
+        );
         let projection = graph.constant(
             fixed_projection(config.hidden_size, OBSERVATION_CHANNELS, PROJECTION_SEED),
             &[config.hidden_size, OBSERVATION_CHANNELS],
@@ -259,9 +304,10 @@ impl DinoPerception {
         weights::load_encoder(&mut session, &model, &config)?;
 
         Ok(Self {
-            input: vec![0.0; config.num_patches() * config.patch_dim()],
-            projected: vec![0.0; config.num_patches() * OBSERVATION_CHANNELS],
-            pooled: vec![0.0; Observation::LEN],
+            input: vec![0.0; streams * config.num_patches() * config.patch_dim()],
+            projected: vec![0.0; streams * config.num_patches() * OBSERVATION_CHANNELS],
+            pooled: vec![0.0; streams * Observation::LEN],
+            streams,
             config,
             session,
         })
@@ -272,9 +318,10 @@ impl DinoPerception {
     }
 
     pub fn encode_rgb8(&mut self, rgb: &[u8]) -> Observation {
+        assert_eq!(self.streams, 1, "use encode_frames_rgb8 for a batch");
         self.input =
             preprocess::patches_from_rgb8(rgb, self.config.image_size, self.config.patch_size);
-        self.run()
+        self.run_batch(&[0]).pop().unwrap()
     }
 
     /// Encode any non-empty RGB8 frame using deterministic, aspect-preserving
@@ -285,15 +332,53 @@ impl DinoPerception {
     }
 
     pub fn encode_normalized_chw(&mut self, pixels: &[f32]) -> Observation {
+        assert_eq!(self.streams, 1, "use encode_frames_rgb8 for a batch");
         self.input = preprocess::patches_from_pixels_chw(
             pixels,
             self.config.image_size,
             self.config.patch_size,
         );
-        self.run()
+        self.run_batch(&[0]).pop().unwrap()
     }
 
-    /// Projected patch tokens before the production 2x2 spatial pooling.
+    /// Encode selected arrivals in one GPU pass, returning the caller's order.
+    /// DINO has no temporal state, so episode reset flags do not affect encoding.
+    pub fn encode_frames_rgb8(
+        &mut self,
+        arrivals: &[(usize, &crate::RgbFrame, bool)],
+    ) -> Vec<Observation> {
+        let mut present = vec![false; self.streams];
+        for &(stream, _, _) in arrivals {
+            assert!(
+                stream < self.streams && !present[stream],
+                "invalid or repeated stream"
+            );
+            present[stream] = true;
+        }
+        if arrivals.is_empty() {
+            return Vec::new();
+        }
+        self.input.fill(0.0);
+        let width = self.config.num_patches() * self.config.patch_dim();
+        for &(stream, frame, _) in arrivals {
+            let rgb = preprocess::resize_letterbox_rgb8(
+                frame.pixels(),
+                frame.width(),
+                frame.height(),
+                self.config.image_size,
+            );
+            self.input[stream * width..(stream + 1) * width].copy_from_slice(
+                &preprocess::patches_from_rgb8(
+                    &rgb,
+                    self.config.image_size,
+                    self.config.patch_size,
+                ),
+            );
+        }
+        self.run_batch(&arrivals.iter().map(|a| a.0).collect::<Vec<_>>())
+    }
+
+    /// Stream-major projected patch tokens before the production 2x2 pooling.
     ///
     /// This is exposed for representation diagnostics. Dreamer continues to
     /// consume only the pooled [`Observation`], so reading these values
@@ -307,19 +392,51 @@ impl DinoPerception {
         self.config.grid()
     }
 
-    fn run(&mut self) -> Observation {
+    fn run_batch(&mut self, active: &[usize]) -> Vec<Observation> {
         self.session.set_input("patches", &self.input);
         self.session.step();
         self.session.wait();
         self.session.read_output_by_index(0, &mut self.projected);
-        pool_2x2_token_major(
-            &self.projected,
-            self.config.grid(),
-            OBSERVATION_CHANNELS,
-            &mut self.pooled,
-        );
-        Observation::from_vec(self.pooled.clone())
+        active
+            .iter()
+            .map(|&stream| {
+                let width = self.config.num_patches() * OBSERVATION_CHANNELS;
+                let pooled =
+                    &mut self.pooled[stream * Observation::LEN..(stream + 1) * Observation::LEN];
+                pool_2x2_token_major(
+                    &self.projected[stream * width..(stream + 1) * width],
+                    self.config.grid(),
+                    OBSERVATION_CHANNELS,
+                    pooled,
+                );
+                Observation::from_vec(pooled.to_vec())
+            })
+            .collect()
     }
+}
+
+fn stream_rows(
+    g: &mut Graph,
+    mut x: NodeId,
+    stream: usize,
+    streams: usize,
+    width: usize,
+) -> NodeId {
+    if stream > 0 {
+        x = g.split_b(x, 1, stream as u32, (streams - stream) as u32, width as u32);
+    }
+    if stream + 1 < streams {
+        x = g.split_a(x, 1, 1, (streams - stream - 1) as u32, width as u32);
+    }
+    x
+}
+
+fn stack_streams(g: &mut Graph, rows: &[NodeId], width: usize) -> NodeId {
+    let mut x = rows[0];
+    for (stream, &row) in rows.iter().enumerate().skip(1) {
+        x = g.concat(x, row, 1, stream as u32, 1, width as u32);
+    }
+    x
 }
 
 pub(crate) fn fixed_projection(input: usize, output: usize, seed: u64) -> Vec<f32> {
@@ -501,6 +618,120 @@ mod tests {
         let expected = (input[0] + input[2] + input[28] + input[30]) / 4.0;
         assert_eq!(output[0], expected);
         assert_eq!(output.len(), 98);
+    }
+
+    #[test]
+    fn empty_dino_batch_is_rejected_before_loading_weights_or_gpu() {
+        let error = DinoPerception::load_batched("unused", 0, None, None)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("at least one stream"));
+    }
+
+    #[test]
+    #[ignore = "requires GPU and pinned DINOv3 weights; checks batch parity and stream isolation"]
+    fn dino_batch_matches_serial_with_sparse_and_reordered_arrivals() {
+        let checkpoint =
+            std::env::var_os("KINDLE_DINOV3_WEIGHTS").expect("set KINDLE_DINOV3_WEIGHTS");
+        assert_eq!(
+            checkpoint_sha256(Path::new(&checkpoint)).unwrap(),
+            VITS16_CHECKPOINT_SHA256
+        );
+        let frames: Vec<_> = (0..6)
+            .map(|index| {
+                let (width, height) = [(64, 64), (160, 210), (213, 97)][index % 3];
+                crate::RgbFrame::new(
+                    width,
+                    height,
+                    (0..width * height * 3)
+                        .map(|pixel| ((pixel * 37 + index * 71) % 251) as u8)
+                        .collect(),
+                )
+            })
+            .collect();
+        let expected: Vec<_> = {
+            let mut serial = DinoPerception::load_vits16(&checkpoint, None, None).unwrap();
+            frames
+                .iter()
+                .map(|frame| {
+                    let pooled =
+                        serial.encode_frame_rgb8(frame.pixels(), frame.width(), frame.height());
+                    (pooled, serial.projected_patches().to_vec())
+                })
+                .collect()
+        };
+        let mut batch = DinoPerception::load_batched(&checkpoint, 3, None, None).unwrap();
+        let mut worst = 0.0_f32;
+        for selections in [
+            vec![(2, 2), (0, 0), (1, 1)],
+            vec![],
+            vec![(1, 4)],
+            vec![(2, 5), (0, 3)],
+            vec![(0, 0), (2, 2), (1, 1)],
+        ] {
+            let arrivals: Vec<_> = selections
+                .iter()
+                .map(|&(stream, index)| (stream, &frames[index], index % 2 == 0))
+                .collect();
+            let observations = batch.encode_frames_rgb8(&arrivals);
+            assert_eq!(observations.len(), selections.len());
+            for ((stream, index), observation) in selections.into_iter().zip(observations) {
+                let width = 196 * OBSERVATION_CHANNELS;
+                for (actual, reference) in [
+                    (observation.as_slice(), expected[index].0.as_slice()),
+                    (
+                        &batch.projected_patches()[stream * width..(stream + 1) * width],
+                        expected[index].1.as_slice(),
+                    ),
+                ] {
+                    let mut error = 0.0_f64;
+                    let mut energy = 0.0_f64;
+                    assert_eq!(actual.len(), reference.len());
+                    for (&actual, &reference) in actual.iter().zip(reference) {
+                        assert!(actual.is_finite());
+                        worst = worst.max((actual - reference).abs());
+                        error += f64::from(actual - reference).powi(2);
+                        energy += f64::from(reference).powi(2);
+                    }
+                    assert!(
+                        (error / energy).sqrt() < 1e-4,
+                        "stream {stream} image {index}"
+                    );
+                }
+            }
+        }
+        assert!(worst < 0.005, "DINO batch max absolute error {worst}");
+        let baseline = batch.encode_frames_rgb8(&[
+            (0, &frames[0], false),
+            (1, &frames[1], false),
+            (2, &frames[2], false),
+        ]);
+        let baseline_projected = batch.projected_patches().to_vec();
+        let changed = batch.encode_frames_rgb8(&[
+            (0, &frames[0], true),
+            (1, &frames[4], true),
+            (2, &frames[2], false),
+        ]);
+        for stream in [0, 2] {
+            assert_eq!(
+                baseline[stream].as_slice(),
+                changed[stream].as_slice(),
+                "another stream must not affect this image"
+            );
+            let width = 196 * OBSERVATION_CHANNELS;
+            assert_eq!(
+                &baseline_projected[stream * width..(stream + 1) * width],
+                &batch.projected_patches()[stream * width..(stream + 1) * width]
+            );
+        }
+        assert_ne!(
+            baseline[1].as_slice(),
+            changed[1].as_slice(),
+            "the perturbed image must actually change"
+        );
+        eprintln!(
+            "DINOv3 batched/serial maximum absolute error {worst}; unperturbed streams bit-identical"
+        );
     }
 
     /// Full-checkpoint parity against Transformers 5.15.0 / PyTorch 2.13.
