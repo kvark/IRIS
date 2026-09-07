@@ -239,6 +239,12 @@ checkpoint paths must be fresh. Restore starts fresh environment histories and
 replay; it is not exact lifetime recovery. `--restore ... --evaluate` is frozen,
 sampled evaluation; a throughput check or accounting audit is not Pong mastery.
 
+`python python/examples/check_atari_adapter.py runs/atari-adapters` checks the
+eight-game Atari panel on CPU, comparing two interleaved random-action streams
+with fresh serial replay of their images, rewards, boundaries and clocks.
+It constructs no agent and makes no learning or competence claim. Positive
+terminal return is the vector runner's Pong win rule, not a general Atari win.
+
 ## Checkpoints and verification
 
 Checkpoints contain world/behavior parameters and optimizer moments, the slow

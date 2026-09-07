@@ -65,6 +65,8 @@ reliable learning.
   all parameter gradients and reset causality; composed losses need complete
   scalar reductions, not backend workgroup partials.
 - Test dense Atari, sparse Atari, and a small native persistent environment.
+  Positive terminal return is a Pong win rule, not a general Atari competence
+  criterion. Keep game-specific wins separate from generic episode accounting.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

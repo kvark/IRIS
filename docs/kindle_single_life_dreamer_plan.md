@@ -143,6 +143,13 @@ Frostbite, Qbert and Private Eye. It covers different control, memory and reward
 structures without pretending that eight games establish generality.
 Private Eye's earlier one-episode reward discovery is not sustained competence.
 
+The [CPU adapter preflight](experiments/2026-09-07-atari-adapters.md) checks
+this panel's independent streams, fresh serial replay, RGB observations,
+rewards and actual clocks without constructing an agent. Before using the vector
+runner beyond Pong, separate its positive-return `natural_wins` summary from
+game-specific competence criteria; a positive Atari score is not generally a win.
+The active pinned Pong runner and auditor stay unchanged.
+
 Use cheap adapter/reward and numerical checks first, then fixed-budget learning
 runs. Choose the video-encoder candidate through a bounded comparison before
 launching a full target-architecture suite. DINO remains the labeled control;
