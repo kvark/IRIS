@@ -104,3 +104,11 @@ reward-wiring diagnostic**, not a random control, learned behavior, demonstratio
 training or a competence result. It must log every actual action, observation
 hash, reward and frame count, and reports whether any positive game reward was
 observed. Do not extend the budget or include it in the panel's random returns.
+
+The fixture completed at **10:59:38 UTC**: 1,024 executed actions, 4,096 actual
+frames and **11 positive reward events, total +11**. It has no completed episode;
+the unfinished +11 tail is not a game win. Its saved action/reward/frame ledger
+and source/log hashes verify. This exercises the reward channel, not learned
+reward discovery; the random panel's zero-reward result remains unchanged.
+The script, trace and summary are `check_freeway_reward.py`,
+`freeway-up-1024.jsonl` and `freeway-up-1024-summary.json` in the run directory.
