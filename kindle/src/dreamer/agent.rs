@@ -162,6 +162,24 @@ pub struct LearnReport {
     pub timing: LearnTiming,
 }
 
+/// Host wall time and submitted payload in `Session::set_input`, not bus traffic.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct InputWriteTiming {
+    pub calls: usize,
+    pub bytes: usize,
+    pub seconds: f64,
+}
+
+impl InputWriteTiming {
+    fn set_input(&mut self, session: &mut Session, name: &str, values: &[f32]) {
+        let started = Instant::now();
+        session.set_input(name, values);
+        self.seconds += started.elapsed().as_secs_f64();
+        self.calls += 1;
+        self.bytes += std::mem::size_of_val(values);
+    }
+}
+
 /// Wall time includes the GPU waits and host transfers performed by each stage.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct LearnTiming {
@@ -171,6 +189,8 @@ pub struct LearnTiming {
     /// Subsets of the corresponding stage totals, not additional elapsed time.
     pub posterior_readback: ReadbackTiming,
     pub imagination_readback: ReadbackTiming,
+    pub posterior_inputs: InputWriteTiming,
+    pub imagination_inputs: InputWriteTiming,
     pub world_train_seconds: f64,
     pub replay_refresh_seconds: f64,
     pub world_sync_seconds: f64,
@@ -1070,14 +1090,15 @@ impl DreamerCore {
         };
         self.readback.take_timing();
         let stage = Instant::now();
-        let posterior = self.sample_posterior_batch(&batch);
+        let posterior = self.sample_posterior_batch(&batch, &mut timing.posterior_inputs);
         timing.posterior_seconds = stage.elapsed().as_secs_f64();
         timing.posterior_readback = self.readback.take_timing();
         // D3 forms all targets from the same pre-update parameters. Keeping
         // this ordering also gives the world graph replay-value targets while
         // its frozen critic routes that auxiliary gradient into the RSSM.
         let stage = Instant::now();
-        let behavior_batch = self.imagine_and_target(&batch, &posterior);
+        let behavior_batch =
+            self.imagine_and_target(&batch, &posterior, &mut timing.imagination_inputs);
         timing.imagination_seconds = stage.elapsed().as_secs_f64();
         timing.imagination_readback = self.readback.take_timing();
         let stage = Instant::now();
@@ -1151,7 +1172,11 @@ impl DreamerCore {
         assert!(self.feature.iter().all(|value| value.is_finite()));
     }
 
-    fn sample_posterior_batch(&mut self, batch: &SequenceBatch) -> PosteriorBatch {
+    fn sample_posterior_batch(
+        &mut self,
+        batch: &SequenceBatch,
+        inputs: &mut InputWriteTiming,
+    ) -> PosteriorBatch {
         let size = self.config.network();
         let rows = self.config.batch_size;
         let mut previous_deter = batch.initial_deter.clone();
@@ -1160,20 +1185,29 @@ impl DreamerCore {
         let mut stochs = Vec::with_capacity(self.config.batch_length);
         for time in 0..self.config.batch_length {
             let (keep_deter, keep_stoch, keep_action) = keep_masks(batch, time, &self.config);
-            self.world_observe_batch
-                .set_input("previous_deter", &previous_deter);
-            self.world_observe_batch
-                .set_input("previous_stoch", &previous_stoch);
-            self.world_observe_batch
-                .set_input("previous_action", &batch.previous_actions[time]);
-            self.world_observe_batch
-                .set_input("observation", &batch.observations[time]);
-            self.world_observe_batch
-                .set_input("keep_deter", &keep_deter);
-            self.world_observe_batch
-                .set_input("keep_stoch", &keep_stoch);
-            self.world_observe_batch
-                .set_input("keep_action", &keep_action);
+            inputs.set_input(
+                &mut self.world_observe_batch,
+                "previous_deter",
+                &previous_deter,
+            );
+            inputs.set_input(
+                &mut self.world_observe_batch,
+                "previous_stoch",
+                &previous_stoch,
+            );
+            inputs.set_input(
+                &mut self.world_observe_batch,
+                "previous_action",
+                &batch.previous_actions[time],
+            );
+            inputs.set_input(
+                &mut self.world_observe_batch,
+                "observation",
+                &batch.observations[time],
+            );
+            inputs.set_input(&mut self.world_observe_batch, "keep_deter", &keep_deter);
+            inputs.set_input(&mut self.world_observe_batch, "keep_stoch", &keep_stoch);
+            inputs.set_input(&mut self.world_observe_batch, "keep_action", &keep_action);
             self.world_observe_batch.step();
             let mut deter = vec![0.0; rows * size.deter];
             let mut logits = vec![0.0; rows * size.stoch * size.classes];
@@ -1444,6 +1478,7 @@ impl DreamerCore {
         &mut self,
         batch: &SequenceBatch,
         posterior: &PosteriorBatch,
+        inputs: &mut InputWriteTiming,
     ) -> BehaviorTrainingBatch {
         let size = self.config.network();
         let starts = self.config.batch_size * self.config.batch_length;
@@ -1459,17 +1494,17 @@ impl DreamerCore {
 
         for time in 0..=horizon {
             let state_feature = join_features(&deter, &stoch, starts, &self.config);
-            self.behavior_online.set_input("feature", &state_feature);
+            inputs.set_input(&mut self.behavior_online, "feature", &state_feature);
             self.behavior_online.step();
             let mut actor_logits = vec![0.0; starts * self.config.action_count];
             let mut value_logits = vec![0.0; starts * self.config.value_bins];
 
-            self.behavior_slow.set_input("feature", &state_feature);
+            inputs.set_input(&mut self.behavior_slow, "feature", &state_feature);
             self.behavior_slow.step();
             let mut slow_logits = vec![0.0; starts * self.config.value_bins];
 
-            self.world_heads.set_input("deter", &deter);
-            self.world_heads.set_input("stoch", &stoch);
+            inputs.set_input(&mut self.world_heads, "deter", &deter);
+            inputs.set_input(&mut self.world_heads, "stoch", &stoch);
             self.world_heads.step();
             let mut reward_logits = vec![0.0; starts * self.config.value_bins];
             let mut continuation = vec![0.0; starts];
@@ -1505,9 +1540,9 @@ impl DreamerCore {
                 action_one_hot[row * self.config.action_count + action] = 1.0;
             }
             actions.push(action_indices);
-            self.world_transition.set_input("deter", &deter);
-            self.world_transition.set_input("stoch", &stoch);
-            self.world_transition.set_input("action", &action_one_hot);
+            inputs.set_input(&mut self.world_transition, "deter", &deter);
+            inputs.set_input(&mut self.world_transition, "stoch", &stoch);
+            inputs.set_input(&mut self.world_transition, "action", &action_one_hot);
             self.world_transition.step();
             let mut next_deter = vec![0.0; starts * size.deter];
             let mut prior_logits = vec![0.0; starts * size.stoch * size.classes];
@@ -2843,12 +2878,40 @@ mod tests {
         );
     }
 
-    fn assert_learner_readback_ledger(report: &LearnReport, config: &DreamerConfig) {
+    #[test]
+    fn input_write_timing_serializes_only_numeric_fields() {
+        let value = serde_json::to_value(InputWriteTiming::default()).unwrap();
+        let fields = value.as_object().unwrap();
+        assert_eq!(fields.len(), 3);
+        assert!(fields.values().all(|value| value.as_f64() == Some(0.0)));
+    }
+
+    fn assert_learner_transfer_ledger(report: &LearnReport, config: &DreamerConfig) {
         let size = config.network();
         let starts = config.batch_size * config.batch_length;
         let state_width = size.deter + size.stoch * size.classes;
         let head_width = config.action_count + 3 * config.value_bins + 1;
         let horizon = config.imagination_length;
+        assert_eq!(
+            report.timing.posterior_inputs.calls,
+            7 * config.batch_length
+        );
+        assert_eq!(
+            report.timing.posterior_inputs.bytes,
+            starts
+                * (2 * (state_width + config.action_count) + config.observation_dim())
+                * std::mem::size_of::<f32>()
+        );
+        assert_eq!(
+            report.timing.imagination_inputs.calls,
+            4 * (horizon + 1) + 3 * horizon
+        );
+        assert_eq!(
+            report.timing.imagination_inputs.bytes,
+            starts
+                * (3 * (horizon + 1) * state_width + horizon * (state_width + config.action_count))
+                * std::mem::size_of::<f32>()
+        );
         assert_eq!(report.timing.posterior_readback.calls, config.batch_length);
         assert_eq!(
             report.timing.posterior_readback.bytes,
@@ -2861,13 +2924,15 @@ mod tests {
                 * ((horizon + 1) * head_width + horizon * state_width)
                 * std::mem::size_of::<f32>()
         );
-        for (readback, parent) in [
+        for (readback, inputs, parent) in [
             (
                 &report.timing.posterior_readback,
+                &report.timing.posterior_inputs,
                 report.timing.posterior_seconds,
             ),
             (
                 &report.timing.imagination_readback,
+                &report.timing.imagination_inputs,
                 report.timing.imagination_seconds,
             ),
         ] {
@@ -2876,6 +2941,7 @@ mod tests {
                 readback.submit_seconds,
                 readback.wait_seconds,
                 readback.copy_seconds,
+                inputs.seconds,
             ];
             assert!(
                 phases
@@ -2975,7 +3041,7 @@ mod tests {
             .behavior_train
             .read_param("behavior.actor.out.bias", &mut initial_actor_parameter);
         let report = agent.learn().expect("nine frames fill one tiny sequence");
-        assert_learner_readback_ledger(&report, agent.config());
+        assert_learner_transfer_ledger(&report, agent.config());
         assert_eq!(report.learner_step, 1);
         assert_eq!(report.replay_len, 9);
         assert!(report.world.total_loss.is_finite());
@@ -3078,7 +3144,7 @@ mod tests {
             );
         }
         let report = restored.learn().expect("refilled replay learns");
-        assert_learner_readback_ledger(&report, restored.config());
+        assert_learner_transfer_ledger(&report, restored.config());
         assert_eq!(report.learner_step, 2);
         assert_eq!(report.behavior.actor_update_scale, 1.0);
         drop(restored);
@@ -3149,8 +3215,9 @@ mod tests {
             );
         }
         let mut batch = left.replay.sample(&config, &mut left.rngs.replay).unwrap();
-        let posterior = left.sample_posterior_batch(&batch);
-        let behavior = left.imagine_and_target(&batch, &posterior);
+        let posterior = left.sample_posterior_batch(&batch, &mut InputWriteTiming::default());
+        let behavior =
+            left.imagine_and_target(&batch, &posterior, &mut InputWriteTiming::default());
         let metrics = left.train_world(&batch, &posterior, &behavior);
         assert!(metrics.future_prediction_loss > 0.0);
         assert_eq!(metrics.reconstruction_loss, 0.0);
@@ -3166,8 +3233,9 @@ mod tests {
         for flags in batch.flags.iter_mut().flatten() {
             flags.is_first = true;
         }
-        let posterior = left.sample_posterior_batch(&batch);
-        let behavior = left.imagine_and_target(&batch, &posterior);
+        let posterior = left.sample_posterior_batch(&batch, &mut InputWriteTiming::default());
+        let behavior =
+            left.imagine_and_target(&batch, &posterior, &mut InputWriteTiming::default());
         let reset = left.train_world(&batch, &posterior, &behavior);
         assert_eq!(reset.future_prediction_loss, 0.0);
         assert_eq!(reset.total_loss, 0.0);
