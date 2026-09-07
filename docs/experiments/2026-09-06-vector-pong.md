@@ -163,13 +163,14 @@ training debt.
 | 20,000 | 4,619 | 17 | −20.7647 | 165.98 | 0.2460 |
 | 40,000 | 9,619 | 42 | −20.8333 | 82.80 | 0.6299 |
 | 60,000 | 14,619 | 53 | −20.5472 | 79.02 | 0.2943 |
+| 80,000 | 19,619 | 62 | −20.0161 | 73.60 | 0.2984 |
 
 Loss and entropy are means over each prefix's last 100 updates; the first 100
 updates average 36,778.23 and 2.8903. These use changing training batches, not
 held-out data: decreasing model loss and a concentrated policy do not establish
 better control. Reports are `seed0-{step:06d}-inspection.json`; they do not
 replace full-run accounting or final frozen evaluation. The watcher completed
-the 40k/60k inspections at 2026-09-07 01:49:13/02:34:59 UTC.
+the 40k/60k/80k inspections at 2026-09-07 01:49:13/02:34:59/03:21:30 UTC.
 
 In the 35k–40k window, four completed games average −20.75, with five positive
 points and 94 negative points observed. By 55k–60k, four completed games average
@@ -177,6 +178,14 @@ points and 94 negative points observed. By 55k–60k, four completed games avera
 reward predictions improve from +0.0313/−0.8795/−0.00295 to
 +0.3526/−0.8670/−0.00243 for positive/negative/zero events. This is modest
 progress, not reliable gameplay.
+
+The 65k–70k window has no completed games: its episode-return mean is undefined,
+not zero. It scores 11 points and concedes 47. In the 75k–80k window, two games
+finish with mean −17.5; 13 positive points and 33 negative points are observed.
+Its sample-weighted positive/negative/zero replay predictions average
++0.6401/−0.8864/−0.00169. The corresponding `seed0-window-{start}-{end}.json`
+reports preserve these diagnostics without treating either window as frozen
+evaluation or an accepted endpoint.
 
 The read-only `learning-context-{start}-{end}.json` reports compare exact
 5k-action windows with the interrupted serial LeVJEPA seed and historical DINO
@@ -188,16 +197,17 @@ response to these intermediate scores.
 
 Steady throughput windows each contain 10,000 aggregate actions and 2,500
 updates. GPU activity and power are means from the 1 Hz trace, with
-1,385/1,379/1,377 samples respectively:
+1,385/1,379/1,377/1,388 samples respectively:
 
 | Action window | Wall seconds | Aggregate actions/s | GPU activity | Power, W |
 | --- | ---: | ---: | ---: | ---: |
 | 10k–20k | 1,385.86 | 7.216 | 60.22% | 138.12 |
 | 30k–40k | 1,379.31 | 7.250 | 59.62% | 138.82 |
 | 50k–60k | 1,377.25 | 7.261 | 60.12% | 138.56 |
+| 70k–80k | 1,388.15 | 7.204 | 59.66% | 137.87 |
 
-Peak memory remains 14,148 MiB (13.82 GiB) in all three windows. Each spends
-1,069–1,072 s learning, 300–310 s handling observations and only 4.3 s stepping
+Peak memory remains 14,148 MiB (13.82 GiB) in all four windows. Each spends
+1,069–1,075 s learning, 300–310 s handling observations and only 4.3 s stepping
 environments, with zero reported training debt. Aggregate simulation speed is
 about 0.48× the game clock, or 0.060× per stream. Memory is stable, but the GPU
 is not saturated and super-real-time training remains unachieved. CPU subprocess
