@@ -149,6 +149,28 @@ zero-update control is a structural reference for all seeds; parameter deltas
 are reported only for its matching seed 0. These model archives are diagnostic
 artifacts, not exact recovery of replay, RNGs or live environment state.
 
+The additional run-local `audit_checkpoint_prefix.py` copies an exact byte
+prefix through both the checkpoint and progress records at a chosen intermediate
+boundary. It uses the unchanged, hash-pinned vector ledger checker, requiring
+all record-level checks to reach its specific `missing run_end` rejection.
+Other errors propagate; no final event is synthesized, no checker is patched,
+and the result explicitly says `budget_complete: false`. A closing checkpoint
+or progress record verifies that the last vector round is settled. This is
+prefix-ledger evidence, not full-run or mastery acceptance.
+
+At 80k, these checks cover 19,619 updates, 319,946 actual frames and 80,070
+inserted replay records, with no eviction yet and zero debt. The snapshot is
+bound to the archived checkpoint fingerprints. The result is
+`seed0-080000-prefix-accounting.json`; 19 CPU tests cover exact copying,
+checkpoint/progress ordering, corrupted ledgers, incomplete rounds and FIFO
+eviction at three small capacities. At 100k, the same checks cover 24,619
+updates and 399,942 actual frames: 100,076 replay insertions, capacity/length
+100,000, 76 FIFO evictions in the ledger and zero debt. This verifies logged
+accounting, not the contents of sampled replay tensors. The corresponding
+`seed0-100000-prefix-accounting.json` still rejects full-run acceptance because
+the run is unfinished. Production runners, native code and auditors remain
+unchanged.
+
 All listed seed-0 prefixes pass read-only inspection: finite learner reports
 with continuous counters, logged checkpoint identity, all 241 tensor
 names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
@@ -164,13 +186,15 @@ training debt.
 | 40,000 | 9,619 | 42 | −20.8333 | 82.80 | 0.6299 |
 | 60,000 | 14,619 | 53 | −20.5472 | 79.02 | 0.2943 |
 | 80,000 | 19,619 | 62 | −20.0161 | 73.60 | 0.2984 |
+| 100,000 | 24,619 | 68 | −19.3676 | 68.43 | 0.3365 |
 
 Loss and entropy are means over each prefix's last 100 updates; the first 100
 updates average 36,778.23 and 2.8903. These use changing training batches, not
 held-out data: decreasing model loss and a concentrated policy do not establish
 better control. Reports are `seed0-{step:06d}-inspection.json`; they do not
 replace full-run accounting or final frozen evaluation. The watcher completed
-the 40k/60k/80k inspections at 2026-09-07 01:49:13/02:34:59/03:21:30 UTC.
+the 40k/60k/80k/100k inspections at
+2026-09-07 01:49:13/02:34:59/03:21:30/04:07:15 UTC.
 
 In the 35k–40k window, four completed games average −20.75, with five positive
 points and 94 negative points observed. By 55k–60k, four completed games average
@@ -187,6 +211,12 @@ Its sample-weighted positive/negative/zero replay predictions average
 reports preserve these diagnostics without treating either window as frozen
 evaluation or an accepted endpoint.
 
+At 95k–100k, three completed games average −12.3333, with seven positive and
+35 negative points observed in that window. Sample-weighted replay predictions
+average +0.7506/−0.9000/−0.00126 for positive/negative/zero events. No game has
+been won through 100k; neither these training returns nor the model predictions
+establish mastery.
+
 The read-only `learning-context-{start}-{end}.json` reports compare exact
 5k-action windows with the interrupted serial LeVJEPA seed and historical DINO
 seeds. At 55k–60k, serial LeVJEPA averages −13 across two games; DINO seeds 0/1
@@ -195,9 +225,19 @@ collection protocols and executables make this context, not a matched frontend
 comparison. Do not select an earlier checkpoint or change the live recipe in
 response to these intermediate scores.
 
+At 100k inspection, the run-local summary helper was found to mislabel vector
+reports as DINO: it read only top-level perception metadata and silently
+defaulted to DINO, ignoring `model_provenance.perception`. This reporting bug
+is corrected; all seven saved context/window reports now take their encoder
+label from the original run headers. Their numerical summaries are unchanged
+and regenerate exactly. Sixteen CPU tests cover current/legacy schemas, missing
+and conflicting identity, the four actual source headers and saved reports.
+The training logs, checkpoint identities and experiment configuration have
+always recorded LeVJEPA for the vector run; none were altered.
+
 Steady throughput windows each contain 10,000 aggregate actions and 2,500
 updates. GPU activity and power are means from the 1 Hz trace, with
-1,385/1,379/1,377/1,388 samples respectively:
+1,385/1,379/1,377/1,388/1,380 samples respectively:
 
 | Action window | Wall seconds | Aggregate actions/s | GPU activity | Power, W |
 | --- | ---: | ---: | ---: | ---: |
@@ -205,13 +245,19 @@ updates. GPU activity and power are means from the 1 Hz trace, with
 | 30k–40k | 1,379.31 | 7.250 | 59.62% | 138.82 |
 | 50k–60k | 1,377.25 | 7.261 | 60.12% | 138.56 |
 | 70k–80k | 1,388.15 | 7.204 | 59.66% | 137.87 |
+| 90k–100k | 1,380.52 | 7.244 | 59.69% | 138.01 |
 
-Peak memory remains 14,148 MiB (13.82 GiB) in all four windows. Each spends
+Peak memory remains 14,148 MiB (13.82 GiB) in all five windows. Each spends
 1,069–1,075 s learning, 300–310 s handling observations and only 4.3 s stepping
 environments, with zero reported training debt. Aggregate simulation speed is
 about 0.48× the game clock, or 0.060× per stream. Memory is stable, but the GPU
 is not saturated and super-real-time training remains unachieved. CPU subprocess
 environments would not address the measured bottleneck.
+
+At the 100k save, learner RSS is about 10.22 GiB with zero process swap;
+the host has 17.23 GiB available and the workspace disk has 331 GiB free.
+The 90k–100k trace shows no throughput or GPU-memory regression near capacity;
+longer post-eviction behavior remains to be measured.
 
 ## Follow-up diagnosis if final gates fail
 
