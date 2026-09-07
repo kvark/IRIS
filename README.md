@@ -242,8 +242,12 @@ sampled evaluation; a throughput check or accounting audit is not Pong mastery.
 `python python/examples/check_atari_adapter.py runs/atari-adapters` checks the
 eight-game Atari panel on CPU, comparing two interleaved random-action streams
 with fresh serial replay of their images, rewards, boundaries and clocks.
-It constructs no agent and makes no learning or competence claim. Positive
-terminal return is the vector runner's Pong win rule, not a general Atari win.
+It constructs no agent and makes no learning or competence claim. New vector
+logs use `kindle-vector-v2` and report completed/natural/truncated episodes and
+positive-return natural episodes, not wins. The accounting reader also accepts
+v1 logs and normalizes their legacy field names without changing counts.
+Only the Pong-specific scorer interprets positive natural returns as Pong wins;
+its predeclared three-seed campaign remains locked to the original v1 protocol.
 
 ## Checkpoints and verification
 

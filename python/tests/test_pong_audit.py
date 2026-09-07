@@ -51,6 +51,13 @@ def test_timeout_is_not_a_win_or_dropped_from_score(tmp_path):
     assert result["simulated_to_wall"] == pytest.approx(44 / 60 / 2)
 
 
+def test_pong_serial_scorer_rejects_other_games(tmp_path):
+    rows = events()
+    rows[0]["environment"] = "ALE/Freeway-v5"
+    with pytest.raises(ValueError, match="Pong-only scorer"):
+        audit_pong.audit_run(write_run(tmp_path / "run.jsonl", rows))
+
+
 @pytest.mark.parametrize("mutation, message", [
     (lambda rows: rows.pop(), "incomplete run"),
     (lambda rows: rows.append(rows[-1]), "after run_end"),
