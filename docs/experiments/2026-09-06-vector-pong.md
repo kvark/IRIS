@@ -7,7 +7,9 @@ retained. No vectorized Pong mastery result is available at declaration.
 
 Status 2026-09-07: seed 0 completes training and final frozen evaluation, but
 fails the predeclared mastery gate. It wins 18/18 completed frozen games with
-mean return +10.2778. Seed 1 has started; remaining-seed results are unfinished.
+mean return +10.2778. Seed 1 completes its 200k-action training budget and is
+under final frozen evaluation; seed 2 has not started. Remaining-seed results
+are unfinished.
 
 ## Fixed protocol
 
@@ -535,10 +537,13 @@ new evaluations. Original pixel bytes were not retained for direct comparison.
 
 - `seed0-eval-first-game-reconstructed.mp4`: +14, natural completion,
   2,816 actions / 11,262 frames / 187.70 s of game time.
+- `seed1-eval-first-game-reconstructed.mp4`: −1, natural completion,
+  6,859 actions / 27,434 frames / 457.23 s of game time. This first game is
+  reconstructed while the fixed evaluation budget is still running.
 - `untrained-first-game-reconstructed.mp4`: −21, natural completion,
   792 actions / 3,168 frames / 52.80 s of game time.
 
-Both use nominal 60 Hz, not the original acting wall clock. Their `.mp4.json`
+All use nominal 60 Hz, not the original acting wall clock. Their `.mp4.json`
 manifests bind the exact source-log prefix, original frontend/checkpoint header,
 reconstructed raw frames, video, wrapper and recorder identities. Fifteen
 run-local tests validate provenance and reject divergent outcomes, counters,
