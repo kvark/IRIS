@@ -23,6 +23,7 @@ pub use agent::{
     ModelProvenance, VectorDreamerAgent, WorldMetrics,
 };
 pub use config::{DreamerConfig, LossScales, ModelSize, NetworkSize};
+pub use readback::ReadbackTiming;
 pub use replay::{FrameFlags, Reward};
 
 /// Upstream DreamerV3 revision used as the behavioral contract.

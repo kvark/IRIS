@@ -25,7 +25,7 @@ use super::distributions::{
     sample_probabilities_at, softmax_unimix,
 };
 use super::intrinsic::{VisitationBonus, VisitationState};
-use super::readback::Readback;
+use super::readback::{Readback, ReadbackTiming};
 use super::replay::{FrameFlags, ReplayFrame, Reward, SequenceBatch, SequenceReplay};
 use super::runtime::{
     build_session, configure_d3_optimizer, ema_matching, initialize_d3, sync_matching,
@@ -168,6 +168,9 @@ pub struct LearnTiming {
     pub replay_seconds: f64,
     pub posterior_seconds: f64,
     pub imagination_seconds: f64,
+    /// Subsets of the corresponding stage totals, not additional elapsed time.
+    pub posterior_readback: ReadbackTiming,
+    pub imagination_readback: ReadbackTiming,
     pub world_train_seconds: f64,
     pub replay_refresh_seconds: f64,
     pub world_sync_seconds: f64,
@@ -1065,15 +1068,18 @@ impl DreamerCore {
             replay_seconds: stage.elapsed().as_secs_f64(),
             ..LearnTiming::default()
         };
+        self.readback.take_timing();
         let stage = Instant::now();
         let posterior = self.sample_posterior_batch(&batch);
         timing.posterior_seconds = stage.elapsed().as_secs_f64();
+        timing.posterior_readback = self.readback.take_timing();
         // D3 forms all targets from the same pre-update parameters. Keeping
         // this ordering also gives the world graph replay-value targets while
         // its frozen critic routes that auxiliary gradient into the RSSM.
         let stage = Instant::now();
         let behavior_batch = self.imagine_and_target(&batch, &posterior);
         timing.imagination_seconds = stage.elapsed().as_secs_f64();
+        timing.imagination_readback = self.readback.take_timing();
         let stage = Instant::now();
         let world = self.train_world(&batch, &posterior, &behavior_batch);
         timing.world_train_seconds = stage.elapsed().as_secs_f64();
@@ -2837,6 +2843,49 @@ mod tests {
         );
     }
 
+    fn assert_learner_readback_ledger(report: &LearnReport, config: &DreamerConfig) {
+        let size = config.network();
+        let starts = config.batch_size * config.batch_length;
+        let state_width = size.deter + size.stoch * size.classes;
+        let head_width = config.action_count + 3 * config.value_bins + 1;
+        let horizon = config.imagination_length;
+        assert_eq!(report.timing.posterior_readback.calls, config.batch_length);
+        assert_eq!(
+            report.timing.posterior_readback.bytes,
+            starts * state_width * std::mem::size_of::<f32>()
+        );
+        assert_eq!(report.timing.imagination_readback.calls, 2 * horizon + 1);
+        assert_eq!(
+            report.timing.imagination_readback.bytes,
+            starts
+                * ((horizon + 1) * head_width + horizon * state_width)
+                * std::mem::size_of::<f32>()
+        );
+        for (readback, parent) in [
+            (
+                &report.timing.posterior_readback,
+                report.timing.posterior_seconds,
+            ),
+            (
+                &report.timing.imagination_readback,
+                report.timing.imagination_seconds,
+            ),
+        ] {
+            let phases = [
+                readback.prepare_seconds,
+                readback.submit_seconds,
+                readback.wait_seconds,
+                readback.copy_seconds,
+            ];
+            assert!(
+                phases
+                    .iter()
+                    .all(|value| value.is_finite() && *value >= 0.0)
+            );
+            assert!(phases.iter().sum::<f64>() <= parent);
+        }
+    }
+
     #[test]
     #[ignore = "builds and runs all Dreamer GPU sessions"]
     fn tiny_agent_completes_an_act_and_learn_cycle() {
@@ -2926,6 +2975,7 @@ mod tests {
             .behavior_train
             .read_param("behavior.actor.out.bias", &mut initial_actor_parameter);
         let report = agent.learn().expect("nine frames fill one tiny sequence");
+        assert_learner_readback_ledger(&report, agent.config());
         assert_eq!(report.learner_step, 1);
         assert_eq!(report.replay_len, 9);
         assert!(report.world.total_loss.is_finite());
@@ -3028,6 +3078,7 @@ mod tests {
             );
         }
         let report = restored.learn().expect("refilled replay learns");
+        assert_learner_readback_ledger(&report, restored.config());
         assert_eq!(report.learner_step, 2);
         assert_eq!(report.behavior.actor_update_scale, 1.0);
         drop(restored);

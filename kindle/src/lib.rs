@@ -12,7 +12,8 @@ pub mod vision;
 
 pub use dreamer::{
     ActionMode, BehaviorMetrics, DreamerAgent, DreamerConfig, DreamerCore, FrameFlags, LearnReport,
-    LearnTiming, LossScales, ModelProvenance, ModelSize, Reward, VectorDreamerAgent, WorldMetrics,
+    LearnTiming, LossScales, ModelProvenance, ModelSize, ReadbackTiming, Reward,
+    VectorDreamerAgent, WorldMetrics,
 };
 pub use env::{Environment, RgbFrame, Transition};
 

@@ -1,14 +1,30 @@
 //! Batched output transfers into CPU-cached memory on the shared GPU queue.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use meganeura::{Session, runtime::ExternalSlot};
+
+/// Host wall time at explicit readback boundaries, not GPU idle or kernel time.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct ReadbackTiming {
+    pub calls: usize,
+    pub bytes: usize,
+    /// Validation, buffer growth and transfer-command recording.
+    pub prepare_seconds: f64,
+    pub submit_seconds: f64,
+    /// Includes unfinished producer compute and the transfer itself.
+    pub wait_seconds: f64,
+    /// Copy from the completed CPU-visible buffer into output slices.
+    pub copy_seconds: f64,
+}
 
 pub(crate) struct Readback {
     gpu: Arc<blade_graphics::Context>,
     encoder: blade_graphics::CommandEncoder,
     buffer: Option<blade_graphics::Buffer>,
     capacity: usize,
+    timing: ReadbackTiming,
 }
 
 impl Readback {
@@ -23,7 +39,12 @@ impl Readback {
             encoder,
             buffer: None,
             capacity: 0,
+            timing: ReadbackTiming::default(),
         }
+    }
+
+    pub fn take_timing(&mut self) -> ReadbackTiming {
+        std::mem::take(&mut self.timing)
     }
 
     /// Kindle graphs expose f32 outputs. Copy requested prefixes in one submit;
@@ -38,6 +59,7 @@ impl Readback {
 
     /// Read independent, already-submitted producers with one transfer/wait.
     pub fn read_many(&mut self, outputs: &mut [(&Session, usize, &mut [f32])]) {
+        let stage = Instant::now();
         let mut bytes = 0usize;
         for (session, index, output) in outputs.iter() {
             assert!(Arc::ptr_eq(&self.gpu, &session.context()));
@@ -79,13 +101,19 @@ impl Readback {
                 offset += size;
             }
         }
+        self.timing.prepare_seconds += stage.elapsed().as_secs_f64();
+        let stage = Instant::now();
         let completion = self.gpu.submit(&mut self.encoder);
+        self.timing.submit_seconds += stage.elapsed().as_secs_f64();
+        let stage = Instant::now();
         assert!(
             self.gpu
                 .wait_for(&completion, !0)
                 .expect("GPU readback wait failed"),
             "readback did not complete"
         );
+        self.timing.wait_seconds += stage.elapsed().as_secs_f64();
+        let stage = Instant::now();
         let mut offset = 0;
         for (_, _, output) in outputs {
             // The completed transfer initialized these aligned f32 regions in
@@ -100,6 +128,9 @@ impl Readback {
             }
             offset += std::mem::size_of_val(*output);
         }
+        self.timing.copy_seconds += stage.elapsed().as_secs_f64();
+        self.timing.calls += 1;
+        self.timing.bytes += bytes;
     }
 }
 
@@ -115,6 +146,14 @@ impl Drop for Readback {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readback_timing_serializes_only_numeric_fields() {
+        let value = serde_json::to_value(ReadbackTiming::default()).unwrap();
+        let fields = value.as_object().unwrap();
+        assert_eq!(fields.len(), 6);
+        assert!(fields.values().all(|value| value.as_f64() == Some(0.0)));
+    }
 
     #[test]
     #[ignore = "requires a GPU"]
@@ -144,6 +183,18 @@ mod tests {
             readback.read(&session, &mut [(0, &mut prefix)]);
             assert_eq!(prefix, [-values[0], -values[1]]);
             assert_eq!(readback.capacity, 12 * std::mem::size_of::<f32>());
+            let timing = readback.take_timing();
+            assert_eq!(timing.calls, 2);
+            assert_eq!(timing.bytes, 14 * std::mem::size_of::<f32>());
+            assert!(timing.prepare_seconds >= 0.0);
+            assert!(timing.submit_seconds >= 0.0);
+            assert!(timing.wait_seconds >= 0.0);
+            assert!(timing.copy_seconds >= 0.0);
+            assert_eq!(readback.take_timing().calls, 0);
+            assert_eq!(readback.take_timing().bytes, 0);
+            let mut empty = [];
+            readback.read(&session, &mut [(0, &mut empty)]);
+            assert_eq!(readback.take_timing().calls, 0);
         }
     }
 
@@ -170,6 +221,9 @@ mod tests {
             readback.read_many(&mut [(&b, 0, &mut right), (&a, 0, &mut left)]);
             assert_eq!(left, [-scale; 6]);
             assert_eq!(right, [scale; 6]);
+            let timing = readback.take_timing();
+            assert_eq!(timing.calls, 1);
+            assert_eq!(timing.bytes, 12 * std::mem::size_of::<f32>());
         }
     }
 }
