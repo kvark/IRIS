@@ -379,7 +379,7 @@ gradient and end-to-end checks, not a free optimization. Preserve full recurrenc
 replay credit, independent streams and the memory reserve. No live experiment
 binary or setting was changed for this inspection.
 
-The input/readback timer candidate is staged separately at `69a9de9`
+The host/readback timer candidate is staged separately at `ec074a5`
 on `exp/learner-readback-profile`, based on `73273df`. It counts nonempty
 readbacks and requested bytes and separates preparation, submission, completion
 wait and CPU output copying inside the existing posterior/imagination totals.
@@ -388,12 +388,28 @@ the `set_input` calls, preserving their order relative to producer submission.
 At B16/T64/12M the expected input counts are 448 posterior and 109 imagination
 writes per update; measured counters must confirm the source inventory.
 Neither host write time nor requested bytes measures PCIe utilization.
-The candidate adds no GPU work or waits. CPU tests (77 Kindle, five gym), workspace/Python
+Separate host-section timers cover posterior sampling, imagination feature
+assembly, two-hot decoding, action/prior sampling and post-rollout targets.
+They include the 150 MiB imagined-feature buffer's assembly at this shape;
+its size is source-derived, not a measured allocation cost. All substage timers
+remain contained in the existing parent totals.
+The candidate adds no GPU work or waits. CPU tests (78 Kindle, five gym), workspace/Python
 Clippy and formatting pass; hardware tests, numerical parity and instrumentation
 overhead remain unmeasured until the active queue exits. It is not part of the
 current experiment's executable. Its bounded validation plan is
-[`2026-09-07-readback-profile.md`](https://github.com/kvark/kindle/blob/69a9de9/docs/experiments/2026-09-07-readback-profile.md)
+[`2026-09-07-readback-profile.md`](https://github.com/kvark/kindle/blob/ec074a5/docs/experiments/2026-09-07-readback-profile.md)
 on that branch. A blocked host is not necessarily an idle GPU.
+
+Read-only seed-1 host checks on September 7 found about 117 MiB in swap despite
+roughly 19 GiB available RAM. Over 30.07 s, the trainer had zero major faults,
+unchanged swap residency and no increase in memory-pressure stall totals.
+A separate five-second process sample averaged 69,122 minor faults/s and 4.8%
+system CPU relative to one logical CPU. Minor faults do not require disk reads;
+neither sample identifies the responsible allocation or establishes hot paging.
+The source-derived feature-buffer size is a profiling lead, not causal proof.
+No memory policy or live learner setting was changed. The observations are in
+`runs/levjepa-vector-pong-20260906/seed1-paging-20260907-1006.json` and
+`seed1-host-cpu-20260907-1013.json` beside it.
 
 ## Next measured changes
 
