@@ -149,53 +149,68 @@ zero-update control is a structural reference for all seeds; parameter deltas
 are reported only for its matching seed 0. These model archives are diagnostic
 artifacts, not exact recovery of replay, RNGs or live environment state.
 
-Seed 0's 20,000-action save contains 4,619 updates, with zero reported training
-debt. Read-only inspection verifies every learner report through that save,
-its logged checkpoint identity, all 241 tensor names/shapes/dtypes, finite
-parameters and optimizer moments, and nonnegative second moments. World,
-actor, value and slow-value parameters have changed from the matched seed-0
-zero-update control. The four checkpoint files are preserved under
-`runs/levjepa-vector-pong-20260906/seed0-020000-checkpoint/`, with hashes matching
-the completed save; the rolling training target remains untouched.
+All listed seed-0 prefixes pass read-only inspection: finite learner reports
+with continuous counters, logged checkpoint identity, all 241 tensor
+names/shapes/dtypes, finite parameters and optimizer moments, and nonnegative
+second moments. World, actor, value and slow-value parameters have changed
+from the matched zero-update control. Every archived file matches the completed
+save's fingerprint; the rolling training target remains untouched. All listed
+games are natural completions, with **no wins or timeouts** and zero reported
+training debt.
 
-This prefix completes 17 natural games, mean return **−20.7647**, no wins or
-timeouts. It is not frozen evaluation or evidence of mastery. Over the first
-and last 100 updates, mean future-prediction loss falls from 36,778.23 to
-165.98, while policy entropy falls from 2.8903 to 0.2460. These use changing
-training batches, not held-out data: decreasing model loss and a concentrated
-policy do not establish better control. Do not tune or select an endpoint from
-this intermediate result. The inspection is saved in
-`seed0-020000-inspection.json`; it does not replace the full-run accounting or
-final frozen mastery audit.
+| Aggregate actions | Updates | Games | Mean return | Future loss | Policy entropy |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 20,000 | 4,619 | 17 | −20.7647 | 165.98 | 0.2460 |
+| 40,000 | 9,619 | 42 | −20.8333 | 82.80 | 0.6299 |
+| 60,000 | 14,619 | 53 | −20.5472 | 79.02 | 0.2943 |
 
-The watcher preserved and inspected the **40,000-action** save at
-**2026-09-07 01:49:13 UTC**: 9,619 finite learner reports, all 241 saved tensors
-valid, 42 natural games, mean **−20.8333**, no wins or timeouts. The last 100
-updates average future-prediction loss 82.80 and policy entropy 0.6299. In the
-35k–40k window, four completed games average −20.75; five positive points and
-94 negative points were observed. Sample-weighted replay reward predictions
-average +0.0313/−0.8795/−0.00295 for positive/negative/zero events. Negative-event
-prediction is improving, but reliable gameplay is not demonstrated.
+Loss and entropy are means over each prefix's last 100 updates; the first 100
+updates average 36,778.23 and 2.8903. These use changing training batches, not
+held-out data: decreasing model loss and a concentrated policy do not establish
+better control. Reports are `seed0-{step:06d}-inspection.json`; they do not
+replace full-run accounting or final frozen evaluation. The watcher completed
+the 40k/60k inspections at 2026-09-07 01:49:13/02:34:59 UTC.
 
-`seed0-040000-inspection.json` records the complete intermediate inspection.
+In the 35k–40k window, four completed games average −20.75, with five positive
+points and 94 negative points observed. By 55k–60k, four completed games average
+−19.25, with 14 positive points and 58 negative points. Sample-weighted replay
+reward predictions improve from +0.0313/−0.8795/−0.00295 to
++0.3526/−0.8670/−0.00243 for positive/negative/zero events. This is modest
+progress, not reliable gameplay.
+
 The read-only `learning-context-{start}-{end}.json` reports compare exact
 5k-action windows with the interrupted serial LeVJEPA seed and historical DINO
-seeds. At 35k–40k, the historical DINO seeds average −8.67 and −17.67, versus
-−20.75 here. Different collection protocols and executables make this context,
-not a matched frontend comparison. Do not select an earlier checkpoint or
-change the live recipe in response to these intermediate scores.
+seeds. At 55k–60k, serial LeVJEPA averages −13 across two games; DINO seeds 0/1
+average +14.33/−6.5 across three/two games, versus −19.25 here. Different
+collection protocols and executables make this context, not a matched frontend
+comparison. Do not select an earlier checkpoint or change the live recipe in
+response to these intermediate scores.
 
-The steady 10,000–20,000-action window takes 1,385.86 s for 2,500 updates:
-**7.216 aggregate actions/s**, 0.902 per stream, and **0.481× aggregate game
-time** (0.060× per stream). Learning consumes 1,069.26 s, observation handling
-309.24 s and environment stepping only 4.31 s. The 1 Hz trace contains 1,385
-samples in this window: mean GPU activity 60.22%, mean power 138.12 W and peak
-14,148 MiB (13.82 GiB). Memory is stable, but the GPU is not saturated and
-super-real-time training remains unachieved. CPU subprocess environments would
-not address the measured bottleneck.
+Steady throughput windows each contain 10,000 aggregate actions and 2,500
+updates. GPU activity and power are means from the 1 Hz trace, with
+1,385/1,379/1,377 samples respectively:
 
-The 30,000–40,000-action window remains similar: 1,379.31 s, 2,500 updates,
-**7.250 aggregate actions/s**, mean GPU activity 59.62%, power 138.82 W and the
-same 14,148 MiB peak. Learning takes 1,071.22 s, observation handling 300.44 s,
-and environment stepping 4.31 s. There is no reported training debt or growing
-GPU-memory footprint in these windows.
+| Action window | Wall seconds | Aggregate actions/s | GPU activity | Power, W |
+| --- | ---: | ---: | ---: | ---: |
+| 10k–20k | 1,385.86 | 7.216 | 60.22% | 138.12 |
+| 30k–40k | 1,379.31 | 7.250 | 59.62% | 138.82 |
+| 50k–60k | 1,377.25 | 7.261 | 60.12% | 138.56 |
+
+Peak memory remains 14,148 MiB (13.82 GiB) in all three windows. Each spends
+1,069–1,072 s learning, 300–310 s handling observations and only 4.3 s stepping
+environments, with zero reported training debt. Aggregate simulation speed is
+about 0.48× the game clock, or 0.060× per stream. Memory is stable, but the GPU
+is not saturated and super-real-time training remains unachieved. CPU subprocess
+environments would not address the measured bottleneck.
+
+## Follow-up diagnosis if final gates fail
+
+Probe the trained recurrent belief and imagined reward/action predictions
+before expanding the visual input or adding temporal machinery. The existing
+held-out frozen-feature probes already compare LeVJEPA's projected 14×14 grid
+with its pooled 7×7 grid: mean position R² is 0.9621 versus 0.9612, and motion
+R² is 0.6178 versus 0.6338. These linear probes do not establish the cause of
+weak control, but do not justify a fourfold input expansion as the default fix.
+Their reports are retained in the original LeVJEPA experiment; per-frame probe
+features were not cached. Do not launch another GPU probe alongside the pinned
+learning queue just to regenerate those data.
