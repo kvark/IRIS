@@ -65,6 +65,8 @@ reliable learning.
   Judge useful throughput at the declared replay ratio, not GPU busy percentage
   alone. Retain the GPU memory safety margin; a larger batch needs both a timing
   win and a learning-quality comparison before becoming the new control.
+  Lower replay ratios are separate learning-throughput ablations, not identical-
+  recipe speedups; retain the original-ratio control and test learning quality.
   Host readback waits include unfinished producer computation and transfers;
   do not relabel them GPU idle time. Substage timings are contained in their
   parent stage totals, not additional elapsed time.

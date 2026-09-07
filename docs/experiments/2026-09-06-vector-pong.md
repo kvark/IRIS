@@ -548,6 +548,16 @@ mean −21, and 0 positive / 140 negative point events. Its learner metrics and
 sample-weighted reward predictions are in `seed2-window-15000-20000.json`.
 Keep these early diagnostics separate from the declared final frozen result.
 
+`seed2-10000-20000-runtime-budget.json` derives a conditional cost model from
+this same window: 0.42796 s per full learner call, including cleanup outside
+the internal `LearnTiming` total, and 30.6938 ms of other work per aggregate
+action. Holding those costs fixed projects 0.7918× at R128 and 1.1605× at R64;
+these recipes have not been run. At unchanged R256, aggregate 1× needs learner
+calls at or below 0.14386 s; aggregate 2× needs 0.01054 s unless other costs
+also improve. The model excludes construction and changes in policy, episode
+length, replay distribution, scheduling or GPU occupancy. It is an experiment-
+selection aid, not a measured speedup, retained-quality result or adopted change.
+
 ## Queued diagnostic handoff
 
 The bounded readback worker started at **2026-09-07 14:26:18 UTC**, PID 1852657

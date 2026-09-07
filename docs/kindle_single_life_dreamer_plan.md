@@ -243,6 +243,13 @@ At 15 actions/s and R256, B16×T64 requires 3.75 updates/s. Updates alone at
 about 0.43 s each exceed the wall-time budget. Removing a sleep or accelerating
 only game rendering cannot fix that.
 
+Seed 2's warmed N=8 window makes the constraint concrete: full learner calls
+take 0.428 s/update, and other work takes 30.69 ms per aggregate action. Holding
+that other cost fixed, aggregate 1× requires at most 0.144 s/update (about 3×
+faster); 2× leaves only 10.5 ms/update. These are conditional arithmetic budgets,
+not measured optimizations. Perception cost matters especially for the 2× target;
+aggregate acceleration still does not establish per-stream or free-running play.
+
 The next performance target is sustained >1× playing plus training on simple
 games, with 2× as a useful stretch target and retained learning quality.
 Profile the complete vectorized loop against N=1: environment/capture, preprocessing/encoder,
@@ -294,6 +301,11 @@ Smaller models or lower train ratios are valid experiments, not free speedups.
 Change one variable, report actual updates per real interaction, and retest
 learning. Do not claim acceleration by dropping owed training, weakening the
 reward task or changing the simulated control interval unnoticed.
+After profiling, include R128/R64 as separate bounded learning-throughput
+ablations if systems changes alone fall short. A constant-cost model of the
+measured N=8 window estimates only 0.79× at R128 and 1.16× at R64; neither is
+a measured result or evidence of retained learning. Keep the R256 control and
+compare both interaction efficiency and wall-clock learning quality before adoption.
 
 Use mind-games' time control for accelerated development. Separately test a
 single actor in free-running mode later: timestamp observations and executed
