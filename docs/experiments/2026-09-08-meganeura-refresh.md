@@ -19,6 +19,17 @@ result is
 pushed as `kindle-refresh-20260908`. No PR was merged and the user's local
 Meganeura worktree was not changed.
 
+Rechecked upstream at 17:51 UTC on September 8: main now points to
+[`970da8e3`](https://github.com/kvark/meganeura/commit/970da8e3182c46cc1f4078d9f2ff7be7cdeef08c),
+one release-preparation commit after `df11bb0c`. Both source and test Git trees
+are identical, as is the dependency lock. Changes are package version 0.3.0,
+package exclusions, release documentation and CI packaging verification; there
+are no additional runtime fixes. The reviewed objects and tree identities are
+in `runs/meganeura-release-review-20260908.2YmT2Y/`. Keep the validated `a7e2efd9`
+runtime pin and live pilot unchanged. It includes all current upstream runtime
+fixes plus the two required cache patches, but is not the latest upstream
+release-metadata commit.
+
 The refresh includes upstream's batched partial cooperative-convolution fix,
 Winograd cache sharing, logical checkpoint validation and training-state
 hardening. Kindle now resolves the same published Blade 0.9.0 package as
