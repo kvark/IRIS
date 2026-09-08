@@ -29,9 +29,9 @@ pub use replay::{FrameFlags, Reward};
 /// Upstream DreamerV3 revision used as the behavioral contract.
 pub const DREAMERV3_UPSTREAM_REV: &str = "e3f02248693a79dc8b0ebd62c93683888ddaccfe";
 /// Meganeura revision used to compile and optimize the baseline graphs.
-pub const MEGANEURA_REV: &str = "35a410ce1262c396e137db5bfab1d58e35cee50a";
-/// Blade revision providing the shared graphics runtime.
-pub const BLADE_REV: &str = "b208f3b1f97196c2971436b5726e61e71b149c37";
+pub const MEGANEURA_REV: &str = "a7e2efd9d2d1c14e654658fa1b736582d96e16cd";
+/// Exact published Blade package providing the shared graphics runtime.
+pub const BLADE_REV: &str = "crates.io:blade-graphics@0.9.0#6f50161de1b828487e321d0df36cba06666e624a6a943293485f0dd0e97ef6ea";
 
 #[cfg(test)]
 mod tests {
@@ -43,20 +43,41 @@ mod tests {
         const WORKSPACE_LOCK: &str = include_str!("../../../Cargo.lock");
         const PYTHON_LOCK: &str = include_str!("../../../python/Cargo.lock");
 
-        for (repository, revision) in [("meganeura", MEGANEURA_REV), ("blade", BLADE_REV)] {
-            let manifest_pin =
-                format!("git = \"https://github.com/kvark/{repository}\", rev = \"{revision}\"");
-            assert!(
-                KINDLE_MANIFEST.contains(&manifest_pin),
-                "Kindle manifest does not pin reported {repository} revision {revision}"
-            );
+        let manifest_pin =
+            format!("git = \"https://github.com/kvark/meganeura\", rev = \"{MEGANEURA_REV}\"");
+        assert!(KINDLE_MANIFEST.contains(&manifest_pin));
+        let (blade_version, blade_checksum) = BLADE_REV
+            .strip_prefix("crates.io:blade-graphics@")
+            .unwrap()
+            .split_once('#')
+            .unwrap();
+        assert!(KINDLE_MANIFEST.contains(&format!("blade-graphics = \"={blade_version}\"")));
 
-            let lock_pin =
-                format!("git+https://github.com/kvark/{repository}?rev={revision}#{revision}");
-            for (name, lock) in [("workspace", WORKSPACE_LOCK), ("Python", PYTHON_LOCK)] {
+        for (name, lock) in [("workspace", WORKSPACE_LOCK), ("Python", PYTHON_LOCK)] {
+            let packages = |wanted: &str| {
+                lock.split("[[package]]")
+                    .filter(|package| package.lines().any(|line| line == wanted))
+                    .collect::<Vec<_>>()
+            };
+            let meganeura = packages("name = \"meganeura\"");
+            assert_eq!(
+                meganeura.len(),
+                1,
+                "{name} has conflicting Meganeura sources"
+            );
+            assert!(meganeura[0].contains(&format!(
+                "git+https://github.com/kvark/meganeura?rev={MEGANEURA_REV}#{MEGANEURA_REV}"
+            )));
+            let blade = packages("name = \"blade-graphics\"");
+            assert_eq!(blade.len(), 1, "{name} has conflicting GPU context types");
+            for identity in [
+                format!("version = \"{blade_version}\""),
+                "source = \"registry+https://github.com/rust-lang/crates.io-index\"".into(),
+                format!("checksum = \"{blade_checksum}\""),
+            ] {
                 assert!(
-                    lock.contains(&lock_pin),
-                    "{name} lock does not resolve reported {repository} revision {revision}"
+                    blade[0].contains(&identity),
+                    "{name} mismatches {BLADE_REV}"
                 );
             }
         }
