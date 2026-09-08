@@ -105,9 +105,13 @@ reliable learning.
   The active five-game objective targets Pong, Boxing, Freeway, Breakout and
   Qbert; see `docs/experiments/2026-09-08-atari-five.md`. The isolated
   `exp/atari-five` v2 runner starts with a fixed 200k-action Boxing R64/R256
-  pilot and 75k-action N8 frozen evaluations. R64 training is complete with valid
-  accounting; its final frozen evaluation is running. Finish the frozen runs,
-  untrained control and R256 arm before recipe selection. Keep the pinned
+  pilot and 75k-action N8 frozen evaluations. R64 seed 0 passes its frozen gate:
+  40/40 wins, mean +51.55, with complete checkpoint/declaration/replay checks.
+  The original queue and follower stopped on a zero-update control restore
+  failure. Preserve their artifacts; validate explicit zero optimizer moments
+  on fresh saves, retaining strict restore checks, then continue only the failed
+  control and pending R256 arm in new artifacts. Do not rerun the successful
+  R64 arm or select a ratio before both arms and the control finish. Keep the pinned
   package/runner unchanged while live. One pilot seed does not establish
   reliability: require a separately declared fresh three-seed replication
   using 1009, 2017 and 3019.

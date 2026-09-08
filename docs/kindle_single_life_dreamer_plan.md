@@ -187,8 +187,11 @@ compares replay ratios 64 and 256 on Boxing, with the same LeVJEPA model,
 200k fresh interactions per arm and 75k frozen sampled actions. Training and
 evaluation both use eight independent streams sharing one learner. Version-2
 episode accounting and game-specific scoring are isolated from the historical
-Pong controls. R64 training has completed its fixed budget with valid accounting;
-its final frozen evaluation is running, and the control/R256 results are pending.
+Pong controls. R64 seed 0 passes its fixed frozen Boxing gate: 40/40 natural wins,
+mean +51.55, no cutoffs or updates, with complete checkpoint and replay audits.
+The untrained control hit a zero-update checkpoint restore edge case; preserve
+the successful arm and failure, validate explicit-zero optimizer saves, then
+continue the control and R256 arm in fresh artifacts. Their results are pending.
 A one-seed pilot is not reliability: select a recipe, then
 declare a fresh three-seed replication and each remaining game's real
 completion criterion before its training. Do not call a positive score a win

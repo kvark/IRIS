@@ -1,6 +1,7 @@
 # Five-game learning campaign: Boxing replay-ratio pilot
 
-Declared and launched 2026-09-08. **In progress, not a competence result.**
+Declared and launched 2026-09-08. **R64 seed 0 passes its frozen Boxing gate;
+the pilot and three-seed reliability are incomplete.**
 The active objective is reliable learning and wins/task completion on five
 Atari games. The completed backend refresh and world-model diagnostics are
 enabling work, not satisfaction of that objective.
@@ -20,7 +21,7 @@ independent replication. Preserve the failed original three-seed Pong gate.
 | Game | Task meaning | Status of acceptance protocol |
 | --- | --- | --- |
 | Pong | Win the match; mean return ≥15 and ≥90% natural wins over ≥20 games | Existing 200k-action recipe fails two of three seeds; new recipe must be separately declared |
-| Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | Implemented for the pilot; frozen scores pending |
+| Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | R64 seed 0 passes: 40/40 frozen wins, mean +51.55; control, R256 and replication pending |
 | Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | Observer verified against the actual ROM; holding UP scores 21 |
 | Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Positive and negative actual-ROM fixtures verified; declare its training/evaluation budgets next |
 | Qbert | Sustained progression: first-pyramid completion in ≥90% of ≥20 complete episodes, plus mean final score ≥15,000 | First-pyramid observer verified; one cleared pyramid alone is not mastery |
@@ -141,13 +142,13 @@ or by the CPU adapter results.
 
 The [task-observer follow-up](2026-09-08-atari-task-observers.md) adds actual
 Qbert/Freeway ROM checks and CPU-only full-trajectory reconstruction. Its pinned
-follower will populate the [frozen Boxing report](../../runs/atari-five-20260908.db0XSW/analysis/report.html)
-with both final ratio arms, the zero-update control and complete stream-0
-videos. The retained first 20k-action R64 checkpoint also has all 241 expected
+follower published the R64 result in the [frozen Boxing report](../../runs/atari-five-20260908.db0XSW/analysis/report.html),
+including its complete stream-0 video. The other rows are still pending.
+The retained first 20k-action R64 checkpoint also has all 241 expected
 tensors, finite values and nonnegative optimizer second moments; this checks
 numerical health, not seed reliability.
 
-### Completed R64 training, frozen evaluation in progress
+### Completed R64 training and frozen gate
 
 The fresh R64 arm ran from 08:27:26 to 11:17:16 UTC and exited successfully at
 exactly 200,000 actions and 12,405 updates. Its complete version-2 ledger passes:
@@ -163,13 +164,49 @@ The complete loop spent 56.3% observing (perception plus posterior inference),
 42.5% learning and 1.1% in the emulator. These are end-to-end pilot costs with
 disclosed CPU overlap, not calibrated GPU idle gaps or an equal-recipe speedup.
 
-The final-checkpoint 75k-action frozen evaluation started at 11:17:19 UTC.
-Its sampled-policy header restores the final 200,000/12,405 counters and exactly
-matches the saved metadata and all three tensor-file hashes. The source records
-are `boxing-r64-seed0-train.{jsonl,accounting.json,checkpoint.json}` and
-`boxing-r64-seed0-eval.jsonl` in the declared run root. Frozen scoring and replay
-remain pending until that full evaluation completes. The untrained control and
-fresh R256 arm follow in the unchanged order; do not select a recipe yet.
+The final-checkpoint 75k-action frozen evaluation ran from 11:17:19 to
+11:55:22 UTC. It finished with **40/40 natural wins, mean +51.55, no draws,
+losses or cutoffs, and zero updates**. Eight partial final episodes are not
+graded. This passes the unchanged ≥20-game, ≥50-mean, ≥90%-win gate for this
+one policy. The stream-bootstrap 95% mean interval is [47.25, 55.325], and
+the descriptive Wilson win interval is [0.9124, 1]. These describe the frozen
+policy, not variation across independently trained models; the score margin
+is modest and three-seed reliability is still untested.
+
+The independent scorer verifies the original declaration, final 200,000/12,405
+counters, saved/restored identity and all 241 complete finite tensors. CPU
+reconstruction exactly checks every action, reward, boundary, reset and actual
+frame count across all eight streams. Original raw pixels were not recorded.
+The [full stream-0 movie](../../runs/atari-five-20260908.db0XSW/analysis/boxing-r64-seed0-eval.mp4)
+contains 37,485 frames at 60 Hz (10m25s): all five matches, with returns
++54/+56/+60/+60/+67, then the ungraded tail. Stream 0 was specified before
+results, not selected for its wins. H.264 metadata and a decoded first-match
+frame were also inspected; its 82–28 score agrees with the +54 ledger.
+
+The authoritative records in the declared root are the complete train/eval
+JSONL files, `analysis/boxing-r64-seed0-eval.score.json` and
+`analysis/boxing-r64-seed0-eval.replay.json`. The evaluation log SHA-256 is
+`f17c7cfee0fecc3abb34e338519e3a026789a36a67e1ecd3a4231981c5db77c6`;
+the movie SHA-256 is
+`8f5f471c7e2530677cf68bccd4f7402233747f7133e9e5d15c7aa50151ae1247`.
+
+### Preserved zero-update restore failure
+
+The untrained initialization completed its declared eight actions and zero
+updates, but its frozen restore exited at 11:57:47 UTC before any evaluation
+actions. Meganeura lazily omits unallocated optimizer moments when saving;
+Kindle's strict training restore rejected missing
+`adam_m.world.dynamics.core.dynin0.weight`. The launcher and CPU follower both
+stopped. Preserve their failure records and completed R64 evidence; the
+original queue must not be restarted.
+
+The save-only repair and hardware/continuation gates are declared in
+`runs/zero-update-checkpoint-20260908.yxaalA/declaration.md`. Materialize the
+initial zero moments without taking an optimizer step; keep all restore
+requirements and already trained state unchanged. Validate fresh and trained
+round trips, then regenerate only the failed control in a new artifact root,
+checking its initial weights/actions exactly against the original. Finish the
+untrained control and original-recipe R256 arm before selecting a ratio.
 
 ### Longer early runtime window
 

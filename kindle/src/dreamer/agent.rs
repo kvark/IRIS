@@ -859,6 +859,19 @@ impl DreamerCore {
     pub fn save_checkpoint(&mut self, checkpoint: impl AsRef<Path>) -> io::Result<()> {
         let checkpoint = checkpoint.as_ref();
         fs::create_dir_all(checkpoint)?;
+        for session in [&mut self.world_train, &mut self.behavior_train] {
+            if session.memory_summary().adam_state_bytes == 0 {
+                if session.adam_step_count() != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "cannot save a stepped optimizer without its moments",
+                    ));
+                }
+                // Materialize the lazy zero state without taking an optimizer step.
+                configure_d3_optimizer(session, &self.config, 0, 0.0);
+                session.clear_optimizer();
+            }
+        }
         let world_temporary = checkpoint.join(format!("{CHECKPOINT_WORLD}.tmp"));
         let behavior_temporary = checkpoint.join(format!("{CHECKPOINT_BEHAVIOR}.tmp"));
         let slow_temporary = checkpoint.join(format!("{CHECKPOINT_SLOW_VALUE}.tmp"));
@@ -3074,6 +3087,77 @@ mod tests {
         assert!(report.world.total_loss.is_finite() && report.behavior.total_loss.is_finite());
         drop(restored);
         fs::remove_dir_all(checkpoint).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires GPU; saves complete optimizer state before any update"]
+    fn untrained_checkpoints_roundtrip_before_and_after_acting() {
+        let gpu = Arc::new(crate::init_gpu_context().unwrap());
+        for steps in [0, 8] {
+            let mut source = DreamerCore::with_gpu(DreamerConfig::tiny(3), Arc::clone(&gpu));
+            let snapshots = [
+                &source.world_train,
+                &source.behavior_train,
+                &source.behavior_slow,
+            ]
+            .map(|session| {
+                let names = session
+                    .param_names()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                let values =
+                    session.read_params(&names.iter().map(String::as_str).collect::<Vec<_>>());
+                (names, values)
+            });
+            assert_eq!(source.world_train.memory_summary().adam_state_bytes, 0);
+            assert_eq!(source.behavior_train.memory_summary().adam_state_bytes, 0);
+            let observation = || Observation::from_vec(vec![0.25; Observation::LEN]);
+            if steps != 0 {
+                source.begin_episode(observation());
+                for _ in 0..steps {
+                    source.act(ActionMode::Sample, None);
+                    source.observe(observation(), Reward::default(), FrameFlags::default());
+                }
+            }
+            let checkpoint = std::env::temp_dir().join(format!(
+                "kindle-untrained-checkpoint-{}-{steps}",
+                std::process::id()
+            ));
+            assert!(!checkpoint.exists());
+            source.save_checkpoint(&checkpoint).unwrap();
+            assert_eq!(source.learner_step(), 0);
+            assert_eq!(source.environment_step(), steps);
+            drop(source);
+
+            let metadata = read_checkpoint_metadata(&checkpoint).unwrap();
+            let restored =
+                DreamerCore::restore_with_gpu(&checkpoint, Arc::clone(&gpu), metadata).unwrap();
+            assert_eq!(restored.learner_step(), 0);
+            assert_eq!(restored.environment_step(), steps);
+            assert_eq!(restored.replay_len(), 0);
+            for ((names, expected), session) in snapshots.into_iter().zip([
+                &restored.world_train,
+                &restored.behavior_train,
+                &restored.behavior_slow,
+            ]) {
+                let names = names.iter().map(String::as_str).collect::<Vec<_>>();
+                assert_eq!(session.read_params(&names), expected);
+                assert_eq!(session.adam_step_count(), 0);
+                for name in names
+                    .into_iter()
+                    .filter(|name| session.has_param_grad(name))
+                {
+                    let mut moment = vec![f32::NAN; session.param_size(name).unwrap()];
+                    session.read_adam_m(name, &mut moment);
+                    assert!(moment.iter().all(|value| *value == 0.0));
+                    session.read_adam_v(name, &mut moment);
+                    assert!(moment.iter().all(|value| *value == 0.0));
+                }
+            }
+            drop(restored);
+            fs::remove_dir_all(checkpoint).unwrap();
+        }
     }
 
     #[test]
