@@ -94,6 +94,32 @@ The source-bound check is `runs/learning-review-20260908.W6fAHO/replication-seed
 Training/evaluation budgets and the chosen recipe remain to be declared before
 those fresh runs; changing seed spacing alone does not establish reliability.
 
+### Replication acceptance checker
+
+The isolated candidate now includes `python/examples/audit_atari_campaign.py`.
+It requires all 15 game/seed records, unchanged task criteria, one complete
+declared config, per-game fixed action budgets, fresh training, sampled frozen
+evaluation, final-checkpoint identity, complete tensors and replay binding.
+Inputs include content-pinned source, backend, encoder, ROMs and checkpoint
+schema. Reused artifact paths or trained tensor states are rejected. Every
+seed must pass; two good seeds cannot hide a third failure.
+
+The declaration uses `kindle-atari-five-replication-v1`, seeds 1009/2017/3019
+and N8 training/evaluation. Its complete `config` omits `seed`; each run supplies
+that declared seed. `header` binds the remaining common runtime/model identity;
+`games` fixes budgets and criteria, and `runs` fixes the 15 train/evaluation/
+checkpoint/replay paths. Declare and pin this manifest before launching its
+first run; the checker also rejects recorded starts before declaration time.
+No replication recipe or budgets have been selected by adding this checker.
+
+Its 76 new CPU tests bring the candidate suite to 477 passes. The real retained
+R64 and untrained 75k-action/40-match replay bindings pass; altered scores fail,
+and the real seed-0 pilot cannot be reused as fresh seed 1009. Evidence is in
+`runs/atari-campaign-audit-20260908.yhmold/`, including `pytest-final.xml` and
+`completed-boxing-check.json`. These are checker validations, not 15 trained
+models. `replication_passed` covers the declared final task gates; untrained
+controls and the broader goal-completion audit remain separate.
+
 ## Implementation and artifacts
 
 Candidate worktree: `/x/Code/.kindle-atari-five`, branch `exp/atari-five`.

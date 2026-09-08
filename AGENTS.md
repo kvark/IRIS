@@ -132,7 +132,11 @@ reliable learning.
   negative controls; preserve its distinction from Kindle's learned results.
   The separate candidate `audit_atari_tasks.py` covers Freeway/Breakout/Qbert
   final checkpoint and replay scoring. A task-gate pass alone does not verify
-  campaign budgets or independent training seeds. Keep those acceptance checks.
+  campaign budgets or independent training seeds. The separate candidate
+  `audit_atari_campaign.py` checks all 15 declared game/seed records, fixed
+  budgets/config, fresh models, final checkpoints and replays. Its CPU checks
+  are complete, not a replication result. Keep untrained controls and the
+  broader goal-completion audit; do not infer them from `replication_passed`.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted
