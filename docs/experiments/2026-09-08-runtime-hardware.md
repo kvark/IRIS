@@ -10,7 +10,7 @@ This is a runtime diagnostic and parity experiment, not another mastery test.
 ## Prepared inputs
 
 The uninstrumented Rust parent is `73273df`; its Rust sources and lockfiles
-still match the main branch. The active Python extension remains
+match the main branch at declaration. The active Python extension remains
 `f663dd9317bd934f173b240041ea68b7e21e0f7d037ebaf22b9549a9ae91bb4e`.
 The isolated candidates are:
 
@@ -143,9 +143,8 @@ complete reports, checkpoint health, pins and actual worker termination.
 Readback waits include unfinished producer computation and transfers; these
 numbers do not identify GPU idle gaps. No compilation or CPU-heavy tests overlap
 the canaries; read-only monitoring/documentation continues and other host activity
-is uncontrolled. Pixel parity and buffer-reuse validation remain pending;
-the subsequent external capture result is recorded below. Neither candidate
-is adopted by this result.
+is uncontrolled. The subsequent external capture and timer pixel results are
+recorded below. This synthetic result alone does not adopt either candidate.
 
 ## Vulkan capture result: GPU-workload gate failed
 
@@ -183,18 +182,79 @@ metadata and remain ignored, not published. Continue native host timing and
 the independently gated pixel/buffer-reuse comparisons; GPU idle attribution
 remains unmeasured.
 
-## Pixel comparison in progress
+## Timer pixel result
 
 The seven CPU tests for the bounded pixel collector pass, covering complete and
 partial log tails, startup without a header, malformed completed JSON, invalid
 job selection and cleanup limited to owned children. The collector and tests are
 in `runs/pixel-runtime-20260908.Y2y0ZQ/`; source SHA-256 is
 `34cf06fa59ffae1234091cdd1f60b8f37d2f0f010125472167817dec325d240d`.
-The first uninstrumented job starts at approximately **02:50 UTC**. This is not
-yet a completed pixel parity or throughput result.
+The four jobs run from approximately **02:50 to 03:20 UTC** in AB, BA order.
+All finish their 3,072 aggregate actions and 387 updates with zero debt. Both
+pairs have exactly equal headers apart from timing/library identity, every
+action/reward/reset event, all non-timing learner reports and all 241 named
+parameter/optimizer tensors plus metadata. None completes a natural game;
+this validates runtime parity, not competence or comprehensive reset coverage.
+
+Each row below is the declared final 1,024-action, 256-update window:
+
+| Pair / arm | Actions/s | Aggregate / per-stream game/wall | Full learner ms/update | GPU activity |
+| --- | ---: | ---: | ---: | ---: |
+| AB / parent | 7.310883 | 0.487392 / 0.060924 | 429.284 | 58.307% |
+| AB / timer | 7.400747 | 0.493383 / 0.061673 | 424.261 | 60.871% |
+| BA / timer | 7.326749 | 0.488450 / 0.061056 | 428.067 | 58.121% |
+| BA / parent | 7.349580 | 0.489972 / 0.061246 | 426.384 | 57.164% |
+
+Candidate/parent wall-time ratios are **0.987857 and 1.003116**; full learner-call
+ratios are **0.988300 and 1.003949**. Keep both signs and the spread. No material
+instrumentation overhead is visible in this bounded check, and the faster first
+pair is not an instrumentation speedup. These are exact-recipe runtime controls,
+not proof of super-real-time training. Mean power is 138.0–140.1 W; every job
+peaks at 14,148 MiB VRAM, with at least 99% 1 Hz window coverage.
+
+The two timer windows measure 160.318/160.713 ms per world update,
+60.453/60.824 ms posterior stages and 154.008/155.493 ms imagination stages.
+Contained within those stages are 78.747/79.178 ms of total readback waits,
+29.705/30.280 ms of imagination input calls, 29.510/31.340 ms of target assembly,
+9.730/9.859 ms of feature preparation and 9.481/8.929 ms of imagination readback
+copying. All 387 reports in each timed job match the declared 64/31 readback
+and 448/109 input-call counts and their payload sizes. Waits still include
+producer work. Full learner calls account for approximately 79% of the window;
+observation/perception takes about 21%, and environment stepping under 1%.
+
+Construction takes 65.571/66.009/66.502/67.694 s in execution order. The first
+learner report is at action 1,528 after 45.338/44.786/45.405/45.386 s from the
+run header; that interval includes the first update, not pure prefill. Complete
+execution including prefill takes 256.724/253.475/256.278/255.537 s, separately
+from construction. Its approximately 12 actions/s must not replace the warmed
+training figure: almost half of these short runs precede replay eligibility.
 
 Every job retains approximately 1 Hz host process/fault/memory snapshots with
 the latest complete observed action, in addition to the selected-device GPU
 trace and unchanged runner's native timings. Host samples are not exact
-action-boundary snapshots. All collector tests and trace import/validation work
-finish before this first job's declared 2,048–3,072-action measured window.
+action-boundary snapshots. The nearby host windows incur approximately
+9.87–9.91 million minor faults each, zero major faults and zero sampled swap.
+Their observed resident ranges span 7.74–8.14 GiB across processes; these are
+host snapshots, not exact-boundary resource counters or allocation timings.
+All collector tests and trace import/validation work finish before the first
+declared measured window. No owned build, CPU-heavy test or other GPU workload
+overlaps any measured window.
+
+`analyze_pixel.py` revalidates complete accounting, tensor health, native timing
+counts and device/clock coverage. `compare_pair.py` compares all events, reports
+and named tensors. Per-job artifacts and both complete comparisons remain in
+the same pixel directory. Comparison SHA-256 values are
+`728ec30d4974e46ccc7a911347090ce86d93205c1999b495f0e37e88743a7dfe`
+and `c2af2e0b99fef7b2c23ba4ce5a89a7bf4b7e61ee6bda988c3269935876ac3af7`.
+The timer remains an isolated diagnostic; its validation does not adopt buffer
+reuse or establish calibrated GPU idle gaps.
+
+## Buffer-reuse hardware gate in progress
+
+After both timer pixel pairs pass, the bounded reuse worker starts at
+**03:21 UTC** under `runs/host-features-hardware-20260908.e41jkw/`.
+Both exact hardware tests pass. The three fresh eight-update parent/candidate
+pairs run next in the declared AB, BA, AB order, with the uninstrumented parent.
+The worker retains all command-output hashes and whole-child CPU/fault counters;
+those counters include construction, prefill and checkpointing. Warmed full-call
+analysis and the separate reuse pixel gate are required before adoption.

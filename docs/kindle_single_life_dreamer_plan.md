@@ -233,7 +233,10 @@ for implementation checks and rejected candidates, and the
 complete training accounting and final frozen gates. Neither batched inference
 nor GPU busy percentage establishes super-real-time training or mastery.
 The [serialized hardware checks](experiments/2026-09-08-runtime-hardware.md)
-declare the next timing, trace and host-buffer comparisons before execution.
+validate native host timers with three exact synthetic pairs and two exact pixel
+pairs; measured timer overhead spans small differences of both signs. External
+captures contain no usable GPU-workload timeline, so calibrated GPU idle gaps
+remain unknown. Host-buffer reuse has its own hardware and pixel decision gate.
 
 Measure acceleration as simulated game seconds / wall seconds. Report cold
 construction separately and also include end-to-end run cost. Track actual
@@ -271,8 +274,9 @@ counts 95 explicit posterior/imagination readbacks per update. The
 confirms those counts, exact numerical parity and no material timer overhead
 in three short alternating pairs. It measures about 79 ms of readback waits,
 32 ms of imagination input writes and 30 ms of target assembly per update;
-waits include producer computation, not just idle time. Validate the pixel loop
-and attribute GPU compute separately. Prefer eliminating deterministic-state and
+waits include producer computation, not just idle time. The pixel gate confirms
+these transfer counts and exact actions, reports and tensors; GPU compute still
+needs separate attribution. Prefer eliminating deterministic-state and
 feature copies before changing sampling/return arithmetic. Even removing both
 whole stages at zero cost would not reach aggregate real time at the current
 recipe; world training and perception also need measured improvements.
@@ -286,8 +290,8 @@ reproduces the allocation-fault reduction in a CPU packing test; native parity
 and end-to-end timing gates remain pending. It is not adopted.
 The [bounded hardware/parity handoff](experiments/2026-09-06-vector-pong.md#queued-diagnostic-handoff)
 has completed its three hardware tests and three synthetic canary pairs.
-Calibrated queue gaps, pixel-loop validation and buffer-reuse adoption remain
-separate gates. Continue serializing GPU-heavy follow-ups.
+Timer pixel-loop validation also passes. Calibrated queue gaps and buffer-reuse
+adoption remain separate gates. Continue serializing GPU-heavy follow-ups.
 
 Use one learner with batched live inference, not one full GPU model per game.
 Keep independent visual caches, beliefs, RNG streams and sequence replay. Sample
@@ -328,8 +332,8 @@ the no-time-control requirement.
 ### First: resolve the frontend's gameplay and runtime gates
 
 Native LeVJEPA inference, numerical parity and causal streaming checks are
-implemented; both completed frozen Pong seeds win games but fail the mastery
-gate. The
+implemented. All three frozen Pong seeds win games, but only seed 2 passes
+the predeclared mastery gate; the all-seeds recipe fails. The
 [released model card](https://huggingface.co/galilai-group/LeVJEPA-VideoMix-Large)
 describes a 303.1M-parameter ViT-L/16 trained on 16-frame clips, with block-causal
 attention. It is much larger than today's ViT-S and cannot be assumed faster or
@@ -343,7 +347,7 @@ CLS output. Frozen-feature probes compare position and motion cues against
 DINO and compare the projected 14×14 grid with pooled 7×7×64 targets. These
 are representation diagnostics, not a trained-RSSM or gameplay comparison.
 
-1. Complete the declared training seeds and retain failed final endpoints.
+1. Retain all three completed final endpoints and the failed all-seeds decision.
    Probe the trained recurrent belief and imagined reward/action predictions
    before inferring that weak control requires more temporal input or a larger grid.
 2. Hold the causal world objective, actor settings, executable and collection

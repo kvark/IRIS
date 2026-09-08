@@ -53,6 +53,11 @@ reliable learning.
   before starting any other GPU job. Do not modify its pinned worker or inputs.
   It validates those hardware tests and synthetic canary pairs only;
   completion does not imply profiler adoption, GPU-idle attribution or pixel parity.
+  The separate timer pixel gate also passes both fixed-budget pairs with exact
+  actions/reports/tensors. Track its measured overhead and the independently
+  gated buffer-reuse candidate in
+  `docs/experiments/2026-09-08-runtime-hardware.md`. Neither coarse GPU activity
+  nor the two API-only external captures establishes calibrated GPU idle gaps.
 - Change one scientific variable per comparison. Report real interactions,
   learner updates, wall time, model/data provenance, all seeds, and failures.
   A short integration test or an historical score is not a matched benchmark.
