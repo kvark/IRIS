@@ -102,6 +102,13 @@ reliable learning.
 - Test dense Atari, sparse Atari, and a small native persistent environment.
   Positive terminal return is a Pong win rule, not a general Atari competence
   criterion. Keep game-specific wins separate from generic episode accounting.
+  The active five-game objective targets Pong, Boxing, Freeway, Breakout and
+  Qbert; see `docs/experiments/2026-09-08-atari-five.md`. The isolated
+  `exp/atari-five` v2 runner starts with a fixed 200k-action Boxing R64/R256
+  pilot and 75k-action N8 frozen evaluations. Keep its pinned package/runner
+  unchanged while live. One pilot seed does not establish reliability; require
+  a separately declared fresh three-seed replication. Verify actual child
+  processes before waiting, and do not treat completed tooling as five-game wins.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted
