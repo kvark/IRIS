@@ -282,24 +282,38 @@ The complete evidence is `boxing-untrained.{score.json,replay.json,mp4}` in
 the continuation root.
 
 Fresh R256 training started at 13:07:57 UTC with the original `831c631d…`
-package, matching the completed R64 arm. Its header verifies seed 0, no restore,
-zero starting counters, N8 and the declared 200k-action/R256 LeVJEPA recipe.
-The first 2k actions produce the expected 119 updates with zero debt; early
-throughput includes prefill and is not a steady-state result. Its final 75k
-frozen evaluation is still pending. The continuation pins both packages,
-initial state, repair evidence, old results, runner and auditors. It scores and
-reconstructs each complete frozen run without automatic recipe selection or
-restart. Finish R256 before choosing a ratio; fresh three-seed replication and
-the other games still remain.
+package, matching the completed R64 arm, and exited successfully at 19:35:05 UTC.
+It completed exactly **200,000 actions and 49,619 updates**, with zero debt.
+The complete v2 ledger passes: 240 natural training episodes, 225 positive
+returns, mean +67.2542 and no cutoffs. These include learning and exploration;
+they are not a frozen-policy score or permission to select a ratio.
 
-The scheduled 20k-action R256 checkpoint is retained in
-`runs/boxing-r256-health-20260908.YeSTeX/checkpoint`. Its CPU check binds the
-recorded save and log prefix, verifies all 241 complete finite tensors against
-the validated logical schema, and checks nonnegative optimizer second moments.
-World/behavior native counters and Kindle's learner counter all equal 4,619;
-the slow-value copy has zero optimizer steps, and training debt is zero.
-`summary.json` records this numerical-health check, not a final-policy or
-seed-reliability result. No GPU restore/evaluation or live recipe change occurred.
+The action loop took 23,157.568 s, at 8.6365 actions/s and **0.575605× aggregate
+real time**, about 0.07195× per stream using actual emulator frames. The full
+process took 23,227.472 s including startup/shutdown. These are descriptive
+end-to-end costs with disclosed CPU-development overlap, including the failed
+memory-plan probes and a bounded release-test build; they are not calibrated
+AB/BA measurements. The source log SHA-256 is
+`9e3dd79585b3137568a14f04a3ce912d23ffb3ada3e52a8e8e45fc5718384210`.
+
+The final checkpoint passes the separate CPU check in
+`runs/boxing-r256-final-health-20260908.KPgM8u/`: all 241 expected tensors are
+complete and finite, second moments are nonnegative, native logical layouts
+match the validated schema, and the return normalizer is finite and ordered.
+World/behavior optimizer steps are both 49,619; the slow-value copy has zero.
+Its fingerprints match both the final save and the evaluation's startup record.
+That header-only restore binding does not certify the unfinished evaluation.
+The retained 20k snapshot and earlier health evidence remain in
+`runs/boxing-r256-health-20260908.YeSTeX/`.
+
+The 75k-action/N8 sampled frozen evaluation started at 19:35:07 UTC from that
+final checkpoint, retaining the original native package and learner counter.
+Its policy score, complete ledger and CPU replay remain pending. The continuation
+pins both packages, initial state, repair evidence, old results, runner and
+auditors; keep them unchanged while live. It scores and reconstructs each
+complete frozen run without automatic recipe selection or restart. Finish R256
+evaluation before choosing a ratio; fresh three-seed replication and the other
+games still remain.
 
 ### Fixed 40k–50k runtime comparison
 
