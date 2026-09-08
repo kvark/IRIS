@@ -329,53 +329,40 @@ impl RssmCore {
         let hidden = graph.silu(hidden);
         let gates = self.gru.forward(graph, hidden, batch);
 
-        // BlockLinear emits [block0(reset,candidate,update), block1(...), ...].
-        let gate_width = 3 * block_deter;
-        let mut outputs = Vec::with_capacity(self.blocks);
-        for block in 0..self.blocks {
-            let gate = slice_columns(
-                graph,
-                gates,
-                batch,
-                self.blocks * gate_width,
-                block * gate_width,
-                gate_width,
-            );
-            let reset = slice_columns(graph, gate, batch, gate_width, 0, block_deter);
-            let candidate = slice_columns(graph, gate, batch, gate_width, block_deter, block_deter);
-            let update =
-                slice_columns(graph, gate, batch, gate_width, 2 * block_deter, block_deter);
-            let reset = graph.sigmoid(reset);
-            let candidate = graph.mul(reset, candidate);
-            let candidate = graph.tanh(candidate);
-            let minus_one = graph.constant(vec![-1.0; batch * block_deter], &[batch, block_deter]);
-            let update = graph.add(update, minus_one);
-            let update = graph.sigmoid(update);
-            let old = slice_columns(
-                graph,
-                deter,
-                batch,
-                self.deter,
-                block * block_deter,
-                block_deter,
-            );
-            let updated = graph.mul(update, candidate);
-            let ones = graph.constant(vec![1.0; batch * block_deter], &[batch, block_deter]);
-            let negative_update = graph.neg(update);
-            let keep = graph.add(ones, negative_update);
-            let kept = graph.mul(keep, old);
-            outputs.push(graph.add(updated, kept));
-        }
-        let mut result = outputs[0];
-        let mut width = block_deter;
-        for output in &outputs[1..] {
-            result = concat_columns(graph, result, *output, batch, width, block_deter);
-            width += block_deter;
-        }
-        debug_assert_eq!(width, self.deter);
         debug_assert_eq!(self.action_count, config_action_width(graph, action));
-        result
+        grouped_gru_update(graph, gates, deter, batch, self.blocks, block_deter)
     }
+}
+
+fn grouped_gru_update(
+    graph: &mut Graph,
+    gates: NodeId,
+    deter: NodeId,
+    batch: usize,
+    blocks: usize,
+    block_deter: usize,
+) -> NodeId {
+    // BlockLinear emits [batch, block, (reset, candidate, update), channel].
+    // Blocks are independent here; only the surrounding RSSM steps recur.
+    let rows = batch * blocks;
+    let width = 3 * block_deter;
+    let reset = slice_columns(graph, gates, rows, width, 0, block_deter);
+    let candidate = slice_columns(graph, gates, rows, width, block_deter, block_deter);
+    let update = slice_columns(graph, gates, rows, width, 2 * block_deter, block_deter);
+    let reset = graph.sigmoid(reset);
+    let candidate = graph.mul(reset, candidate);
+    let candidate = graph.tanh(candidate);
+    let minus_one = graph.constant(vec![-1.0; rows * block_deter], &[rows, block_deter]);
+    let update = graph.add(update, minus_one);
+    let update = graph.sigmoid(update);
+    let old = graph.reshape(deter, &[rows, block_deter]);
+    let updated = graph.mul(update, candidate);
+    let ones = graph.constant(vec![1.0; rows * block_deter], &[rows, block_deter]);
+    let negative_update = graph.neg(update);
+    let keep = graph.add(ones, negative_update);
+    let kept = graph.mul(keep, old);
+    let result = graph.add(updated, kept);
+    graph.reshape(result, &[batch, blocks * block_deter])
 }
 
 fn config_action_width(graph: &Graph, action: NodeId) -> usize {
@@ -709,5 +696,167 @@ impl ObservationDecoder {
         let value = self.patch_norm.forward(graph, value);
         let value = graph.silu(value);
         self.output.forward(graph, value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gate_graph(batch: usize, blocks: usize, width: usize, grouped: bool) -> Graph {
+        let mut graph = Graph::new();
+        let gates = graph.parameter("gates", &[batch, blocks * 3 * width]);
+        let deter = graph.parameter("deter", &[batch, blocks * width]);
+        let output = if grouped {
+            grouped_gru_update(&mut graph, gates, deter, batch, blocks, width)
+        } else {
+            // Preserve the former per-block layout as an independent reference.
+            let mut outputs = Vec::new();
+            for block in 0..blocks {
+                let gate = slice_columns(
+                    &mut graph,
+                    gates,
+                    batch,
+                    blocks * 3 * width,
+                    block * 3 * width,
+                    3 * width,
+                );
+                let reset = slice_columns(&mut graph, gate, batch, 3 * width, 0, width);
+                let candidate = slice_columns(&mut graph, gate, batch, 3 * width, width, width);
+                let update = slice_columns(&mut graph, gate, batch, 3 * width, 2 * width, width);
+                let reset = graph.sigmoid(reset);
+                let candidate = graph.mul(reset, candidate);
+                let candidate = graph.tanh(candidate);
+                let minus_one = graph.constant(vec![-1.0; batch * width], &[batch, width]);
+                let update = graph.add(update, minus_one);
+                let update = graph.sigmoid(update);
+                let old = slice_columns(
+                    &mut graph,
+                    deter,
+                    batch,
+                    blocks * width,
+                    block * width,
+                    width,
+                );
+                let updated = graph.mul(update, candidate);
+                let ones = graph.constant(vec![1.0; batch * width], &[batch, width]);
+                let negative_update = graph.neg(update);
+                let keep = graph.add(ones, negative_update);
+                let kept = graph.mul(keep, old);
+                outputs.push(graph.add(updated, kept));
+            }
+            let mut result = outputs[0];
+            for (index, &output) in outputs.iter().enumerate().skip(1) {
+                result = concat_columns(&mut graph, result, output, batch, index * width, width);
+            }
+            result
+        };
+        let weights = graph.input("weights", &[batch, blocks * width]);
+        let weighted = graph.mul(output, weights);
+        let loss = graph.mean_all(weighted);
+        graph.set_outputs(vec![loss, output]);
+        graph
+    }
+
+    #[test]
+    fn grouped_gate_graph_is_smaller_and_autodiffs() {
+        let reference = gate_graph(3, 4, 8, false);
+        let grouped = gate_graph(3, 4, 8, true);
+        assert!(grouped.nodes().len() * 2 < reference.nodes().len());
+        for graph in [&reference, &grouped] {
+            let (plan, _) = meganeura::compile_training_graph(graph);
+            assert!(!plan.dispatches.is_empty());
+        }
+    }
+
+    #[test]
+    #[ignore = "checks grouped RSSM gates and all input gradients on GPU"]
+    fn grouped_gates_match_legacy_and_analytic_gradients() {
+        use super::super::runtime::build_session;
+        use meganeura::Mode;
+        use std::sync::Arc;
+
+        let gpu = Arc::new(crate::init_gpu_context().unwrap());
+        for (batch, blocks, width, training) in [
+            (3, 4, 8, true),
+            (1, 8, 256, true),
+            (6, 8, 256, true),
+            (16, 8, 256, true),
+            (1024, 8, 256, false),
+        ] {
+            let cells = batch * blocks * width;
+            let gates = (0..3 * cells)
+                .map(|i| (((i * 37 + 11) % 257) as f32 - 128.0) * 0.0625)
+                .collect::<Vec<_>>();
+            let deter = (0..cells)
+                .map(|i| (i as f32 * 0.17).sin())
+                .collect::<Vec<_>>();
+            let weights = (0..cells)
+                .map(|i| ((i % 13) as f32 - 6.0) * 0.25)
+                .collect::<Vec<_>>();
+            let mut expected = vec![0.0_f32; cells];
+            let mut gate_grad = vec![0.0_f32; 3 * cells];
+            let mut deter_grad = vec![0.0_f32; cells];
+            for i in 0..cells {
+                let offset = (i / width) * 3 * width + i % width;
+                let reset = 1.0 / (1.0 + (-f64::from(gates[offset])).exp());
+                let candidate = (reset * f64::from(gates[offset + width])).tanh();
+                let update = 1.0 / (1.0 + (1.0 - f64::from(gates[offset + 2 * width])).exp());
+                let old = f64::from(deter[i]);
+                expected[i] = (update * candidate + (1.0 - update) * old) as f32;
+                let scale = f64::from(weights[i]) / cells as f64;
+                let candidate_grad = scale * update * (1.0 - candidate * candidate);
+                gate_grad[offset] =
+                    (candidate_grad * f64::from(gates[offset + width]) * reset * (1.0 - reset))
+                        as f32;
+                gate_grad[offset + width] = (candidate_grad * reset) as f32;
+                gate_grad[offset + 2 * width] =
+                    (scale * (candidate - old) * update * (1.0 - update)) as f32;
+                deter_grad[i] = (scale * (1.0 - update)) as f32;
+            }
+            let mut previous: Option<Vec<f32>> = None;
+            for grouped in [false, true] {
+                let graph = gate_graph(batch, blocks, width, grouped);
+                let mode = if training {
+                    Mode::Training
+                } else {
+                    Mode::Inference
+                };
+                let mut session = build_session(&graph, &gpu, mode, false);
+                session.set_parameter("gates", &gates);
+                session.set_parameter("deter", &deter);
+                session.set_input("weights", &weights);
+                session.step();
+                session.wait();
+                let mut actual = vec![0.0; cells];
+                session.read_output_by_index(1, &mut actual);
+                assert_close(&actual, &expected);
+                if training {
+                    for (name, expected) in [("gates", &gate_grad), ("deter", &deter_grad)] {
+                        let mut gradient = vec![0.0; expected.len()];
+                        session.read_param_grad(name, &mut gradient);
+                        assert_close(&gradient, expected);
+                        actual.extend(gradient);
+                    }
+                }
+                if let Some(reference) = previous {
+                    assert_close(&actual, &reference);
+                }
+                previous = Some(actual);
+            }
+        }
+    }
+
+    fn assert_close(actual: &[f32], expected: &[f32]) {
+        assert_eq!(actual.len(), expected.len());
+        let mut error = 0.0_f64;
+        let mut reference = 0.0_f64;
+        for (&a, &b) in actual.iter().zip(expected) {
+            assert!(a.is_finite() && b.is_finite());
+            assert!((a - b).abs() < 3e-6, "{a} differs from {b}");
+            error += (f64::from(a) - f64::from(b)).powi(2);
+            reference += f64::from(b).powi(2);
+        }
+        assert!((error / reference.max(f64::MIN_POSITIVE)).sqrt() < 3e-5);
     }
 }
