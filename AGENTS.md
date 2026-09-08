@@ -87,6 +87,9 @@ reliable learning.
   win and a learning-quality comparison before becoming the new control.
   Lower replay ratios are separate learning-throughput ablations, not identical-
   recipe speedups; retain the original-ratio control and test learning quality.
+  The completed Boxing 40k–50k windows attribute 74.4% of R256 time to learning
+  and 56.1% of R64 time to observation. Use actual emulator-frame increments
+  for game clocks, and reprofile the dominant stage after recipe selection.
   Host readback waits include unfinished producer computation and transfers;
   do not relabel them GPU idle time. Substage timings are contained in their
   parent stage totals, not additional elapsed time.

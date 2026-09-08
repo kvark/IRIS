@@ -210,8 +210,9 @@ and two failing fixtures, not only synthetic threshold tests. None counts as
 learned competence or enters training replay.
 Separate match/task scorers cover all five declared gates and require final
 checkpoint and frozen-replay evidence. This is evaluation readiness, not
-completed learning; campaign budgets and fresh independent seeds still need
-their own verification.
+completed learning. The candidate campaign checker additionally requires all
+15 game/seed records, fixed budgets/config and fresh models; its passing CPU
+checks are not actual replication results. Untrained controls remain separate.
 The fresh replication will use seeds 1009/2017/3019: their eight live RNG
 inputs do not overlap under the existing `seed + stream` rule. Adjacent roots
 would share most live RNG streams. This does not explain the old Pong variation
@@ -383,10 +384,15 @@ Smaller models or lower train ratios are valid experiments, not free speedups.
 Change one variable, report actual updates per real interaction, and retest
 learning. Do not claim acceleration by dropping owed training, weakening the
 reward task or changing the simulated control interval unnoticed.
-After profiling, include R128/R64 as separate bounded learning-throughput
-ablations if systems changes alone fall short. Keep the R256 control and compare
-both interaction efficiency and wall-clock learning quality before adoption;
-arithmetic extrapolation is not measured speed or evidence of retained learning.
+The [Boxing pilot](experiments/2026-09-08-atari-five.md)
+now measures R64 against R256. Its fixed 40k–50k windows reach 19.69 versus
+8.69 actions/s: 1.312× versus 0.579× aggregate real time, or 0.164× versus
+0.0724× per stream using actual emulator frames. R256 spends 74.4% of elapsed
+time learning; R64 spends 56.1% observing (perception plus posterior inference).
+R64 also performs four times fewer updates. Keep the R256 control and finish
+both frozen evaluations before choosing a ratio; the R64 seed-0 pass is not
+three-seed reliability. Compare interaction efficiency and wall-clock learning
+quality before adoption, then optimize the dominant stage of that recipe.
 
 Use mind-games' time control for accelerated development. Separately test a
 single actor in free-running mode later: timestamp observations and executed

@@ -299,24 +299,39 @@ the slow-value copy has zero optimizer steps, and training debt is zero.
 `summary.json` records this numerical-health check, not a final-policy or
 seed-reliability result. No GPU restore/evaluation or live recipe change occurred.
 
-### Longer early runtime window
+### Fixed 40k–50k runtime comparison
 
-The fixed 40k–50k R64 interval executes 10,000 actions and 625 updates in
-507.845 seconds: **19.691 actions/s, 1.313× aggregate real time, 0.164× per
-stream**. Its 508 GPU samples average 82.12% activity and peak at 14,212 MiB.
-Python stage totals are 284.987 s observing (56.1%), 216.736 s learning (42.7%),
-5.394 s emulating (1.1%), and less than 1 s combined acting/resetting. Observation
-time includes perception and posterior inference; it is not a pure encoder
-measurement or a calibrated GPU idle-gap measurement.
+Both intervals are complete. The R256 window was fixed before reaching 40k;
+the comparator verifies matching native/frontend/protocol/config identity
+apart from the replay ratio. Each interval executes 10,000 actions and 39,976
+actual emulator frames across eight streams. This is a descriptive pilot cost
+with permitted CPU overlap, not a calibrated AB/BA benchmark or a quality gate.
 
-This is a descriptive window with disclosed CPU analysis overlap, not an
-AB/BA benchmark or a learning-quality result. It changes which stage deserves
-the next profile **if** R64 preserves useful learning. The first four complete
-training episode cohorts had means −0.25, +1.5, −0.125 and −3.375. That early
-prefix alone did not demonstrate useful improvement and does not replace the
-final frozen gate.
-The prefix-bound measurement and raw interval endpoints are in
-`runs/atari-task-observers-20260908.TzCy2B/boxing-r64-40k-50k.json`.
+| Replay ratio | Learner updates | Elapsed seconds | Actions/s | Aggregate / per-stream real time | Mean GPU activity |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| R64 | 625 | 507.845 | 19.691 | 1.31195× / 0.16399× | 82.12% |
+| R256 | 2,500 | 1,150.461 | 8.692 | 0.57913× / 0.07239× | 68.59% |
+
+Observation costs are nearly unchanged: 284.987 versus 288.246 seconds.
+Learning costs 216.736 versus 855.981 seconds, or 346.8 versus 342.4 ms/update.
+Thus learning occupies 74.4% of R256's interval, while observing occupies 56.1%
+of R64's. Emulation costs 5.394 seconds in either arm. Observation includes
+perception and posterior inference; these host stages are not pure encoder or
+kernel timings. Reprofile the dominant stage of the eventual replicated recipe,
+not GPU activity alone. R64's lower cost also buys four times fewer updates;
+finish the frozen comparison before selecting a ratio.
+
+The 508/1,150 GPU samples cover both windows, with maximum gaps of 1.001/1.018
+seconds. Peak memory is 14,212 MiB in both; mean sampled power is 185.75/153.64 W.
+Coarse activity and power do not identify occupancy or calibrated idle gaps.
+Source-log and GPU-monitor prefixes, endpoints, coverage checks and the
+comparison are in `runs/boxing-ratio-window-20260908.ybLT7Z/summary.json`.
+
+Preserve the earlier R64 artifact in
+`runs/atari-task-observers-20260908.TzCy2B/boxing-r64-40k-50k.json`. Its nominal
+four-frames/action conversion gave 1.31274× aggregate real time. The new result
+uses the recorded 39,976 frames, correcting that small difference without
+changing any raw timing, action or score evidence.
 
 ### Bounded learning-equation review
 
