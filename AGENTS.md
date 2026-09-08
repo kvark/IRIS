@@ -219,6 +219,17 @@ reliable learning.
   Feature error is not imagined RGB, AUC is not magnitude calibration, and a
   strong model score is not policy competence. Preserve the original executable
   for historical model diagnostics; do not rewrite backend metadata to restore.
+  The isolated `exp/common-world-probe` candidate at `a425b29` has 282 passing
+  Python CPU tests. The declared follow-up in `runs/common-world-20260908.7gWHsJ`
+  CPU-reconstructs all 11,388 first-match transitions and pins 35 inputs. It
+  explicitly conditions every old model on the same three recordings, preserving
+  strict unforced replay separately. Require three exact same-model H1 diagonals
+  before the six cross-model runs, with common initial/target RGB and feature
+  hashes. GPU work has not started; run only after the entire Freeway queue
+  completes and releases the device. Use historical native f663dd93, not the new
+  package. Keep source and declaration pins intact. Forced controls are offline
+  diagnostics, not that model's policy rollout; another policy's logged return
+  is not unbiased ground truth for the evaluated critic.
 - Distinguish video-encoder initialization, action-conditioned world pretraining
   and policy-skill transfer. Missing action/reward labels are not NOOP/zero.
   The isolated `exp/world-pretraining` candidate includes world-only updates and

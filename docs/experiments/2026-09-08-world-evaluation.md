@@ -125,3 +125,26 @@ including meaningful event counts and the complete observed returns. Keep
 policy quality and model quality as distinct gates. Longer all-seed training or
 changed loss/replay settings remain new experiments, not repairs to the failed
 200k-action mastery result. No swarm or actor/learner separation is required.
+
+## Common-recording follow-up declared, GPU checks pending
+
+The isolated `exp/common-world-probe` candidate at `a425b29` adds explicit
+recorded-action conditioning while retaining strict own-policy replay as a
+separate mode. All 282 Python CPU tests pass. The declaration in
+`runs/common-world-20260908.7gWHsJ/manifest.json` pins 35 inputs; CPU reconstruction
+verifies all 11,388 transitions, including 62 positive and 29 negative points.
+
+All three final models will see the same three first matches. Score every
+one-step target, require exact reproduction of the original three H1 diagonals
+before cross-model comparison, and verify identical initial/target RGB and
+feature hashes. Record unmasked action probabilities/value before forcing
+controls, without calling the forced trajectory the evaluated model's own play.
+Cross-policy logged returns are not unbiased critic targets. These recordings
+were held out from training, but have already been inspected; this is a
+diagnostic dataset, not untouched confirmation.
+
+The CPU result-binding tests also pass using explicitly fabricated new outputs
+against the real source prefixes and original traces. They do not validate GPU
+predictions. The diagnostic is not running and has no new model-quality result;
+its nine serialized GPU combinations wait for the entire Freeway pilot queue.
+The original executable and all historical results remain unchanged.
