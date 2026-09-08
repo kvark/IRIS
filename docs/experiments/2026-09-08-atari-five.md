@@ -106,13 +106,18 @@ All artifacts are in
 The candidate's `python/examples/audit_atari.py` reuses the vector ledger and
 checks final saved/restored identities, logical tensor names/shapes/dtypes,
 finite weights and optimizer moments. Match scoring is intentionally limited
-to Pong and Boxing; other games fail until their rules exist. It includes
+to Pong and Boxing; other games are rejected by that match-specific entry point. It includes
 stream-resampled mean-return intervals and descriptive Wilson win intervals,
 neither of which measures variation across independent training seeds. Its
 optional `--declaration` additionally checks the pilot's budgets, seeds,
 recipe, frontend and content pins; a generic match score alone does not
 certify that a declared campaign was followed.
 The original Pong mastery auditor and its decision are not reinterpreted.
+The separate [task scorer](2026-09-08-atari-task-observers.md#frozen-task-scoring)
+now handles the declared Freeway, Breakout and Qbert gates, including complete
+replay binding and final-checkpoint checks. Its 63 new tests bring the candidate
+suite to 401 passes. It does not certify campaign budgets or independent seeds;
+those remain required before declaring reliable five-game results.
 
 Validation so far: 281 Python tests on the built package before launch; 313
 including the new scorer/declaration tests. Native v2 integration is complete;

@@ -199,6 +199,10 @@ produces complete-stream videos and outcome ledgers without another GPU run.
 Breakout's two-wall rule is now verified by an actual scripted 864-point game
 and two failing fixtures, not only synthetic threshold tests. None counts as
 learned competence or enters training replay.
+Separate match/task scorers cover all five declared gates and require final
+checkpoint and frozen-replay evidence. This is evaluation readiness, not
+completed learning; campaign budgets and fresh independent seeds still need
+their own verification.
 
 Use cheap adapter/reward and numerical checks first, then fixed-budget learning
 runs. Choose the video-encoder candidate through a bounded comparison before
