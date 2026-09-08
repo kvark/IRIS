@@ -7,6 +7,7 @@ Untrained controls and the broader goal-completion audit remain separate.
 """
 
 import argparse
+from datetime import datetime
 import json
 import math
 from pathlib import Path
@@ -22,7 +23,7 @@ import replay_atari
 from audit_atari import read_run, require, sha256
 
 
-PROTOCOL = 'kindle-atari-five-replication-v1'
+PROTOCOL = 'kindle-atari-five-replication-v2'
 SEEDS = [1009, 2017, 3019]
 CRITERIA = {**matches.MATCH_CRITERIA, **tasks.TASK_CRITERIA}
 ATARI_HEADER = dict(protocol='kindle-vector-v2', atari_protocol='published',
@@ -44,8 +45,10 @@ def verify_declaration(declaration):
     require(declaration['protocol'] == PROTOCOL, 'unsupported replication declaration')
     require(declaration['training_seeds'] == SEEDS, 'changed fresh replication seeds')
     streams = declaration['training_streams']
-    require(streams == declaration['evaluation_streams'] == 8
-            and type(streams) is int, 'replication requires eight streams')
+    require(type(streams) is int and streams in (4, 6, 8)
+            and type(declaration['evaluation_streams']) is int
+            and streams == declaration['evaluation_streams'], 'changed declared stream count')
+    require(set(declaration['runtime_gate']) == {'manifest', 'summary'}, 'missing runtime gate inputs')
     seed = declaration['evaluation_seed']
     require(type(seed) is int and 0 <= seed < 2**32, 'invalid frozen environment seed')
     timestamp = declaration['declared_unix_time']
@@ -96,6 +99,55 @@ def verify_inputs(declaration):
     for game in CRITERIA:
         rom = check_atari_adapter.rom_identity(game)
         require(pins.get(rom['path']) == rom['sha256'] == atari_tasks.ROM_SHA256[game], 'unpinned game ROM')
+    verify_runtime_gate(declaration)
+
+
+def verify_runtime_gate(declaration):
+    """Bind the selected geometry to a completed, pinned memory/runtime comparison."""
+    paths = {name: Path(path) for name, path in declaration['runtime_gate'].items()}
+    for path in paths.values():
+        require(path.is_absolute() and declaration['pins'].get(str(path)) == sha256(path),
+                'unpinned runtime gate')
+    manifest = json.loads(paths['manifest'].read_text())
+    result = json.loads(paths['summary'].read_text())
+    require(manifest['protocol'] == result['protocol'] == 'kindle-vector-memory-runtime-v1'
+            and manifest['order'] == [8, 6, 4, 4, 6, 8], 'changed runtime gate protocol')
+    require(manifest['required_free_mib'] == 2048, 'changed free-memory requirement')
+    config = dict(manifest['config'])
+    config.pop('seed')
+    require(config == declaration['config'], 'runtime gate used a different learner')
+    for path, expected in manifest['pins'].items():
+        require(sha256(path) == expected, 'changed runtime gate input')
+    for role in ('runner', 'wrapper', 'native', 'encoder'):
+        require(declaration['pins'][declaration['inputs'][role]] in manifest['pins'].values(),
+                'runtime gate used a different executable or encoder')
+    streams = declaration['training_streams']
+    pair = [row for row in result['pairs'] if row['streams'] == streams]
+    require(len(pair) == 1 and pair[0]['repeated_state_and_traces_exact'] is True
+            and pair[0]['memory_gate_passed'] is True, 'selected streams failed runtime gate')
+    rows = [row for row in result['runs'] if row['streams'] == streams]
+    require([row['name'] for row in rows] == [f'order0-n{streams}', f'order1-n{streams}'],
+            'missing reverse-order runtime repeats')
+    first, second = rows
+    require(first['state'] == second['state']
+            and first['train_trace_sha256'] == second['train_trace_sha256']
+            and first['restore_trace_sha256'] == second['restore_trace_sha256'],
+            'runtime repeat state or trace differs')
+    start = datetime.fromisoformat(manifest['utc']).timestamp()
+    for row in rows:
+        require(row['checkpoint']['finite_and_complete'] is True
+                and row['state']['metadata']['config'] == manifest['config'], 'invalid runtime checkpoint')
+        require(row['training']['accounting']['actions'] == manifest['training_actions'] == 3840
+                and row['restore']['accounting']['actions'] == manifest['frozen_actions'] == 768
+                and row['restore']['accounting']['updates'] == 0, 'incomplete runtime work')
+        for phase in ('train', 'restore'):
+            timing, gpu = row[phase + '_phase'], row[phase + '_gpu']
+            require(start < timing['command_start'] < timing['command_end']
+                    < declaration['declared_unix_time'], 'runtime gate must precede replication declaration')
+            require(gpu['coverage_passed'] is True and gpu['free_memory_gate_passed'] is True
+                    and type(gpu['minimum_reported_free_mib']) is int
+                    and gpu['minimum_reported_free_mib'] >= 2048,
+                    'runtime gate lacks directly free memory or sample coverage')
 
 
 def verify_run_declaration(declaration, row, training, evaluation):
@@ -108,10 +160,11 @@ def verify_run_declaration(declaration, row, training, evaluation):
         header = run['start']
         require(header['environment'] == row['environment'] and header['mode'] == mode,
                 'wrong declared game or action mode')
-        require(header['seed'] == seed and header['num_envs'] == 8, 'changed declared run seed/streams')
+        streams = declaration['training_streams']
+        require(header['seed'] == seed and header['num_envs'] == streams, 'changed declared run seed/streams')
         require(header['steps'] == run['accounting']['actions'] == budget
                 and run['accounting']['budget_complete'], 'changed or incomplete declared action budget')
-        require(header['environment_seeds'] == [(seed + stream * 1_000_003) % 2**32 for stream in range(8)],
+        require(header['environment_seeds'] == [(seed + stream * 1_000_003) % 2**32 for stream in range(streams)],
                 'changed environment stream seed rule')
         require(header['config'] == config, 'changed complete declared training config')
         for key, value in declaration['header'].items():
@@ -201,6 +254,9 @@ def audit_campaign(path):
     require(sha256(path) == declaration_hash, 'declaration changed during audit')
     verify_inputs(declaration)
     return dict(protocol=PROTOCOL, declaration=dict(path=str(path.resolve()), sha256=declaration_hash),
+                runtime_gate={name: dict(path=path, sha256=sha256(path))
+                              for name, path in declaration['runtime_gate'].items()},
+                training_streams=declaration['training_streams'],
                 results=results, campaign_declaration_verified=True, reliability_assessed=True,
                 reliability_scope='all three fresh training seeds must pass each fixed final task gate',
                 replication_passed=all(row['passed'] for row in results))

@@ -9,7 +9,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'examples'))
 import audit_atari_campaign as campaign
 
 
-def declaration_fixture(tmp_path):
+def runtime_fixture(tmp_path, config, pins, streams):
+    """Synthetic gate data for validation tests, never hardware evidence."""
+    manifest = dict(protocol='kindle-vector-memory-runtime-v1', order=[8, 6, 4, 4, 6, 8],
+                    required_free_mib=2048, config=dict(config, seed=7301), pins=dict(pins),
+                    utc='1970-01-01T00:13:20+00:00', training_actions=3840, frozen_actions=768)
+    rows = []
+    for index in range(2):
+        start = 840 + index * 40
+        rows.append(dict(name=f'order{index}-n{streams}', streams=streams,
+                         state=dict(metadata=dict(config=manifest['config'])),
+                         train_trace_sha256='unit-training-trace', restore_trace_sha256='unit-restore-trace',
+                         checkpoint=dict(finite_and_complete=True),
+                         training=dict(accounting=dict(actions=3840)),
+                         restore=dict(accounting=dict(actions=768, updates=0)),
+                         **{phase + '_phase': dict(command_start=start, command_end=start + 10)
+                            for phase in ('train', 'restore')},
+                         **{phase + '_gpu': dict(coverage_passed=True, free_memory_gate_passed=True,
+                                                minimum_reported_free_mib=2300)
+                            for phase in ('train', 'restore')}))
+    result = dict(protocol=manifest['protocol'], runs=rows,
+                  pairs=[dict(streams=streams, repeated_state_and_traces_exact=True, memory_gate_passed=True)])
+    paths = {name: tmp_path / f'runtime-{name}.json' for name in ('manifest', 'summary')}
+    for name, value in (('manifest', manifest), ('summary', result)):
+        paths[name].write_text(json.dumps(value))
+        pins[str(paths[name])] = campaign.sha256(paths[name])
+    return {name: str(path) for name, path in paths.items()}
+
+
+def declaration_fixture(tmp_path, streams=8):
     schema = tmp_path / 'schema'
     schema.mkdir()
     fixtures = [schema / name for name in
@@ -40,36 +68,39 @@ def declaration_fixture(tmp_path):
             rows.append(dict(environment=game, seed=seed,
                              **{key: str(tmp_path / (name + '-' + key))
                                 for key in ('training', 'evaluation', 'checkpoint', 'replay')}))
-    return dict(protocol=campaign.PROTOCOL, training_seeds=campaign.SEEDS.copy(),
-                declared_unix_time=1000.0, training_streams=8, evaluation_streams=8, evaluation_seed=100000,
-                games={game: dict(training_actions=200000, evaluation_actions=400000, criteria=copy.deepcopy(criteria))
+    config = dict(action_count=18, extrinsic_reward_scale=1, intrinsic_reward_scale=0,
+                  visitation_bonus=False, batch_size=16, batch_length=64, train_ratio=64,
+                  loss_scales=dict(reconstruction=0, future_prediction=0.25))
+    gate = runtime_fixture(tmp_path, config, pins, streams)
+    return dict(protocol=campaign.PROTOCOL, training_seeds=campaign.SEEDS.copy(), runtime_gate=gate,
+                declared_unix_time=1000.0, training_streams=streams, evaluation_streams=streams, evaluation_seed=100000,
+                games={game: dict(training_actions=200016, evaluation_actions=400032, criteria=copy.deepcopy(criteria))
                        for game, criteria in campaign.CRITERIA.items()},
-                config=dict(action_count=18, extrinsic_reward_scale=1, intrinsic_reward_scale=0,
-                            visitation_bonus=False, batch_size=16, batch_length=64, train_ratio=64,
-                            loss_scales=dict(reconstruction=0, future_prediction=0.25)),
-                header=header, pins=pins, inputs=inputs, schema=str(schema), runs=rows)
+                config=config, header=header, pins=pins, inputs=inputs, schema=str(schema), runs=rows)
 
 
 def run_fixture(declaration, row):
     game = declaration['games'][row['environment']]
+    streams = declaration['training_streams']
     header = dict(copy.deepcopy(declaration['header']), environment=row['environment'],
-                  num_envs=8, config=dict(copy.deepcopy(declaration['config']), seed=row['seed']))
+                  num_envs=streams, config=dict(copy.deepcopy(declaration['config']), seed=row['seed']))
     training = dict(path=row['training'], sha256=row['training'], start=dict(copy.deepcopy(header),
                     mode='train', seed=row['seed'], steps=game['training_actions'], unix_time=2000.0,
-                    environment_seeds=[row['seed'] + stream * 1_000_003 for stream in range(8)],
+                    environment_seeds=[row['seed'] + stream * 1_000_003 for stream in range(streams)],
                     restored_checkpoint=None, starting_environment_step=0, starting_learner_step=0),
                     accounting=dict(actions=game['training_actions'], budget_complete=True, updates=12405),
                     end=dict(unix_time=3000.0))
     evaluation = dict(path=row['evaluation'], sha256=row['evaluation'], start=dict(copy.deepcopy(header),
                       mode='evaluate_sample', seed=declaration['evaluation_seed'], steps=game['evaluation_actions'],
                       unix_time=4000.0, environment_seeds=[declaration['evaluation_seed'] + stream * 1_000_003
-                                                        for stream in range(8)]),
+                                                        for stream in range(streams)]),
                       accounting=dict(actions=game['evaluation_actions'], budget_complete=True, updates=0))
     return training, evaluation
 
 
-def test_fixed_five_game_declaration_and_all_input_pins(tmp_path):
-    declaration = declaration_fixture(tmp_path)
+@pytest.mark.parametrize('streams', [4, 6, 8])
+def test_fixed_five_game_declaration_and_all_input_pins(tmp_path, streams):
+    declaration = declaration_fixture(tmp_path, streams)
     campaign.verify_declaration(declaration)
     campaign.verify_inputs(declaration)
     assert len(declaration['runs']) == 15
@@ -80,9 +111,14 @@ def test_fixed_five_game_declaration_and_all_input_pins(tmp_path):
 
 @pytest.mark.parametrize('mutation, message', [
     (lambda plan: plan.update(protocol='kindle-boxing-ratio-pilot-v1'), 'unsupported replication'),
+    (lambda plan: plan.update(protocol='kindle-atari-five-replication-v1'), 'unsupported replication'),
     (lambda plan: plan.update(training_seeds=[0, 1, 2]), 'fresh replication seeds'),
     (lambda plan: plan.update(training_seeds=[1009, 1009, 3019]), 'fresh replication seeds'),
-    (lambda plan: plan.update(evaluation_streams=1), 'eight streams'),
+    (lambda plan: plan.update(evaluation_streams=1), 'stream count'),
+    (lambda plan: plan.update(training_streams=True, evaluation_streams=True), 'stream count'),
+    (lambda plan: plan.update(training_streams=6, evaluation_streams=6.0), 'stream count'),
+    (lambda plan: plan.update(training_streams=5, evaluation_streams=5), 'stream count'),
+    (lambda plan: plan.update(runtime_gate={}), 'runtime gate inputs'),
     (lambda plan: plan.update(declared_unix_time=float('nan')), 'declaration time'),
     (lambda plan: plan.update(evaluation_seed=True), 'environment seed'),
     (lambda plan: plan['games'].pop('ALE/Qbert-v5'), 'all five'),
@@ -111,6 +147,7 @@ def test_declaration_rejects_reduced_scope_selection_and_recipe_changes(tmp_path
 
 @pytest.mark.parametrize('mutation, message', [
     (lambda train, frozen: train['start'].update(seed=0), 'run seed'),
+    (lambda train, frozen: frozen['start'].update(num_envs=6), 'run seed/streams'),
     (lambda train, frozen: train['start'].update(environment='ALE/Boxing-v5'), 'game or action mode'),
     (lambda train, frozen: frozen['start'].update(mode='evaluate_greedy'), 'game or action mode'),
     (lambda train, frozen: train['start'].update(steps=100000), 'action budget'),
@@ -161,6 +198,56 @@ def test_changed_or_unpinned_auditor_fails(tmp_path):
     declaration['pins'].pop(str(Path(campaign.matches.__file__).resolve()))
     with pytest.raises(ValueError, match='unpinned auditor'):
         campaign.verify_inputs(declaration)
+
+
+@pytest.mark.parametrize('mutation, message', [
+    (lambda gate: gate.update(protocol='different'), 'runtime gate protocol'),
+    (lambda gate: gate['pairs'][0].update(memory_gate_passed=False), 'failed runtime gate'),
+    (lambda gate: gate['pairs'][0].update(repeated_state_and_traces_exact=False), 'failed runtime gate'),
+    (lambda gate: gate['runs'].pop(), 'reverse-order runtime repeats'),
+    (lambda gate: gate['runs'][0].update(train_trace_sha256='changed'), 'state or trace differs'),
+    (lambda gate: gate['runs'][0].update(restore_trace_sha256='changed'), 'state or trace differs'),
+    (lambda gate: gate['runs'][0]['state'].update(extra='changed'), 'state or trace differs'),
+    (lambda gate: gate['runs'][0]['checkpoint'].update(finite_and_complete=False), 'invalid runtime checkpoint'),
+    (lambda gate: gate['runs'][0]['training']['accounting'].update(actions=100), 'incomplete runtime work'),
+    (lambda gate: gate['runs'][0]['restore']['accounting'].update(updates=1), 'incomplete runtime work'),
+    (lambda gate: gate['runs'][0]['train_phase'].update(command_end=1100), 'precede replication declaration'),
+    (lambda gate: gate['runs'][0]['restore_phase'].update(command_start=700), 'precede replication declaration'),
+    (lambda gate: gate['runs'][0]['train_gpu'].update(minimum_reported_free_mib=1631), 'directly free memory'),
+    (lambda gate: gate['runs'][0]['restore_gpu'].update(minimum_reported_free_mib=2047), 'directly free memory'),
+    (lambda gate: gate['runs'][0]['train_gpu'].update(minimum_reported_free_mib=2048.0), 'directly free memory'),
+    (lambda gate: gate['runs'][0]['restore_gpu'].update(coverage_passed=False), 'sample coverage'),
+    (lambda gate: gate['runs'][1]['train_gpu'].update(free_memory_gate_passed=False), 'directly free memory'),
+])
+def test_runtime_gate_rejects_failed_memory_incomplete_work_and_changed_repeats(tmp_path, mutation, message):
+    declaration = declaration_fixture(tmp_path, streams=6)
+    path = Path(declaration['runtime_gate']['summary'])
+    result = json.loads(path.read_text())
+    mutation(result)
+    path.write_text(json.dumps(result))
+    declaration['pins'][str(path)] = campaign.sha256(path)
+    with pytest.raises(ValueError, match=message):
+        campaign.verify_runtime_gate(declaration)
+
+
+def test_runtime_gate_cannot_be_reused_for_a_different_learner(tmp_path):
+    declaration = declaration_fixture(tmp_path, streams=4)
+    declaration['config']['train_ratio'] = 256
+    with pytest.raises(ValueError, match='different learner'):
+        campaign.verify_runtime_gate(declaration)
+
+
+def test_runtime_gate_pins_its_own_inputs_and_completed_result(tmp_path):
+    declaration = declaration_fixture(tmp_path)
+    path = Path(declaration['runtime_gate']['summary'])
+    original = path.read_text()
+    path.write_text(original + '\n')
+    with pytest.raises(ValueError, match='unpinned runtime gate'):
+        campaign.verify_runtime_gate(declaration)
+    path.write_text(original)
+    Path(declaration['inputs']['native']).write_text('changed native')
+    with pytest.raises(ValueError, match='changed runtime gate input'):
+        campaign.verify_runtime_gate(declaration)
 
 
 def campaign_flow_fixture(tmp_path, monkeypatch, *, failing=False, repeated=False):
