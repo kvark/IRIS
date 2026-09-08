@@ -34,6 +34,40 @@ fn check_capacity(config: &DreamerConfig, streams: usize) -> Result<(), &'static
     Ok(())
 }
 
+fn check_action_overrides(
+    overrides: &[Option<usize>],
+    streams: usize,
+    action_count: usize,
+) -> Result<(), &'static str> {
+    if overrides.len() != streams {
+        return Err("action overrides must have one entry per stream");
+    }
+    if overrides
+        .iter()
+        .flatten()
+        .any(|&action| action >= action_count)
+    {
+        return Err("action override is outside the action vocabulary");
+    }
+    Ok(())
+}
+
+fn select_action(
+    logits: &[f32],
+    unimix: f32,
+    mode: ActionMode,
+    rng: &mut StdRng,
+    override_action: Option<usize>,
+) -> usize {
+    let mut probabilities = vec![0.0; logits.len()];
+    softmax_unimix(logits, unimix, &mut probabilities);
+    let proposed = match mode {
+        ActionMode::Sample => sample_probabilities(&probabilities, rng),
+        ActionMode::Greedy => argmax(&probabilities),
+    };
+    override_action.unwrap_or(proposed)
+}
+
 impl VectorCore {
     fn new(mut learner: DreamerCore, streams: usize) -> Self {
         check_capacity(&learner.config, streams).unwrap();
@@ -208,6 +242,23 @@ impl VectorCore {
     }
 
     fn act(&mut self, mode: ActionMode) -> Vec<usize> {
+        self.act_inner(mode, None)
+    }
+
+    fn act_with_overrides(
+        &mut self,
+        mode: ActionMode,
+        overrides: &[Option<usize>],
+    ) -> Result<Vec<usize>, &'static str> {
+        check_action_overrides(
+            overrides,
+            self.streams.len(),
+            self.learner.config.action_count,
+        )?;
+        Ok(self.act_inner(mode, Some(overrides)))
+    }
+
+    fn act_inner(&mut self, mode: ActionMode, overrides: Option<&[Option<usize>]>) -> Vec<usize> {
         for stream in &self.streams {
             assert!(
                 stream.active && !stream.needs_reset,
@@ -232,15 +283,15 @@ impl VectorCore {
         self.streams
             .iter_mut()
             .zip(logits.chunks_exact(config.action_count))
-            .map(|(stream, logits)| {
-                let mut probabilities = vec![0.0; config.action_count];
-                softmax_unimix(logits, config.actor_unimix, &mut probabilities);
-                let action = match mode {
-                    ActionMode::Sample => {
-                        sample_probabilities(&probabilities, &mut stream.policy_rng)
-                    }
-                    ActionMode::Greedy => argmax(&probabilities),
-                };
+            .enumerate()
+            .map(|(id, (stream, logits))| {
+                let action = select_action(
+                    logits,
+                    config.actor_unimix,
+                    mode,
+                    &mut stream.policy_rng,
+                    overrides.and_then(|actions| actions[id]),
+                );
                 stream.pending_action = Some(action);
                 action
             })
@@ -389,6 +440,16 @@ impl VectorDreamerAgent {
         self.core.act(mode)
     }
 
+    /// Choose actions, replacing selected streams with explicitly executed controls.
+    /// Policy RNG draws are retained, and RSSM/replay consume the overridden action.
+    pub fn act_with_overrides(
+        &mut self,
+        mode: ActionMode,
+        overrides: &[Option<usize>],
+    ) -> Result<Vec<usize>, &'static str> {
+        self.core.act_with_overrides(mode, overrides)
+    }
+
     pub fn observe(&mut self, transitions: &[(usize, Transition)]) -> Vec<Reward> {
         self.core
             .check_arrivals(transitions.iter().map(|(id, t)| (*id, t.flags(), t.reward)));
@@ -418,6 +479,59 @@ impl VectorDreamerAgent {
 mod tests {
     use super::*;
 
+    #[test]
+    fn action_overrides_validate_every_stream_before_mutation() {
+        assert!(check_action_overrides(&[None, Some(2), Some(0)], 3, 3).is_ok());
+        assert!(check_action_overrides(&[None], 3, 3).is_err());
+        assert!(check_action_overrides(&[None, Some(3), None], 3, 3).is_err());
+        assert!(check_action_overrides(&[Some(usize::MAX)], 1, 3).is_err());
+    }
+
+    #[test]
+    fn action_overrides_preserve_policy_rng_draws_and_default_selection() {
+        let logits = [0.4, -0.9, 2.0];
+        let mut reference = StdRng::seed_from_u64(73);
+        let mut default = reference.clone();
+        let mut overridden = reference.clone();
+        for time in 0..128 {
+            let mut probabilities = vec![0.0; logits.len()];
+            softmax_unimix(&logits, 0.01, &mut probabilities);
+            let expected = sample_probabilities(&probabilities, &mut reference);
+            assert_eq!(
+                select_action(&logits, 0.01, ActionMode::Sample, &mut default, None),
+                expected
+            );
+            assert_eq!(
+                select_action(
+                    &logits,
+                    0.01,
+                    ActionMode::Sample,
+                    &mut overridden,
+                    Some(time % 3)
+                ),
+                time % 3
+            );
+        }
+        let next = reference.random::<u64>();
+        assert_eq!(next, default.random::<u64>());
+        assert_eq!(next, overridden.random::<u64>());
+    }
+
+    #[test]
+    fn greedy_overrides_do_not_consume_rng() {
+        let mut rng = StdRng::seed_from_u64(73);
+        let mut reference = rng.clone();
+        assert_eq!(
+            select_action(&[0.0, 1.0], 0.01, ActionMode::Greedy, &mut rng, None),
+            1
+        );
+        assert_eq!(
+            select_action(&[0.0, 1.0], 0.01, ActionMode::Greedy, &mut rng, Some(0)),
+            0
+        );
+        assert_eq!(rng.random::<u64>(), reference.random::<u64>());
+    }
+
     fn config() -> DreamerConfig {
         let mut config = DreamerConfig::tiny(3);
         config.batch_size = 2;
@@ -443,6 +557,104 @@ mod tests {
         for (&a, &b) in left.iter().zip(right) {
             assert!((a - b).abs() < 1e-4, "{a} != {b}");
         }
+    }
+
+    #[test]
+    #[ignore = "requires GPU; checks executed-action belief/replay causality and independent RNGs"]
+    fn vector_overrides_match_serial_beliefs_and_replay_actions() {
+        let config = config();
+        let gpu = Arc::new(crate::init_gpu_context().unwrap());
+        let learner = DreamerCore::with_gpu(config.clone(), Arc::clone(&gpu));
+        let mut vector = VectorCore::new(learner, 3);
+        let mut serial: Vec<_> = (0..3)
+            .map(|id| {
+                let mut core = DreamerCore::with_gpu(config.clone(), Arc::clone(&gpu));
+                core.rngs = DreamerRngs::new(config.seed + id);
+                core
+            })
+            .collect();
+        let first = FrameFlags {
+            is_first: true,
+            ..Default::default()
+        };
+        vector.ingest(
+            (0..3)
+                .map(|id| (id, observation(id, 0), first, Reward::default()))
+                .collect(),
+        );
+        for (id, core) in serial.iter_mut().enumerate() {
+            core.begin_episode(observation(id, 0));
+        }
+        assert!(
+            vector
+                .act_with_overrides(ActionMode::Sample, &[None])
+                .is_err()
+        );
+        assert!(
+            vector
+                .act_with_overrides(ActionMode::Sample, &[None, Some(3), None])
+                .is_err()
+        );
+        assert!(
+            vector
+                .streams
+                .iter()
+                .all(|stream| stream.pending_action.is_none())
+        );
+        for time in 1..25 {
+            let overrides = [None, Some(2), (time % 2 == 0).then_some(0)];
+            let actions = vector
+                .act_with_overrides(ActionMode::Sample, &overrides)
+                .unwrap();
+            let mut arrivals = Vec::new();
+            for (id, core) in serial.iter_mut().enumerate() {
+                let mask = overrides[id]
+                    .map(|forced| (0..3).map(|action| action == forced).collect::<Vec<_>>());
+                assert_eq!(actions[id], core.act(ActionMode::Sample, mask.as_deref()));
+                assert_eq!(vector.streams[id].pending_action, Some(actions[id]));
+                let flags = FrameFlags {
+                    is_last: time % (3 + id) == 0,
+                    is_terminal: id != 1 && time % (3 + id) == 0,
+                    ..Default::default()
+                };
+                let reward = Reward {
+                    extrinsic: actions[id] as f32,
+                    intrinsic: 0.0,
+                };
+                core.observe(observation(id, time), reward, flags);
+                arrivals.push((id, observation(id, time), flags, reward));
+            }
+            vector.ingest(arrivals);
+            let mut resets = Vec::new();
+            for (id, core) in serial.iter_mut().enumerate() {
+                assert_close(&core.feature, &vector.streams[id].feature);
+                assert_eq!(
+                    core.rngs.policy.clone().random::<u64>(),
+                    vector.streams[id].policy_rng.clone().random::<u64>()
+                );
+                if core.needs_reset {
+                    core.begin_episode(observation(id, 100 + time));
+                    resets.push((id, observation(id, 100 + time), first, Reward::default()));
+                }
+            }
+            vector.ingest(resets);
+        }
+        let mut rng = StdRng::seed_from_u64(97);
+        for _ in 0..20 {
+            let batch = vector.learner.replay.sample(&config, &mut rng).unwrap();
+            for time in 0..batch.previous_actions.len() {
+                for row in 0..config.batch_size {
+                    let actual = &batch.previous_actions[time][row * 3..(row + 1) * 3];
+                    let mut expected = [0.0; 3];
+                    if !batch.flags[time][row].is_first {
+                        expected[batch.rewards[time][row] as usize] = 1.0;
+                    }
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+        assert_eq!(vector.learner.environment_step, 72);
+        assert_eq!(vector.learner.learner_step, 0);
     }
 
     #[test]

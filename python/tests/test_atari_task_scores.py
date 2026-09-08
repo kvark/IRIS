@@ -199,7 +199,8 @@ def test_replay_mismatches_fail(tmp_path, mutation, message):
         scorer.check_replay(evaluation, replay)
 
 
-def test_final_audit_calls_complete_checkpoint_guard_and_does_not_certify_campaign(tmp_path, monkeypatch):
+@pytest.mark.parametrize('exploration', [False, True])
+def test_final_audit_calls_complete_checkpoint_guard_and_does_not_certify_campaign(tmp_path, monkeypatch, exploration):
     evaluation, replay = replay_fixture(tmp_path)
     header = evaluation['start']
     for key in ('protocol', 'action_meanings', 'config', 'model_provenance', 'native_extension_sha256',
@@ -209,6 +210,10 @@ def test_final_audit_calls_complete_checkpoint_guard_and_does_not_certify_campai
     training = copy.deepcopy(evaluation)
     training['start'].update(mode='train', starting_environment_step=0,
                              starting_learner_step=0, restored_checkpoint=None)
+    if exploration:
+        training['start']['protocol'] = 'kindle-vector-v3'
+        evaluation['start']['protocol'] = 'kindle-vector-v2'
+        replay['source_header'] = copy.deepcopy(evaluation['start'])
     training['accounting']['updates'] = 1
     replay_path = tmp_path / 'replay.json'
     replay_path.write_text(json.dumps(replay))

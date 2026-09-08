@@ -1,10 +1,13 @@
 """CPU-only vector accounting with descriptive episode counts, not game wins."""
 
 from collections import deque
+import hashlib
 import json
 import math
 from pathlib import Path
 import struct
+
+from ._exploration import EXPLORATION_PROTOCOL, PersistentExploration
 
 
 VECTOR_PROTOCOL = "kindle-vector-v2"
@@ -49,7 +52,7 @@ def audit(path):
 
     with Path(path).open() as source:
         header = json.loads(next(source))
-        check(header["event"] == "run_start" and header["protocol"] in ("kindle-vector-v1", VECTOR_PROTOCOL), "unknown vector protocol")
+        check(header["event"] == "run_start" and header["protocol"] in ("kindle-vector-v1", VECTOR_PROTOCOL, EXPLORATION_PROTOCOL), "unknown vector protocol")
         count, config = header["num_envs"], header["config"]
         check(type(count) is int and count > 0, "invalid stream count")
         check(header["steps"] > 0 and header["steps"] % count == 0, "invalid action budget")
@@ -59,6 +62,16 @@ def audit(path):
             check(type(config[field]) is int and config[field] > 0, f"invalid {field}")
         require_numbers(config["train_ratio"])
         check(config["train_ratio"] >= 0, "invalid train ratio")
+        exploration = None
+        if header["protocol"] == EXPLORATION_PROTOCOL:
+            check(header["mode"] == "train", "frozen evaluation cannot contain exploration overrides")
+            exploration = PersistentExploration(header["exploration"], count, config["action_count"])
+            check(exploration.config["seed"] == config["seed"] == header["seed"], "exploration seed differs")
+            from . import _exploration
+            expected_hash = hashlib.sha256(Path(_exploration.__file__).read_bytes()).hexdigest()
+            check(header["exploration_sha256"] == expected_hash, "exploration implementation differs")
+        else:
+            check(not {"exploration", "exploration_sha256"}.intersection(header), "undeclared exploration protocol")
         training = header["mode"] == "train" and config["train_ratio"] > 0
         required = config["replay_context"] + config["batch_length"]
         samples = config["batch_size"] * config["batch_length"]
@@ -99,9 +112,19 @@ def audit(path):
                 check(event["run_step"] == actions and event["vector_tick"] == actions // count, "vector/action counter mismatch")
                 for field in ("actions", "rewards", "stored_rewards", "terminated", "truncated", "executed_action_frames"):
                     check(len(event[field]) == count, f"wrong {field} batch length")
+                if exploration:
+                    expected_overrides = exploration.actions()
+                    overrides = event["action_overrides"]
+                    check(isinstance(overrides, list) and len(overrides) == count, "wrong action override batch")
+                    check(all(action is None or type(action) is int for action in overrides), "invalid action override type")
+                    check(overrides == expected_overrides, "exploration action history differs")
+                else:
+                    check("action_overrides" not in event, "undeclared action overrides")
                 for stream in range(count):
                     action = event["actions"][stream]
                     check(type(action) is int and 0 <= action < config["action_count"], "invalid executed action")
+                    if exploration and overrides[stream] is not None:
+                        check(action == overrides[stream], "executed action ignores exploration override")
                     reward = event["rewards"][stream]
                     require_numbers(reward)
                     require_numbers(event["stored_rewards"][stream])
@@ -155,6 +178,8 @@ def audit(path):
                 check(event["run_step"] == actions and len(ids) == len(set(ids)) and set(ids) == pending_resets, "wrong stream reset")
                 for stream in ids:
                     push(stream)
+                if exploration:
+                    exploration.reset(ids)
                 pending_resets.clear()
             elif kind in ("progress", "run_end"):
                 settled()
@@ -166,6 +191,11 @@ def audit(path):
                 for field, expected in (("executed_action_frames", last_frames), ("total_rewards", total_rewards), ("episode_counts", episode_counts), ("partial_returns", episode_returns), ("partial_lengths", episode_lengths)):
                     check(event[field] == expected, f"{field} ledger mismatch")
                 require_numbers(event["stage_seconds"])
+                if exploration:
+                    check(event["overridden_actions"] == exploration.overridden_actions
+                          and all(type(value) is int for value in event["overridden_actions"]), "exploration action counts differ")
+                else:
+                    check("overridden_actions" not in event, "undeclared exploration counts")
                 check(event["elapsed_seconds"] > 0 and math.isfinite(event["elapsed_seconds"]), "invalid clock")
                 elapsed = event["elapsed_seconds"]
                 check(event["actions_per_second"] == actions / elapsed, "invalid action throughput")
@@ -197,9 +227,14 @@ def audit(path):
             if value is not None:
                 require_numbers(final[field])
             check(final[field] == value and (field == "mean_completed_return" or type(final[field]) is int), "final score mismatch")
+        exploration_result = (dict(exploration=exploration.config,
+            exploration_sha256=header["exploration_sha256"],
+            overridden_actions=exploration.overridden_actions, exploration_ledger_verified=True)
+            if exploration else {})
         return dict(path=str(path), protocol=header["protocol"], actions=actions, updates=updates, num_envs=count,
                     **scores,
-                    budget_complete=final["reason"] == "budget_complete", accounting_valid=True)
+                    budget_complete=final["reason"] == "budget_complete", accounting_valid=True,
+                    **exploration_result)
 
 
 if __name__ == "__main__":

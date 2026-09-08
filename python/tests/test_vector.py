@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 import kindle
 from kindle._vector_audit import VECTOR_PROTOCOL, audit, episode_summary, require_numbers
+from kindle._exploration import EXPLORATION_PROTOCOL
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import atari_vector
@@ -183,7 +184,8 @@ def test_episode_summary_requires_actual_boolean_boundaries(terminal, truncated)
         episode_summary([dict(episode_return=1, terminated=terminal, truncated=truncated)])
 
 
-def test_vector_runner_emits_generic_episode_accounting_without_a_gpu(monkeypatch, tmp_path):
+@pytest.mark.parametrize("behavior", ["default", "exploration", "ignored_override"])
+def test_vector_runner_emits_generic_episode_accounting_without_a_gpu(monkeypatch, tmp_path, behavior):
     created = []
 
     class Environment:
@@ -198,6 +200,7 @@ def test_vector_runner_emits_generic_episode_accounting_without_a_gpu(monkeypatc
             return None, {}
 
         def step(self, action):
+            self.last_action = action
             self.length += 1
             self.executed_action_frames += 4
             return None, 20.0, self.length == 2, False, {}
@@ -219,10 +222,18 @@ def test_vector_runner_emits_generic_episode_accounting_without_a_gpu(monkeypatc
         def begin_episodes(self, ids, frames):
             self.replay_len += len(ids)
 
-        def act(self, *, greedy):
-            return [0] * self.streams
+        def act(self, *, greedy, action_overrides=None):
+            if behavior == "default":
+                assert action_overrides is None
+                self.selected = [0] * self.streams
+            else:
+                assert action_overrides is not None
+                self.selected = [(action + int(behavior == "ignored_override")) % 2
+                                 for action in action_overrides]
+            return self.selected
 
         def observe(self, ids, frames, rewards, terminated, truncated):
+            assert [env.last_action for env in created] == self.selected
             self.environment_step += len(ids)
             self.replay_len += len(ids)
             return [[reward, 0.0] for reward in rewards]
@@ -240,13 +251,21 @@ def test_vector_runner_emits_generic_episode_accounting_without_a_gpu(monkeypatc
     monkeypatch.setattr(atari_vector, "DreamerAtariPreprocessing", lambda env, **_: env)
     monkeypatch.setattr(kindle, "VectorAgent", Agent)
     monkeypatch.setattr(sys, "argv", ["atari_vector.py", "unused", "ALE/Seaquest-v5",
-        "--output", str(output), "--steps", "6", "--num-envs", "2", "--train-ratio", "0"])
+        "--output", str(output), "--steps", "6", "--num-envs", "2", "--train-ratio", "0",
+        *([] if behavior == "default" else ["--exploration-probability", "1", "--exploration-hold", "4"])])
+    if behavior == "ignored_override":
+        with pytest.raises(ValueError, match="override was not honored"):
+            atari_vector.main()
+        assert len(created) == 2 and all(env.closed and env.executed_action_frames == 0 for env in created)
+        return
     atari_vector.main()
     rows = [json.loads(line) for line in output.read_text().splitlines()]
-    assert rows[0]["protocol"] == VECTOR_PROTOCOL
+    assert rows[0]["protocol"] == (VECTOR_PROTOCOL if behavior == "default" else EXPLORATION_PROTOCOL)
     assert "natural_wins" not in rows[-1] and "completed_games" not in rows[-1]
     result = audit(output)
     assert result["accounting_valid"] and result["actions"] == 6 and result["updates"] == 0
+    if behavior == "exploration":
+        assert result["exploration_ledger_verified"] and result["overridden_actions"] == [3, 3]
     assert result["completed_episodes"] == result["positive_return_natural_episodes"] == 2
     assert result["mean_completed_return"] == 40
     assert rows[-1]["partial_returns"] == [20, 20] and rows[-1]["partial_lengths"] == [1, 1]

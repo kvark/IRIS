@@ -14,7 +14,7 @@ import ale_py._ale_py as ale_native
 
 import atari_tasks
 from atari_tasks import TASKS
-from audit_atari import read_run, require, sha256, verify_checkpoint
+from audit_atari import read_run, require, sha256, verify_checkpoint, verify_final_pair
 from check_atari_adapter import rom_identity
 import replay_atari
 
@@ -131,18 +131,8 @@ def check_replay(evaluation, replay):
 
 def audit_final_tasks(training_path, evaluation_path, checkpoint, schema, replay_path):
     training, evaluation = read_run(training_path), read_run(evaluation_path)
-    start, frozen = training['start'], evaluation['start']
-    require(start['mode'] == 'train' and frozen['mode'] == 'evaluate_sample', 'wrong train/evaluation mode')
-    require(start['starting_environment_step'] == start['starting_learner_step'] == 0
-            and start['restored_checkpoint'] is None and training['accounting']['updates'] > 0,
-            'training must be fresh and have updates')
-    require(evaluation['accounting']['updates'] == 0, 'evaluation is not frozen')
-    # Keep this identical to the pinned match auditor until its live consumer ends.
-    for key in ('environment', 'protocol', 'atari_protocol', 'action_repeat', 'full_action_space',
-                'noop_max', 'max_episode_frames', 'sticky_actions', 'action_meanings', 'ale_py_version',
-                'config', 'model_provenance', 'native_extension_sha256', 'runner_sha256', 'wrapper_sha256',
-                'trainable_parameter_counts', 'gpu_device', 'cpu_worker_threads'):
-        require(start[key] == frozen[key], f'changed evaluation identity: {key}')
+    verify_final_pair(training, evaluation)
+    frozen = evaluation['start']
     replay = json.loads(Path(replay_path).read_text())
     check_replay(evaluation, replay)
     result = score_tasks(frozen['environment'], replay['episodes'])

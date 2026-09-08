@@ -6,7 +6,9 @@ observations are consumed before individually resetting completed environments.
 """
 
 import argparse
+import inspect
 import json
+import math
 import signal
 import sys
 import time
@@ -17,6 +19,8 @@ import gymnasium as gym
 
 import kindle
 from kindle._vector_audit import VECTOR_PROTOCOL, episode_summary
+import kindle._exploration as exploration_module
+from kindle._exploration import EXPLORATION_KIND, EXPLORATION_PROTOCOL, PersistentExploration
 from atari import (
     ATARI_ACTION_REPEAT, ATARI_PROTOCOLS, DreamerAtariPreprocessing,
     checkpoint_identity, sha256_file,
@@ -44,6 +48,8 @@ def main():
     parser.add_argument("--restore", type=Path)
     parser.add_argument("--evaluate", action="store_true")
     parser.add_argument("--greedy", action="store_true")
+    parser.add_argument("--exploration-probability", type=float, default=0.0)
+    parser.add_argument("--exploration-hold", type=int, default=16)
     args = parser.parse_args()
     if args.num_envs <= 0 or args.steps <= 0 or args.steps % args.num_envs:
         parser.error("steps must be a positive multiple of num-envs")
@@ -53,13 +59,21 @@ def main():
         parser.error("world-microbatch-size must be positive")
     if args.greedy and not args.evaluate:
         parser.error("greedy actions are only supported for frozen evaluation")
-    training_options = {"--model-size", "--batch-size", "--batch-length", "--world-microbatch-size", "--train-ratio", "--learning-rate"}
+    if not math.isfinite(args.exploration_probability) or not 0 <= args.exploration_probability <= 1:
+        parser.error("exploration probability must be in [0, 1]")
+    if args.exploration_hold <= 0:
+        parser.error("exploration hold must be positive")
+    if args.evaluate and args.exploration_probability:
+        parser.error("frozen evaluation must not use exploration overrides")
+    training_options = {"--model-size", "--batch-size", "--batch-length", "--world-microbatch-size", "--train-ratio", "--learning-rate", "--exploration-probability", "--exploration-hold"}
     if args.restore and any(arg.split("=", 1)[0] in training_options for arg in sys.argv[1:]):
         parser.error("training overrides require a fresh run; restore uses checkpoint config")
     if not 0 <= args.seed < 2**32:
         parser.error("seed must fit an unsigned 32-bit integer")
     if args.output.exists() or (args.checkpoint and args.checkpoint.exists()):
         parser.error("output and checkpoint must be fresh paths")
+    if args.exploration_probability and "action_overrides" not in inspect.signature(kindle.VectorAgent.act).parameters:
+        parser.error("persistent exploration requires native vector action overrides")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     protocol = ATARI_PROTOCOLS[args.atari_protocol]
     gym.register_envs(ale_py)
@@ -88,6 +102,9 @@ def main():
                       train_ratio=args.train_ratio, learning_rate=args.learning_rate,
                       learning_rate_warmup=1000, agc=0.3)
         config["loss_scales"].update(reconstruction=0.0, future_prediction=0.25)
+        exploration = (PersistentExploration(dict(kind=EXPLORATION_KIND,
+            probability=args.exploration_probability, hold_actions=args.exploration_hold,
+            seed=args.seed), args.num_envs, actions) if args.exploration_probability else None)
         construction = time.perf_counter()
         restored = checkpoint_identity(args.restore) if args.restore else None
         agent = (kindle.VectorAgent.restore(str(args.restore), args.encoder_checkpoint, args.num_envs)
@@ -99,7 +116,9 @@ def main():
         starting_actions, starting_updates = agent.environment_step, agent.learner_step
         started = time.perf_counter()
         agent.begin_episodes(ids, initial)
-        emit(dict(event="run_start", protocol=VECTOR_PROTOCOL, environment=args.environment,
+        exploration_header = (dict(exploration=exploration.config,
+            exploration_sha256=sha256_file(exploration_module.__file__)) if exploration else {})
+        emit(dict(event="run_start", protocol=EXPLORATION_PROTOCOL if exploration else VECTOR_PROTOCOL, environment=args.environment,
                   num_envs=args.num_envs, steps=args.steps, seed=args.seed, environment_seeds=env_seeds,
                   policy_seed_rule="config.seed + stream (wrapping u64)",
                   atari_protocol=args.atari_protocol, action_repeat=ATARI_ACTION_REPEAT,
@@ -113,7 +132,8 @@ def main():
                   restored_checkpoint=restored, starting_environment_step=starting_actions,
                   starting_learner_step=starting_updates, agent_construction_seconds=construction,
                   native_extension_sha256=sha256_file(kindle._native.__file__),
-                  runner_sha256=sha256_file(__file__), wrapper_sha256=sha256_file(Path(__file__).with_name("atari.py"))))
+                  runner_sha256=sha256_file(__file__), wrapper_sha256=sha256_file(Path(__file__).with_name("atari.py")),
+                  **exploration_header))
         stop = False
 
         def request_stop(_signum, _frame):
@@ -140,6 +160,8 @@ def main():
         def progress(event):
             elapsed = time.perf_counter() - started
             frames = [env.executed_action_frames for env in environments]
+            exploration_counts = (dict(overridden_actions=exploration.overridden_actions)
+                                  if exploration else {})
             return dict(event=event, run_step=run_actions, vector_ticks=run_actions // args.num_envs,
                         environment_step=agent.environment_step, learner_step=agent.learner_step,
                         elapsed_seconds=elapsed, actions_per_second=run_actions / elapsed,
@@ -151,14 +173,19 @@ def main():
                         total_rewards=total_rewards, episode_counts=episode_counts,
                         partial_returns=episode_returns, partial_lengths=episode_lengths,
                         replay_len=agent.replay_len, training_debt=agent.training_debt,
-                        stage_seconds=timing)
+                        stage_seconds=timing, **exploration_counts)
 
         try:
             for tick in range(1, args.steps // args.num_envs + 1):
                 if stop:
                     break
                 before = time.perf_counter()
-                selected = agent.act(greedy=args.greedy)
+                overrides = exploration.actions() if exploration else None
+                selected = (agent.act(greedy=args.greedy, action_overrides=overrides)
+                            if exploration else agent.act(greedy=args.greedy))
+                if overrides is not None and any(forced is not None and selected[stream] != forced
+                                                for stream, forced in enumerate(overrides)):
+                    raise ValueError("native action override was not honored")
                 timing["act"] += time.perf_counter() - before
                 before = time.perf_counter()
                 results = [env.step(action) for env, action in zip(environments, selected)]
@@ -171,7 +198,8 @@ def main():
                 emit(dict(event="transition", vector_tick=tick, run_step=run_actions,
                           actions=selected, rewards=rewards, stored_rewards=stored_rewards,
                           terminated=terminated, truncated=truncated,
-                          executed_action_frames=[env.executed_action_frames for env in environments]))
+                          executed_action_frames=[env.executed_action_frames for env in environments],
+                          **(dict(action_overrides=overrides) if exploration else {})))
                 before = time.perf_counter()
                 reports = [] if args.evaluate else agent.learn_scheduled()
                 timing["learn"] += time.perf_counter() - before
@@ -197,6 +225,8 @@ def main():
                 if resets:
                     reset_frames = [environments[stream].reset()[0] for stream in resets]
                     agent.begin_episodes(resets, reset_frames)
+                    if exploration:
+                        exploration.reset(resets)
                     emit(dict(event="reset", run_step=run_actions, streams=resets))
                 timing["reset"] += time.perf_counter() - before
                 if args.checkpoint and run_actions - last_checkpoint >= args.checkpoint_every:

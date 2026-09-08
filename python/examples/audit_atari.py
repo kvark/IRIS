@@ -16,7 +16,8 @@ import statistics
 import numpy as np
 from safetensors import safe_open
 
-from kindle._vector_audit import audit
+from kindle._exploration import EXPLORATION_PROTOCOL
+from kindle._vector_audit import VECTOR_PROTOCOL, audit
 
 
 MATCH_CRITERIA = {
@@ -158,19 +159,28 @@ def verify_checkpoint(path, training, evaluation, schema):
     return dict(path=str(path), **identity, tensors=tensors, finite_and_complete=True)
 
 
-def compare_final(training_path, evaluation_path, checkpoint, schema):
-    training, evaluation = read_run(training_path), read_run(evaluation_path)
+def verify_final_pair(training, evaluation):
     start, frozen = training['start'], evaluation['start']
     require(start['mode'] == 'train' and frozen['mode'] == 'evaluate_sample', 'wrong train/evaluation mode')
     require(start['starting_environment_step'] == start['starting_learner_step'] == 0
             and start['restored_checkpoint'] is None and training['accounting']['updates'] > 0,
             'training must be fresh and have updates')
     require(evaluation['accounting']['updates'] == 0, 'evaluation is not frozen')
-    for key in ('environment', 'protocol', 'atari_protocol', 'action_repeat', 'full_action_space',
+    require(frozen['protocol'] != EXPLORATION_PROTOCOL and (
+        start['protocol'] == frozen['protocol']
+        or (start['protocol'], frozen['protocol']) == (EXPLORATION_PROTOCOL, VECTOR_PROTOCOL)),
+        'changed evaluation identity: protocol')
+    for key in ('environment', 'atari_protocol', 'action_repeat', 'full_action_space',
                 'noop_max', 'max_episode_frames', 'sticky_actions', 'action_meanings', 'ale_py_version',
                 'config', 'model_provenance', 'native_extension_sha256', 'runner_sha256', 'wrapper_sha256',
                 'trainable_parameter_counts', 'gpu_device', 'cpu_worker_threads'):
         require(start[key] == frozen[key], f'changed evaluation identity: {key}')
+
+
+def compare_final(training_path, evaluation_path, checkpoint, schema):
+    training, evaluation = read_run(training_path), read_run(evaluation_path)
+    verify_final_pair(training, evaluation)
+    frozen = evaluation['start']
     result = score_matches(frozen['environment'], evaluation['episodes'])
     result['checkpoint'] = verify_checkpoint(checkpoint, training, evaluation, schema)
     result['training'] = {key: training[key] for key in ('path', 'sha256', 'accounting', 'end')}
