@@ -108,10 +108,13 @@ reliable learning.
   pilot and 75k-action N8 frozen evaluations. R64 seed 0 passes its frozen gate:
   40/40 wins, mean +51.55, with complete checkpoint/declaration/replay checks.
   The original queue and follower stopped on a zero-update control restore
-  failure. Preserve their artifacts; validate explicit zero optimizer moments
-  on fresh saves, retaining strict restore checks, then continue only the failed
-  control and pending R256 arm in new artifacts. Do not rerun the successful
-  R64 arm or select a ratio before both arms and the control finish. Keep the pinned
+  failure. The save-only repair now passes CPU/GPU checks, exact 12M initial
+  actions/parameters and complete trained-state preservation, retaining strict
+  restore checks. Preserve the original artifacts. The live continuation in
+  `runs/atari-five-continue-20260908.JrdVto` runs the repaired zero-update control,
+  then the pending R256 arm with the original native package. It also pins the
+  repair evidence and shared auditors: keep them unchanged while live. Do not
+  rerun R64 or select a ratio before both arms and the control finish. Keep the pinned
   package/runner unchanged while live. One pilot seed does not establish
   reliability: require a separately declared fresh three-seed replication
   using 1009, 2017 and 3019.
