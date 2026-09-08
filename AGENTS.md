@@ -116,6 +116,9 @@ reliable learning.
   wins. Qbert's first pyramid alone is not the sustained-competence gate.
   Breakout's 864-point rule has a verified actual-ROM scripted fixture and
   negative controls; preserve its distinction from Kindle's learned results.
+  The separate candidate `audit_atari_tasks.py` covers Freeway/Breakout/Qbert
+  final checkpoint and replay scoring. A task-gate pass alone does not verify
+  campaign budgets or independent training seeds. Keep those acceptance checks.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

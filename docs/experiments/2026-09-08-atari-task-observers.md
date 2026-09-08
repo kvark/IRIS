@@ -89,6 +89,47 @@ their declared budgets. Do not invent a natural terminal or task completion
 from that state. The production wrapper's existing 100,000-frame cutoff bounds
 such episodes; the current short-round Boxing pilot is unaffected.
 
+## Frozen task scoring
+
+`exp/atari-five` commit `8a04c85` adds `python/examples/audit_atari_tasks.py`
+without editing any dependency pinned by the live Boxing follower. Together
+with the match auditor, all five games now have explicit scoring paths. The
+new scorer requires complete fresh-training and frozen-evaluation ledgers,
+the declared final saved/restored checkpoint and a matching full CPU replay.
+It checks replay source/content identities, every completed episode's original
+ledger fields, contiguous per-stream frame ranges and the partial-tail ledgers.
+
+Freeway needs the declared crossing mean/fraction and no timeouts. Breakout
+needs the two-wall completion fraction. Qbert needs both the first-pyramid
+completion fraction and the ≥15,000 mean final score; the first pyramid alone
+still fails. A later cutoff preserves Breakout/Qbert milestones without
+becoming a natural win, and partial tails never enter the completed-episode
+mean or success fraction. Duplicate episodes and inconsistent task evidence
+are rejected.
+
+The output's `task_gate_passed` describes one frozen policy. It explicitly leaves
+`campaign_declaration_verified` and `reliability_assessed` false: fixed campaign
+budgets, seed independence and all-seed acceptance must also be verified.
+No learned final checkpoint on these three games has been scored yet.
+
+For a future completed experiment, select the isolated package and run:
+
+```bash
+PYTHONPATH=/x/Code/kindle/runs/atari-five-20260908.db0XSW/package \
+  /x/Code/kindle/python/.venv/bin/python \
+  /x/Code/.kindle-atari-five/python/examples/audit_atari_tasks.py \
+  --train TRAIN.jsonl --evaluation EVAL.jsonl --checkpoint FINAL_CHECKPOINT \
+  --schema VALIDATED_SAME_MODEL_CHECKPOINT --replay EVAL.replay.json \
+  --output FRESH.score.json
+```
+
+All **401 Python tests pass**, including 63 new threshold, replay-binding and
+learning-lifecycle tests. The new scorer also accepts all nine actual recorded
+Freeway/Breakout/Qbert fixture outcomes, grading each complete fixture
+individually below the 20-episode minimum. These checks are not agent evaluation.
+The test report and content-pinned fixture validation are in
+[`runs/atari-task-scoring-20260908.eOahCe`](../../runs/atari-task-scoring-20260908.eOahCe/).
+
 ## Replay and videos without more GPU time
 
 `python/examples/replay_atari.py` audits the complete frozen vector log and
