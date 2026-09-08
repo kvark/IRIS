@@ -341,6 +341,15 @@ def main() -> None:
     if int(agent.config["action_count"]) != action_count:
         raise ValueError("checkpoint and environment action counts differ")
     agent.begin_episode(frame)
+    initial_input = (
+        dict(
+            rgb_sha256=hashlib.sha256(np.asarray(frame, dtype=np.uint8).tobytes()).hexdigest(),
+            feature_sha256=hashlib.sha256(
+                np.asarray(agent.visual_observation, dtype="<f4").tobytes()
+            ).hexdigest(),
+        )
+        if args.condition_on_recorded_actions else None
+    )
     starting_environment_step = agent.environment_step
     starting_learner_step = agent.learner_step
     import kindle._native as native
@@ -612,6 +621,7 @@ def main() -> None:
             else "recorded_frozen_policy" if source_rows else "forced_random_coverage"
         ),
         "recorded_game": source_record,
+        "initial_input": initial_input,
         "recorded_model": (
             dict(config=source_header["config"],
                  provenance=source_header["model_provenance"],

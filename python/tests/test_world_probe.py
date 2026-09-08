@@ -329,6 +329,10 @@ def test_conditioned_replay_is_explicitly_not_the_evaluated_policy(replay, monke
     assert result["recorded_model"]["config"] == recorded_rows()[0]["config"]
     assert result["learner_updates"] == 0
     assert environment.closed and agent.seen == 2
+    assert result["initial_input"] == dict(
+        rgb_sha256=hashlib.sha256(bytes([0])).hexdigest(),
+        feature_sha256=hashlib.sha256(np.array([0], dtype="<f4").tobytes()).hexdigest(),
+    )
     assert events == [
         ("policy", 0), *[("forecast", 0)] * 3, ("environment", 0),
         ("policy", 1), *[("forecast", 1)] * 3, ("environment", 1),
