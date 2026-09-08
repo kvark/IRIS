@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Dzmitry Malyshau"]
 repository = "https://github.com/kvark/kindle"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.92"
 description = "Native visual smoke-test environments for Kindle."
 license = "MIT"
 

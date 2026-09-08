@@ -80,7 +80,7 @@ accumulates gradients before one update; it does not truncate recurrence.
 
 ## Build and weights
 
-Use Rust 1.88 or newer and a Blade-supported GPU backend. Linux experiments use
+Use Rust 1.92 or newer and a Blade-supported GPU backend. Linux experiments use
 Vulkan. Practical learning needs a hardware accelerator.
 
 DINO weights are supplied separately:

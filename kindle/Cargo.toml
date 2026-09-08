@@ -4,15 +4,15 @@ version = "0.1.0"
 authors = ["Dzmitry Malyshau"]
 repository = "https://github.com/kvark/kindle"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.92"
 description = "A live-learning Dreamer agent with frozen causal visual perception."
 license = "MIT"
 
 [dependencies]
-meganeura = { git = "https://github.com/kvark/meganeura", rev = "35a410ce1262c396e137db5bfab1d58e35cee50a" }
-# Pinned to the same Blade revision as Meganeura so their GPU context types
-# remain identical at the perception/learner boundary.
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "b208f3b1f97196c2971436b5726e61e71b149c37" }
+# Latest main plus the two carried LeVJEPA cached-query-block patches.
+meganeura = { git = "https://github.com/kvark/meganeura", rev = "a7e2efd9d2d1c14e654658fa1b736582d96e16cd" }
+# Match Meganeura's published dependency so GPU context types stay identical.
+blade-graphics = "=0.9.0"
 rand = "0.9"
 rayon = "1.12"
 serde = { version = "1", features = ["derive"] }
