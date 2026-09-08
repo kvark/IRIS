@@ -139,7 +139,11 @@ parity, not another learning-quality result.
 
 Throughput improves **12.9–13.3%**, and full learner time falls **14.74–14.77%**.
 Per-stream real time is only 0.0715–0.0717×. Selected GPU memory is 16,303 MiB;
-the additional 64 MiB leaves 2,091 MiB, preserving the 2 GiB reserve. Mean power
+the additional 64 MiB leaves 2,091 MiB by total-minus-used accounting, which
+omits driver reservations. The later [memory audit](2026-09-08-atari-five.md#memory-accounting-correction)
+withdraws the former 2 GiB reserve pass: current directly reported free memory
+is only 1,631 MiB. The historical timing and exact-parity evidence is unchanged.
+Mean power
 rises from 143.2–144.0 W to 155.9–156.2 W. Cold construction takes 65.9–66.4 s
 and is recorded separately from warmed throughput. All warmed windows have
 zero major faults and zero process swap. Host RSS varies; source-level removal

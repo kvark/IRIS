@@ -93,7 +93,11 @@ predeclared protocol. The N=2/4/8 matrix completes at 7.0963/7.1422/7.3663 actio
 with every accounting audit valid. The declared rule selects **N=8**: N=4 narrowly
 misses the 3%-below-best cutoff. Each seed therefore contributes 25,000 actions
 per stream and 200,000 total; this is not 200,000 per environment. Peak observed
-VRAM is 14,148 MiB, with the 10% reserve intact. No score-based selection occurred.
+VRAM is 14,148 MiB. The historical total-minus-used check reported the 10%
+reserve intact but did not record driver reservations or directly free memory;
+see the later [accounting correction](2026-09-08-atari-five.md#memory-accounting-correction).
+The reserve claim is unverified, not a change to this historical selection or
+its recorded learning results. No score-based selection occurred.
 
 Native extension SHA-256:
 `f663dd9317bd934f173b240041ea68b7e21e0f7d037ebaf22b9549a9ae91bb4e`.
