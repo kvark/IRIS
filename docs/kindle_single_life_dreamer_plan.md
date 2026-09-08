@@ -196,6 +196,8 @@ control now completes 40 natural matches with 21 wins and mean +0.125, versus
 R64's +51.55, with complete checkpoint/replay checks and zero learning updates.
 This supports substantial learned improvement for one Boxing seed. R256 is
 now training with the original native package; its final result remains pending.
+The first-80k diagnostic finds earlier posterior reward-sign separation in R256
+at roughly four times the updates, not a held-out forecast or final-policy win.
 A one-seed pilot is not reliability: select a recipe, then
 declare a fresh three-seed replication and each remaining game's real
 completion criterion before its training. Do not call a positive score a win
