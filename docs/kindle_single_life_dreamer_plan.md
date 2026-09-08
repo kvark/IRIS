@@ -203,6 +203,10 @@ Separate match/task scorers cover all five declared gates and require final
 checkpoint and frozen-replay evidence. This is evaluation readiness, not
 completed learning; campaign budgets and fresh independent seeds still need
 their own verification.
+The fresh replication will use seeds 1009/2017/3019: their eight live RNG
+inputs do not overlap under the existing `seed + stream` rule. Adjacent roots
+would share most live RNG streams. This does not explain the old Pong variation
+or replace the need for independent model runs and a fixed declared budget.
 
 Use cheap adapter/reward and numerical checks first, then fixed-budget learning
 runs. Choose the video-encoder candidate through a bounded comparison before
