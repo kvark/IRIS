@@ -283,8 +283,9 @@ heads. Full RSSM recurrence and BPTT are preserved and production-sized losses
 and gradients are checked. Seed 0 completed 200k aggregate actions and 49,619
 updates in 7.63 hours of execution, with zero training debt. Its steady windows
 measure 7.2–7.3 aggregate actions/s, about 0.48× the game clock in aggregate
-and 0.060× per stream. GPU activity is roughly 60%, with stable 13.82 GiB usage
-and the memory reserve intact. Environments take under 1% of wall time; the
+and 0.060× per stream. GPU activity is roughly 60%, with stable 13.82 GiB usage.
+The old memory check did not record driver reservations or actual free VRAM.
+Environments take under 1% of wall time; the
 learner and perception remain the bottleneck, not CPU environment stepping.
 
 This replaces the interrupted serial LeVJEPA campaign with a fresh, declared
@@ -302,7 +303,8 @@ originally reached **8.58–8.61 aggregate actions/s: 0.572–0.574× aggregate 
 12.9–13.3% over the separately validated host-buffer reuse, with exactly matching
 actions, rewards, updates and checkpoint tensors. Full learner calls fall from
 408 to 348 ms. GPU activity rises from 62–63% to 68–69%; peak VRAM rises by
-64 MiB to 14,212 MiB, retaining the 2 GiB reserve. Scientific settings are unchanged.
+64 MiB to 14,212 MiB. Its former 2 GiB reserve claim is withdrawn below.
+Scientific settings are unchanged.
 The previous host feature scratch is no longer needed. Original executables and
 the default editable Python extension remain pinned controls; select the tested
 isolated package or build a fresh package for new experiments.
@@ -317,6 +319,16 @@ take 343–345 ms; memory stays 14,212 MiB and GPU activity spans 66–70%.
 This is primarily a correctness/maintenance update, not the major speed gain
 still needed. Logical checkpoint restore omits only derived Winograd caches,
 not learned weights or moments; historical backend identities remain strict.
+
+The [memory-accounting correction](experiments/2026-09-08-atari-five.md#memory-accounting-correction)
+finds only **1,631 MiB directly reported free** at 14,212 MiB used; the earlier
+2,091 MiB calculation omitted driver-reserved memory. This fails the 2 GiB
+free-memory gate, without changing the recorded action/tensor/score evidence.
+Keep the stable, pinned pilot running unchanged, but require directly sampled
+`memory.free ≥ 2,048 MiB` before long-run replication or a larger batch. Reduce
+memory with new numerical/runtime checks; do not lower the gate or silently
+change the pilot's microbatching. Historical monitors cannot prove free memory
+they did not record.
 
 Measure acceleration as simulated game seconds / wall seconds. Report cold
 construction separately and also include end-to-end run cost. Track actual

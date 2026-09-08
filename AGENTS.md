@@ -60,7 +60,13 @@ reliable learning.
   Keep backend identity checks and historical executables intact.
   Current exact pixel pairs reach 8.64–8.70 actions/s, only 0.576–0.580× aggregate
   real time and 0.0720–0.0725× per stream. GPU activity spans 66–70%; 14,212 MiB
-  peak memory retains the 2 GiB reserve. This backend update is not a major
+  peak usage leaves only 1,631 MiB of directly reported free memory in the live
+  pilot. The old total-minus-used check omitted driver reservations and does
+  not establish the 2 GiB safety gate. Preserve those raw results but withdraw
+  the reserve-pass claim. Record memory.free and memory.reserved directly;
+  require at least 2,048 MiB measured free before new long-run replication or
+  a larger batch. Let the unchanged, stable pilot finish; do not restart it or
+  add concurrent GPU work. This backend update is not a major
   speedup; see `docs/experiments/2026-09-08-meganeura-refresh.md` for the tested
   current package and the preserved audit-only failure plus completed continuation.
   Track remaining world-training/recurrent/perception costs and profiler

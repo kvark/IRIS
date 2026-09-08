@@ -110,8 +110,13 @@ The continuation and its `summary.json` retain both complete pairs:
 | 0 / AB | 8.588 → 8.644 | 0.5725× → 0.5763× | 347.6 → 344.7 | 67.4 → 65.9 |
 | 1 / BA | 8.598 → 8.704 | 0.5732× → 0.5803× | 347.2 → 343.2 | 66.7 → 70.1 |
 
-Peak GPU memory stays 14,212 MiB in every run, leaving 2,091 MiB of the
-16,303 MiB adapter. Refreshed per-stream real time is 0.0720–0.0725×. Observed
+Peak GPU memory stays 14,212 MiB in every run. The former 2,091 MiB headroom
+calculation subtracted usage from total memory but omitted driver reservations;
+it does not prove the declared 2 GiB free-memory gate. The later
+[memory audit](2026-09-08-atari-five.md#memory-accounting-correction) measures only
+1,631 MiB free in the live pilot and withdraws that reserve-pass claim, without
+changing these raw timing or exact-parity results.
+Refreshed per-stream real time is 0.0720–0.0725×. Observed
 throughput rises 0.65% and 1.24%; two short pairs do not establish a precise
 population speedup, and this is not a substantial acceleration. Coarse activity
 fluctuates in both directions and does not identify idle gaps or occupancy.

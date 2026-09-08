@@ -240,7 +240,9 @@ actual package. The real N8/12M/B16/T64 initialization matches every original
 action and all 95 original parameter tensors exactly, adding only 146 complete
 F32-zero optimizer tensors. Restoring/resaving the trained R64 model retains all
 241 tensor payloads and every saved counter exactly. The two pixel checks peak
-at 14,094 MiB, leaving 2,209 MiB. Their manifests, raw logs and comparisons are
+at 14,094 MiB. The recorded `free_gpu_mib: 2209` is total-minus-used, not directly
+free memory; its safety claim is withdrawn by the correction below. Their
+exact tensor/action comparisons are unchanged. Manifests, raw logs and comparisons are
 in `runs/zero-update-checkpoint-20260908.yxaalA/`.
 
 ### Live continuation
@@ -332,6 +334,32 @@ Preserve the earlier R64 artifact in
 four-frames/action conversion gave 1.31274× aggregate real time. The new result
 uses the recorded 39,976 frames, correcting that small difference without
 changing any raw timing, action or score evidence.
+
+### Memory-accounting correction
+
+At 15:54 UTC, 30 read-only samples during the unchanged R256 run report
+16,303 MiB total, 14,212 MiB used, 462 MiB driver-reserved and **1,631 MiB free**.
+The quantities are separately rounded by `nvidia-smi`. Total minus used gives
+2,091 MiB, but that is not available memory. NVIDIA documents reserved and
+available memory as distinct fields in its
+[FB memory accounting](https://docs.nvidia.com/deploy/nvidia-smi/index.html#fb-memory-usage).
+
+The old device-imagination/backend/pixel checks used total minus peak usage;
+their claimed 2 GiB free-memory pass is therefore unverified, and the current
+live recipe directly **fails** that gate. Preserve every original monitor,
+summary and pinned input, including the save repair's misleading
+`free_gpu_mib: 2209`; do not rewrite historical safety flags. Exact action,
+checkpoint, optimizer and score evidence remains valid independently of this
+accounting error.
+
+The running pilot is stable and retains positive headroom, so finish its
+unchanged fixed budget and evaluation without adding GPU work. Before fresh
+long-run replication or increasing batch size, require sampled `memory.free`
+of at least 2,048 MiB, with total/reserved/used recorded alongside it. A memory
+reduction must pass new numerical and runtime checks; do not silently change
+live microbatching or lower the reserve. The fresh samples and correction are
+in `runs/gpu-free-memory-20260908.J76R3J/{samples.csv,summary.json}`. They do not
+backfill the unrecorded reserved/free fields of older runs.
 
 ### Bounded learning-equation review
 
