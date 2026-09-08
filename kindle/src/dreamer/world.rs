@@ -547,6 +547,15 @@ pub fn build_transition_graph(config: &DreamerConfig, batch: usize) -> Graph {
 
 /// Reward and continuation predictions for posterior or imagined states.
 pub fn build_head_graph(config: &DreamerConfig, batch: usize) -> Graph {
+    head_graph(config, batch, false)
+}
+
+/// Also expose the pinned state feature for device-side imagination handoffs.
+pub fn build_imagination_head_graph(config: &DreamerConfig, batch: usize) -> Graph {
+    head_graph(config, batch, true)
+}
+
+fn head_graph(config: &DreamerConfig, batch: usize, expose_state: bool) -> Graph {
     config.validate();
     assert!(batch > 0);
     let size = config.network();
@@ -556,7 +565,11 @@ pub fn build_head_graph(config: &DreamerConfig, batch: usize) -> Graph {
     let stoch = graph.input("stoch", &[batch * size.stoch, size.classes]);
     let state = feature(&mut graph, deter, stoch, batch, config);
     let (reward, continuation) = heads.forward(&mut graph, state);
-    graph.set_outputs(vec![reward, continuation]);
+    let mut outputs = vec![reward, continuation];
+    if expose_state {
+        outputs.push(state);
+    }
+    graph.set_outputs(outputs);
     graph
 }
 
@@ -644,6 +657,13 @@ mod tests {
             vec![5, config.value_bins]
         );
         assert_eq!(heads.node(heads.outputs()[1]).ty.shape, vec![5, 1]);
+        assert_eq!(heads.outputs().len(), 2);
+        let imagination = build_imagination_head_graph(&config, 5);
+        assert_eq!(imagination.outputs().len(), 3);
+        assert_eq!(
+            imagination.node(imagination.outputs()[2]).ty.shape,
+            vec![5, config.feature_dim()]
+        );
         let decoder = build_observation_prediction_graph(&config, 5);
         assert_eq!(
             decoder.node(decoder.outputs()[0]).ty.shape,

@@ -10,6 +10,7 @@ mod behavior;
 mod checkpoint;
 mod config;
 mod cpu;
+mod device_copy;
 mod distributions;
 mod intrinsic;
 mod networks;

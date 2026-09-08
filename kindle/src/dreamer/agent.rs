@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use meganeura::{Mode, Session};
+use meganeura::{Mode, Session, runtime::ExternalSlot};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 
@@ -20,6 +20,7 @@ use super::checkpoint::{
 };
 use super::config::DreamerConfig;
 use super::cpu;
+use super::device_copy::{DeviceCopies, DeviceCopy};
 use super::distributions::{
     PercentileNormalizer, TwoHotBins, continuation_weights, lambda_returns, sample_probabilities,
     sample_probabilities_at, softmax_unimix,
@@ -182,7 +183,6 @@ struct PosteriorBatch {
 }
 
 struct BehaviorTrainingBatch {
-    imagined_feature: Vec<f32>,
     action_target: Vec<f32>,
     imagined_weight: Vec<f32>,
     imagined_value_target: Vec<f32>,
@@ -295,7 +295,7 @@ impl D3TrainScheduler {
 pub struct DreamerCore {
     gpu: Arc<blade_graphics::Context>,
     readback: Readback,
-    imagined_feature_scratch: Vec<f32>,
+    device_copies: DeviceCopies,
     config: DreamerConfig,
     perception_identity: Option<PerceptionIdentity>,
     bins: TwoHotBins,
@@ -401,7 +401,7 @@ impl DreamerCore {
         let world_observe_live_graph = world::build_observe_graph(&config, 1);
         let world_transition_graph = world::build_transition_graph(&config, starts);
         let world_transition_live_graph = world::build_transition_graph(&config, 1);
-        let world_head_graph = world::build_head_graph(&config, starts);
+        let world_head_graph = world::build_imagination_head_graph(&config, starts);
         let world_head_live_graph = world::build_head_graph(&config, 1);
         let behavior_train_graph =
             behavior::build_training_graph(&config, imagined_rows, replay_rows);
@@ -461,7 +461,7 @@ impl DreamerCore {
         let size = config.network();
         Self {
             readback: Readback::new(Arc::clone(&gpu)),
-            imagined_feature_scratch: Vec::new(),
+            device_copies: DeviceCopies::new(Arc::clone(&gpu)),
             gpu,
             bins: TwoHotBins::new(config.value_bins),
             replay: SequenceReplay::new(config.replay_capacity),
@@ -1092,7 +1092,6 @@ impl DreamerCore {
         let stage = Instant::now();
         self.sync_behavior_inference();
         timing.behavior_sync_seconds = stage.elapsed().as_secs_f64();
-        self.imagined_feature_scratch = behavior_batch.imagined_feature;
         self.learner_step += 1;
         timing.total_seconds = started.elapsed().as_secs_f64();
         Some(LearnReport {
@@ -1445,9 +1444,11 @@ impl DreamerCore {
         let size = self.config.network();
         let starts = self.config.batch_size * self.config.batch_length;
         let horizon = self.config.imagination_length;
-        let mut deter = flatten_time(&posterior.deter);
+        let deter = flatten_time(&posterior.deter);
         let mut stoch = flatten_time(&posterior.stoch);
-        let mut features = Vec::with_capacity(horizon + 1);
+        let replay_start_feature = join_features(&deter, &stoch, starts, &self.config);
+        let feature_bytes = starts * self.config.feature_dim() * size_of::<f32>();
+        self.world_heads.set_input("deter", &deter);
         let mut actions = Vec::with_capacity(horizon);
         let mut rewards = Vec::with_capacity(horizon + 1);
         let mut continuations = Vec::with_capacity(horizon + 1);
@@ -1455,19 +1456,47 @@ impl DreamerCore {
         let mut slow_values = Vec::with_capacity(horizon + 1);
 
         for time in 0..=horizon {
-            let state_feature = join_features(&deter, &stoch, starts, &self.config);
-            self.behavior_online.set_input("feature", &state_feature);
+            self.world_heads.set_input("stoch", &stoch);
+            self.world_heads.step();
+            let mut copies = vec![
+                DeviceCopy {
+                    source: (&self.world_heads, ExternalSlot::Output(2)),
+                    target: (&self.behavior_online, "feature"),
+                    target_offset_bytes: 0,
+                },
+                DeviceCopy {
+                    source: (&self.world_heads, ExternalSlot::Output(2)),
+                    target: (&self.behavior_slow, "feature"),
+                    target_offset_bytes: 0,
+                },
+            ];
+            if time < horizon {
+                copies.extend([
+                    DeviceCopy {
+                        source: (&self.world_heads, ExternalSlot::Output(2)),
+                        target: (&self.behavior_train, "imagined_feature"),
+                        target_offset_bytes: time * feature_bytes,
+                    },
+                    DeviceCopy {
+                        source: (&self.world_heads, ExternalSlot::Input("deter")),
+                        target: (&self.world_transition, "deter"),
+                        target_offset_bytes: 0,
+                    },
+                    DeviceCopy {
+                        source: (&self.world_heads, ExternalSlot::Input("stoch")),
+                        target: (&self.world_transition, "stoch"),
+                        target_offset_bytes: 0,
+                    },
+                ]);
+            }
+            self.device_copies.copy(&copies);
             self.behavior_online.step();
             let mut actor_logits = vec![0.0; starts * self.config.action_count];
             let mut value_logits = vec![0.0; starts * self.config.value_bins];
 
-            self.behavior_slow.set_input("feature", &state_feature);
             self.behavior_slow.step();
             let mut slow_logits = vec![0.0; starts * self.config.value_bins];
 
-            self.world_heads.set_input("deter", &deter);
-            self.world_heads.set_input("stoch", &stoch);
-            self.world_heads.step();
             let mut reward_logits = vec![0.0; starts * self.config.value_bins];
             let mut continuation = vec![0.0; starts];
             self.readback.read_many(&mut [
@@ -1481,7 +1510,6 @@ impl DreamerCore {
             let decoded_reward = decode_rows(&reward_logits, starts, &self.bins);
             let decoded_value = decode_rows(&value_logits, starts, &self.bins);
             let decoded_slow = decode_rows(&slow_logits, starts, &self.bins);
-            features.push(state_feature);
             rewards.push(decoded_reward);
             continuations.push(continuation);
             values.push(decoded_value);
@@ -1502,16 +1530,16 @@ impl DreamerCore {
                 action_one_hot[row * self.config.action_count + action] = 1.0;
             }
             actions.push(action_indices);
-            self.world_transition.set_input("deter", &deter);
-            self.world_transition.set_input("stoch", &stoch);
             self.world_transition.set_input("action", &action_one_hot);
             self.world_transition.step();
-            let mut next_deter = vec![0.0; starts * size.deter];
+            self.device_copies.copy(&[DeviceCopy {
+                source: (&self.world_transition, ExternalSlot::Output(0)),
+                target: (&self.world_heads, "deter"),
+                target_offset_bytes: 0,
+            }]);
             let mut prior_logits = vec![0.0; starts * size.stoch * size.classes];
-            self.readback.read(
-                &self.world_transition,
-                &mut [(0, &mut next_deter), (1, &mut prior_logits)],
-            );
+            self.readback
+                .read(&self.world_transition, &mut [(1, &mut prior_logits)]);
             let next_stoch = sample_latents(
                 &prior_logits,
                 starts,
@@ -1520,7 +1548,6 @@ impl DreamerCore {
                 self.config.unimix,
                 &mut self.rngs.imagination,
             );
-            deter = next_deter;
             stoch = next_stoch;
         }
 
@@ -1560,9 +1587,6 @@ impl DreamerCore {
         let return_scale = self.return_normalizer.scale();
 
         let imagined_rows = starts * horizon;
-        let mut imagined_feature = std::mem::take(&mut self.imagined_feature_scratch);
-        imagined_feature.clear();
-        imagined_feature.reserve(imagined_rows * self.config.feature_dim());
         let mut action_target = vec![0.0; imagined_rows * self.config.action_count];
         let mut imagined_weight = vec![0.0; imagined_rows];
         let mut imagined_value_target = vec![0.0; imagined_rows * self.config.value_bins];
@@ -1570,7 +1594,6 @@ impl DreamerCore {
         let mut advantage_abs_sum = 0.0;
         let mut weighted_advantage_abs_sum = 0.0;
         for time in 0..horizon {
-            imagined_feature.extend_from_slice(&features[time]);
             for start in 0..starts {
                 let row = time * starts + start;
                 let advantage = (returns[time][start] - values[time][start]) / return_scale;
@@ -1650,7 +1673,7 @@ impl DreamerCore {
                 replay_feature
                     [row * self.config.feature_dim()..(row + 1) * self.config.feature_dim()]
                     .copy_from_slice(
-                        &features[0][start * self.config.feature_dim()
+                        &replay_start_feature[start * self.config.feature_dim()
                             ..(start + 1) * self.config.feature_dim()],
                     );
                 replay_weight[row] = 1.0 - last[time];
@@ -1668,7 +1691,6 @@ impl DreamerCore {
         }
 
         BehaviorTrainingBatch {
-            imagined_feature,
             action_target,
             imagined_weight,
             imagined_value_target,
@@ -1706,8 +1728,6 @@ impl DreamerCore {
 
     fn train_behavior(&mut self, batch: &BehaviorTrainingBatch) -> BehaviorMetrics {
         let actor_update_scale = self.config.actor_update_scale(self.learner_step);
-        self.behavior_train
-            .set_input("imagined_feature", &batch.imagined_feature);
         self.behavior_train
             .set_input("action_target", &batch.action_target);
         self.behavior_train
@@ -2855,7 +2875,6 @@ mod tests {
         config.skip_full_optimize = true;
         let gpu = Arc::new(crate::init_gpu_context().unwrap());
         let mut agent = DreamerCore::with_gpu(config, Arc::clone(&gpu));
-        assert!(agent.imagined_feature_scratch.is_empty());
         let (world_parameters, behavior_parameters) = agent.trainable_parameter_counts();
         assert!(world_parameters > 0 && behavior_parameters > 0);
         assert!(
@@ -2933,11 +2952,16 @@ mod tests {
             .read_param("behavior.actor.out.bias", &mut initial_actor_parameter);
         let report = agent.learn().expect("nine frames fill one tiny sequence");
         assert_eq!(
-            agent.imagined_feature_scratch.len(),
-            agent.config.batch_size
-                * agent.config.batch_length
-                * agent.config.imagination_length
-                * agent.config.feature_dim()
+            agent
+                .behavior_train
+                .slot_size(ExternalSlot::Input("imagined_feature")),
+            Some(
+                agent.config.batch_size
+                    * agent.config.batch_length
+                    * agent.config.imagination_length
+                    * agent.config.feature_dim()
+                    * size_of::<f32>()
+            )
         );
         assert_eq!(report.learner_step, 1);
         assert_eq!(report.replay_len, 9);
@@ -2998,7 +3022,6 @@ mod tests {
 
         let metadata = read_checkpoint_metadata(&checkpoint).unwrap();
         let mut restored = DreamerCore::restore_with_gpu(&checkpoint, gpu, metadata).unwrap();
-        assert!(restored.imagined_feature_scratch.is_empty());
         assert_eq!(restored.learner_step(), 1);
         assert_eq!(restored.environment_step(), 8);
         assert_eq!(restored.replay_len(), 0);
@@ -3044,15 +3067,11 @@ mod tests {
         let report = restored.learn().expect("refilled replay learns");
         assert_eq!(report.learner_step, 2);
         assert_eq!(report.behavior.actor_update_scale, 1.0);
-        let pointer = restored.imagined_feature_scratch.as_ptr();
-        let capacity = restored.imagined_feature_scratch.capacity();
         let report = restored
             .learn()
-            .expect("a second update reuses host feature storage");
+            .expect("a second update replaces the device feature rows");
         assert_eq!(report.learner_step, 3);
         assert!(report.world.total_loss.is_finite() && report.behavior.total_loss.is_finite());
-        assert_eq!(restored.imagined_feature_scratch.as_ptr(), pointer);
-        assert_eq!(restored.imagined_feature_scratch.capacity(), capacity);
         drop(restored);
         fs::remove_dir_all(checkpoint).unwrap();
     }
