@@ -191,6 +191,11 @@ Pong controls. A one-seed pilot is not reliability: select a recipe, then
 declare a fresh three-seed replication and each remaining game's real
 completion criterion before its training. Do not call a positive score a win
 or let more tooling substitute for actual learning results.
+The [task observers](experiments/2026-09-08-atari-task-observers.md) now distinguish
+match wins, complete Freeway rounds, both Breakout walls and Qbert pyramid
+completion. Qbert's first pyramid is only a progress milestone: sustained
+competence also needs its declared final-score bar. CPU-only reconstruction
+produces complete-stream videos and outcome ledgers without another GPU run.
 
 Use cheap adapter/reward and numerical checks first, then fixed-budget learning
 runs. Choose the video-encoder candidate through a bounded comparison before
