@@ -9,7 +9,7 @@ runner/package was changed. The candidate Python suite passes 338 tests.
 pinned ROMs. Pong and Boxing require a positive **natural final match** result,
 not an early lead. Freeway requires 25 crossings in a complete natural round.
 Breakout records the first attainment of 864 points: both walls, according to
-the [original Atari manual](https://www.atariage.com/2600/manuals_old/breakout.html).
+the [original Atari manual](https://atari.com/pages/breakout).
 Qbert records the first simultaneous conversion of all 21 initial cubes.
 
 Only Qbert needs RAM to identify task completion. This is an evaluation-only
@@ -47,14 +47,47 @@ reward shaping or ingestion of these fixtures into Kindle's replay.
   cubes when they are never simultaneously converted.
 - Three simple paddle-controller fixtures at action repeat 4 earn positive
   Breakout returns 25/21/15 and are correctly **not** marked complete. Unit
-  checks reject 432 and 863, and accept a genuine 864-point milestone. A real
-  positive two-wall fixture remains unverified; do not claim it from those
-  synthetic boundary checks. Exploratory one-frame controllers also failed
-  to clear both walls and are not Kindle results.
+  checks reject 432 and 863. The subsequent actual two-wall fixture below
+  verifies the positive milestone independently of those synthetic checks.
 - Holding UP in Freeway earns 21 in each complete 8,192-frame round at
   environment seeds 9001/9002/9003. The fixed deterministic controller has
   identical outcomes; these are not independent learned policies. The planned
   25-crossing bar requires more than this simple control.
+
+### Verified Breakout two-wall fixture
+
+A privileged one-frame paddle controller with varied return angles produces
+three natural game results: **432 / 827 / 864**. These are scripted observer
+fixtures, not Kindle, learned policies or demonstration data. All three replay
+exactly in fresh CPU environments, checking every action, reward, boundary,
+emulator frame number and BCD score. Only the 864-point game passes the observer.
+Its first wall clears at frame 11,395, the second at 21,186, and a natural
+terminal follows at 21,223. The partial episode at the milestone remains ungraded.
+
+An independent RAM bitmap check counts 108 initial bricks and zero at each
+wall clear, using masks derived from the
+[pinned OCAtari source](https://raw.githubusercontent.com/k4ntz/OC_Atari/99c874675df6b76a33a80b57776c123fbcd051af/ocatari/ram/breakout.py).
+The first verifier mistakenly required every brick-storage byte to be zero:
+unused low bits remain set. Its failed assertion, source and movie are retained;
+the separately named v2 verifier corrects that auxiliary check. The production
+score-based observer and acceptance threshold never changed.
+
+Evidence in the artifact directory:
+
+- `breakout-vary-angle-fixtures.json` and all three raw action logs.
+- `breakout-scripted-verification-v2.json`: complete fresh-replay verification.
+- [Verified fixture video](../../runs/atari-task-observers-20260908.TzCy2B/breakout-scripted-observer-fixture-verified.mp4):
+  all 21,223 raw frames, 160×210 at 60 fps. This is the selected **scripted**
+  positive fixture, not a Kindle rollout or an unbiased policy evaluation.
+- `breakout-verification-v1-failure.md`: preserved first-verifier failure.
+
+Earlier constant-angle raw-frame fixtures are also retained. Three reach
+65,536 frames, where ball motion stops while paddle inputs still work; ALE
+reports neither terminal nor truncation. This is not an emulator-wide halt,
+and its cause is unresolved. They remain failed/partial fixtures, bounded by
+their declared budgets. Do not invent a natural terminal or task completion
+from that state. The production wrapper's existing 100,000-frame cutoff bounds
+such episodes; the current short-round Boxing pilot is unaffected.
 
 ## Replay and videos without more GPU time
 

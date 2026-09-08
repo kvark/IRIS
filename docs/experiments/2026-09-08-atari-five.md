@@ -22,7 +22,7 @@ independent replication. Preserve the failed original three-seed Pong gate.
 | Pong | Win the match; mean return ≥15 and ≥90% natural wins over ≥20 games | Existing 200k-action recipe fails two of three seeds; new recipe must be separately declared |
 | Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | Implemented for the pilot; frozen scores pending |
 | Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | Observer verified against the actual ROM; holding UP scores 21 |
-| Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Validate completion and cutoff handling before its training/evaluation protocol |
+| Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Positive and negative actual-ROM fixtures verified; declare its training/evaluation budgets next |
 | Qbert | Sustained progression: first-pyramid completion in ≥90% of ≥20 complete episodes, plus mean final score ≥15,000 | First-pyramid observer verified; one cleared pyramid alone is not mastery |
 
 The score differences and natural termination used for Boxing are implemented
@@ -147,3 +147,27 @@ training episode cohorts have means −0.25, +1.5, −0.125 and −3.375. They d
 yet demonstrate useful improvement, and do not replace the final frozen gate.
 The prefix-bound measurement and raw interval endpoints are in
 `runs/atari-task-observers-20260908.TzCy2B/boxing-r64-40k-50k.json`.
+
+### Bounded learning-equation review
+
+A read-only comparison with the local pinned upstream DreamerV3 source and
+the actual adopted Meganeura checkout finds no new defect in replay context,
+reward/action alignment, reset masking, return indexing, continuation weights,
+online-value targets, slow-value regularization or the AGC → RMS → momentum
+optimizer sequence. Upstream's configured `slowtar: False` matters; inspecting
+only the helper's default would give the wrong comparison. This source review
+is not a new numerical equivalence test for the complete architecture.
+
+The fixed first 80k R64 interactions already contain 1,356 positive and 1,314
+negative reward events. Early posterior reward fitting is nevertheless slow:
+sample-weighted positive predictions average 0.00048 and 0.00728 in the first
+and second 40k windows; negative predictions average 0.00043 and −0.01132.
+Actual event magnitudes are one or two. These repeated replay predictions are
+not held-out forecasts or evidence that the final policy fails. Keep reward
+discovery and reward fitting separate, finish both ratio arms and their frozen
+controls, then choose an intervention. No live recipe or acceptance rule changed.
+
+The source-review scope and prefix-bound reproducible summary are in
+[`runs/learning-review-20260908.W6fAHO`](../../runs/learning-review-20260908.W6fAHO/).
+The [observer follow-up](2026-09-08-atari-task-observers.md#verified-breakout-two-wall-fixture)
+now also verifies a real scripted 864-point Breakout fixture, not a Kindle win.
