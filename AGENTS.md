@@ -134,8 +134,10 @@ reliable learning.
   actions/parameters and complete trained-state preservation, retaining strict
   restore checks. Preserve the original artifacts. The live continuation in
   `runs/atari-five-continue-20260908.JrdVto` completed the repaired zero-update
-  control: 21/40 wins, mean +0.125, with full checkpoint/replay checks. R256 is
-  now training with the original native package. The continuation also pins the
+  control: 21/40 wins, mean +0.125, with full checkpoint/replay checks. R256
+  finished 200k actions and 49,619 updates with the original native package;
+  all 241 final tensors pass the CPU health check. Its 75k frozen evaluation is
+  running, not yet scored. The continuation also pins the
   repair evidence and shared auditors: keep them unchanged while live. Do not
   rerun R64 or select a ratio before both arms and the control finish. Keep the pinned
   package/runner unchanged while live. One pilot seed does not establish
