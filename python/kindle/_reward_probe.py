@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 
 
 def roc_auc(labels: list[bool], scores: list[float]) -> float | None:
@@ -22,14 +23,12 @@ def roc_auc(labels: list[bool], scores: list[float]) -> float | None:
         while end < len(ranked) and ranked[end][0] == ranked[start][0]:
             end += 1
         average_rank = (start + 1 + end) / 2.0
-        positive_rank_sum += average_rank * sum(
-            label for _, label in ranked[start:end]
-        )
+        positive_rank_sum += average_rank * sum(label for _, label in ranked[start:end])
         start = end
 
-    return (
-        positive_rank_sum - positive_count * (positive_count + 1) / 2.0
-    ) / (positive_count * negative_count)
+    return (positive_rank_sum - positive_count * (positive_count + 1) / 2.0) / (
+        positive_count * negative_count
+    )
 
 
 @dataclass
@@ -40,6 +39,7 @@ class RewardProbeStats:
     posterior_prediction_sum: float = 0.0
     one_step_prior_absolute_error_sum: float = 0.0
     posterior_absolute_error_sum: float = 0.0
+    zero_absolute_error_sum: float = 0.0
 
     def record(
         self,
@@ -55,6 +55,7 @@ class RewardProbeStats:
             one_step_prior_prediction - target
         )
         self.posterior_absolute_error_sum += abs(posterior_prediction - target)
+        self.zero_absolute_error_sum += abs(target)
 
     def summary(self) -> dict[str, object]:
         if not self.count:
@@ -65,6 +66,7 @@ class RewardProbeStats:
                 "posterior_prediction_mean": None,
                 "one_step_prior_mae": None,
                 "posterior_mae": None,
+                "zero_predictor_mae": None,
             }
         count = float(self.count)
         return {
@@ -74,10 +76,9 @@ class RewardProbeStats:
                 self.one_step_prior_prediction_sum / count
             ),
             "posterior_prediction_mean": self.posterior_prediction_sum / count,
-            "one_step_prior_mae": (
-                self.one_step_prior_absolute_error_sum / count
-            ),
+            "one_step_prior_mae": (self.one_step_prior_absolute_error_sum / count),
             "posterior_mae": self.posterior_absolute_error_sum / count,
+            "zero_predictor_mae": self.zero_absolute_error_sum / count,
         }
 
 
@@ -99,6 +100,11 @@ class RewardProbe:
         one_step_prior_prediction: float,
         posterior_prediction: float,
     ) -> None:
+        if not all(
+            math.isfinite(value)
+            for value in (target, one_step_prior_prediction, posterior_prediction)
+        ):
+            raise ValueError("reward probe requires finite targets and predictions")
         if target > 0.0:
             sign = "positive"
         elif target < 0.0:
@@ -109,9 +115,7 @@ class RewardProbe:
         self.by_reward_sign[sign].record(
             target, one_step_prior_prediction, posterior_prediction
         )
-        self.samples.append(
-            (target, one_step_prior_prediction, posterior_prediction)
-        )
+        self.samples.append((target, one_step_prior_prediction, posterior_prediction))
 
     def summary(self) -> dict[str, object]:
         overall = self.overall.summary()
@@ -119,9 +123,9 @@ class RewardProbe:
             "samples": self.overall.count,
             "one_step_prior_mae": overall["one_step_prior_mae"],
             "posterior_mae": overall["posterior_mae"],
+            "zero_predictor_mae": overall["zero_predictor_mae"],
             "by_reward_sign": {
-                sign: stats.summary()
-                for sign, stats in self.by_reward_sign.items()
+                sign: stats.summary() for sign, stats in self.by_reward_sign.items()
             },
             "one_step_prior_ranking": self._ranking_summary(1),
             "posterior_ranking": self._ranking_summary(2),
