@@ -587,7 +587,7 @@ mod tests {
     #[test]
     #[ignore = "requires GPU and pinned LeVJEPA weights; run after the active pilot"]
     fn memory_candidate_streams_match_serial() {
-        for streams in [4, 6] {
+        for streams in [4, 6, 8] {
             check_batched_streams_match_serial(streams);
         }
     }
@@ -610,13 +610,14 @@ mod tests {
         };
         let active = |stream, tick| stream == 0 || ![4, 15, 16, 32].contains(&tick);
         let reset = |stream, tick| tick == 0 || (stream > 0 && tick == 7 * stream);
+        let ticks = (7 * streams).max(36);
         let mut expected = Vec::new();
         {
             let mut serial = LeVJepaPerception::load(&checkpoint, None, None).unwrap();
             for stream in 0..streams {
                 serial.reset();
                 let mut values = Vec::new();
-                for tick in 0..36 {
+                for tick in 0..ticks {
                     if !active(stream, tick) {
                         values.push(None);
                         continue;
@@ -634,7 +635,7 @@ mod tests {
         }
         let mut batch = LeVJepaPerception::load_batched(&checkpoint, streams, None, None).unwrap();
         let mut worst = 0.0_f32;
-        for tick in 0..36 {
+        for tick in 0..ticks {
             let frames = (0..streams)
                 .map(|stream| frame(stream, tick))
                 .collect::<Vec<_>>();
@@ -646,8 +647,12 @@ mod tests {
                 .collect();
             let observations = batch.encode_frames_rgb8(&arrivals);
             let tokens = batch.patch_tokens();
+            assert_eq!(observations.len(), arrivals.len());
+            assert_eq!(tokens.len(), streams * PATCHES * HIDDEN);
             for ((stream, _, _), observation) in arrivals.iter().zip(observations) {
                 let (reference, reference_tokens) = expected[*stream][tick].as_ref().unwrap();
+                assert_eq!(observation.as_slice().len(), reference.as_slice().len());
+                assert_eq!(reference_tokens.len(), PATCHES * HIDDEN);
                 for (actual, expected) in observation.as_slice().iter().zip(reference.as_slice()) {
                     assert!(
                         (actual - expected).abs() < 0.005,
