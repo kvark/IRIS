@@ -46,11 +46,12 @@ reliable learning.
   `docs/experiments/2026-09-06-vector-pong.md`. Do not replace the binaries,
   runners or auditors of an active pinned experiment. Stage follow-on candidates
   separately and keep GPU-heavy checks serialized with measured training.
-  The bounded readback diagnostic worker is queued behind both the campaign
-  and checkpoint watcher. Its live identity and pinned inputs are recorded in
+  The bounded readback diagnostic worker completed its three hardware tests
+  and three exact synthetic canary pairs after the campaign/watcher. Its
+  original identity and pinned inputs are recorded in
   `runs/readback-hardware-20260907/manifest.json`; inspect its events and process
   before starting any other GPU job. Do not modify its pinned worker or inputs.
-  It validates three hardware tests and three synthetic canary pairs only;
+  It validates those hardware tests and synthetic canary pairs only;
   completion does not imply profiler adoption, GPU-idle attribution or pixel parity.
 - Change one scientific variable per comparison. Report real interactions,
   learner updates, wall time, model/data provenance, all seeds, and failures.

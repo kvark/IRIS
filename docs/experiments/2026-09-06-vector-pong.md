@@ -679,9 +679,12 @@ missing campaign output, zero-test invocations, changed pins, nonfinite tensors,
 negative second moments, timeout cleanup and early monitor failure. The worker
 source SHA-256 is `a1789caa6eaf788326635fb7ca341791cf0642a6d15439ab355007b73ef96c05`;
 its source and tests are in `runs/readback-profile-20260907/`.
-These are scheduling/CPU proofs only. Hardware results remain pending. Discard
-the first two updates of each canary for the subsequent warmed timing comparison;
-report all three paired ratios and their spread before interpreting overhead.
+These were scheduling/CPU proofs only when the worker was queued. The worker
+subsequently completes at **2026-09-08 02:31:24 UTC**, passing all three hardware
+tests and all three exact canary pairs. The
+[completed timing analysis](2026-09-08-runtime-hardware.md#readback-hardware-and-synthetic-timing-result)
+discards the first two updates of every canary and retains all paired ratios
+and their spread. No original campaign input is replaced.
 This worker does not adopt the profiler, run Nsight, validate pixels or establish
 gameplay quality. Those require their own serialized follow-up checks.
 

@@ -266,9 +266,13 @@ work already reduced a 12M canary from 7.42 to 1.05 s/update; full rows reach 0.
 Those measurements are in the kickoff report; do not repeat that investigation.
 
 The current [handoff inventory](experiments/2026-09-06-vectorization.md#remaining-handoffs-read-only-inventory)
-counts 95 explicit posterior/imagination readbacks per update. It is not a
-wait-time profile: instrument allocation/packing, transfers, sampling and GPU compute
-separately after the pinned queue. Prefer eliminating deterministic-state and
+counts 95 explicit posterior/imagination readbacks per update. The
+[completed synthetic timing gate](experiments/2026-09-08-runtime-hardware.md#readback-hardware-and-synthetic-timing-result)
+confirms those counts, exact numerical parity and no material timer overhead
+in three short alternating pairs. It measures about 79 ms of readback waits,
+32 ms of imagination input writes and 30 ms of target assembly per update;
+waits include producer computation, not just idle time. Validate the pixel loop
+and attribute GPU compute separately. Prefer eliminating deterministic-state and
 feature copies before changing sampling/return arithmetic. Even removing both
 whole stages at zero cost would not reach aggregate real time at the current
 recipe; world training and perception also need measured improvements.
@@ -281,10 +285,9 @@ A small [host-buffer reuse candidate](https://github.com/kvark/kindle/blob/6ef7b
 reproduces the allocation-fault reduction in a CPU packing test; native parity
 and end-to-end timing gates remain pending. It is not adopted.
 The [bounded hardware/parity handoff](experiments/2026-09-06-vector-pong.md#queued-diagnostic-handoff)
-is queued behind the campaign and its checkpoint watcher. It checks three
-hardware tests and three alternating parent/candidate synthetic canary pairs;
-profiling overhead, calibrated queue gaps and pixel-loop validation remain
-separate gates. Do not launch overlapping GPU work when the campaign exits.
+has completed its three hardware tests and three synthetic canary pairs.
+Calibrated queue gaps, pixel-loop validation and buffer-reuse adoption remain
+separate gates. Continue serializing GPU-heavy follow-ups.
 
 Use one learner with batched live inference, not one full GPU model per game.
 Keep independent visual caches, beliefs, RNG streams and sequence replay. Sample

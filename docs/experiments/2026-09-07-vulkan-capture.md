@@ -108,3 +108,13 @@ Cross-check native pass durations and host stage timings, retain unclassified
 time, and measure instrumentation overhead. If this tool/version cannot provide
 trustworthy workload ranges, preserve that failure instead of presenting its
 drawn timeline as an exact idle-time measurement.
+
+## Subsequent hardware result
+
+The September 8 [hardware attempts](2026-09-08-runtime-hardware.md#vulkan-capture-result-gpu-workload-gate-failed)
+complete and import successfully through the explicit importer, and preserve
+exact eight-update learning/tensor results. Both the shell-wrapper launch and
+a direct-executable retry contain API records but **no GPU-workload records**.
+The workload gate fails. Their root cause remains unestablished; no driver,
+package or permission setting is changed, and no GPU idle-gap claim is made.
+Raw failed captures and the validation report are retained in ignored run storage.
