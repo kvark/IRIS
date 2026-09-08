@@ -343,16 +343,37 @@ optimizer sequence. Upstream's configured `slowtar: False` matters; inspecting
 only the helper's default would give the wrong comparison. This source review
 is not a new numerical equivalence test for the complete architecture.
 
-The fixed first 80k R64 interactions already contain 1,356 positive and 1,314
-negative reward events. Early posterior reward fitting is nevertheless slow:
-sample-weighted positive predictions average 0.00048 and 0.00728 in the first
-and second 40k windows; negative predictions average 0.00043 and −0.01132.
-Actual event magnitudes are one or two. These repeated replay predictions are
-not held-out forecasts or evidence that the final policy fails. Keep reward
-discovery and reward fitting separate, finish both ratio arms and their frozen
-controls, then choose an intervention. No live recipe or acceptance rule changed.
-
-The source-review scope and prefix-bound reproducible summary are in
+The source-review scope and original R64 prefix-bound summary are preserved in
 [`runs/learning-review-20260908.W6fAHO`](../../runs/learning-review-20260908.W6fAHO/).
 The [observer follow-up](2026-09-08-atari-task-observers.md#verified-breakout-two-wall-fixture)
 now also verifies a real scripted 864-point Breakout fixture, not a Kindle win.
+
+### First-80k reward fitting, not held-out forecasting
+
+A post-hoc CPU comparison now covers the same two 40k-action windows in both
+arms. It verifies matching header/config identity except replay ratio, all
+transition/update counts, extrinsic-only reward storage, and exact reproduction
+of the original R64 prefix and summary. Both arms encounter positive and
+negative rewards well before learning strong reward-sign separation.
+
+| Ratio | Action window | Updates | Actual positive / negative reward events | Mean prediction on positive / negative replay rows |
+| --- | --- | ---: | ---: | ---: |
+| R64 | 1–40k | 2,405 | 614 / 582 | +0.00048 / +0.00043 |
+| R64 | 40k–80k | 2,500 | 742 / 732 | +0.00728 / −0.01132 |
+| R256 | 1–40k | 9,619 | 656 / 651 | +0.05241 / −0.10211 |
+| R256 | 40k–80k | 10,000 | 1,499 / 1,091 | +0.69681 / −1.08658 |
+
+Actual nonzero rewards have magnitude one or two. Predictions are weighted by
+the number of replay rows of each sign, including repeated experience. They
+come from the replay posterior before the learner update: the model has already
+consumed the target frame. These are conditional prediction means, not per-event
+errors or prior forecasts on a common held-out distribution.
+
+R256 separates reward signs earlier by interaction count while spending roughly
+four times the updates. Its own training trajectories also differ. This does
+not select a ratio, explain Pong's seed variation, or establish final-policy
+quality. In particular, R64's weak early fitting did not prevent its later
+frozen pass. Finish the unchanged fixed-budget comparison before choosing an
+intervention. Prefix hashes, counts, behavior statistics and the reproducible
+script are in `runs/boxing-reward-fit-20260908.cDT725/summary.json` and
+`compare_prefixes.py`; the original R64 evidence remains unchanged.
