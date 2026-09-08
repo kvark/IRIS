@@ -50,3 +50,16 @@ missing `run_end`. These are read-only compatibility checks, not new evaluations
 After the pinned queue completes, verify a short native v2 pixel run before
 adoption. CPU mock integration is not a claim of native runtime validation.
 This candidate is independent of the isolated learner profiler branch.
+
+## Native adoption gate, 2026-09-08
+
+The follow-on `exp/atari-five` branch carries this patch onto the validated
+Meganeura refresh. Its isolated package passes 281 Python tests before launch.
+A fresh Boxing run completes 3,072 N8 training actions and 387 updates, then
+restores into 8,192 frozen N1 actions: four natural matches, no timeouts and
+zero learning updates. Both v2 ledgers pass; the final checkpoint has 241
+finite tensors and matching saved/restored identities. This clears native
+accounting integration, not a Boxing mastery gate. The five-game pilot uses
+the v2 runner while the historical main-checkout Pong controls remain intact.
+The new match/declaration scorer brings the candidate Python suite to 313 tests.
+Artifacts: `/x/Code/kindle/runs/atari-five-20260908.db0XSW`.
