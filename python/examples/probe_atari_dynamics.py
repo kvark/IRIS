@@ -1,6 +1,7 @@
 """Measure open-loop Atari dynamics in frozen visual feature space.
 
-Replay a recorded frozen match or follow deterministic forced-random actions.
+Replay a recorded frozen match, condition another model on its recorded actions,
+or follow deterministic forced-random actions.
 Forecasts consume only the origin belief and proposed controls, never the target
 frames. Recorded future controls are retrospective conditioning, not a live plan.
 Features are not RGB reconstructions; prior reward forecasts are distinct from
@@ -83,6 +84,11 @@ def recorded_first_game(path):
                     "executed_action_frames",
                 ):
                     require(len(row[field]) == 1, "recorded stream count differs")
+                action = row["actions"][0]
+                require(
+                    type(action) is int and 0 <= action < header["config"]["action_count"],
+                    "invalid recorded action",
+                )
                 transitions.append(row)
             elif row["event"] == "progress":
                 require(
@@ -141,6 +147,61 @@ def verify_transition(row, action, reward, terminated, truncated, frames):
     )
 
 
+def verify_recorded_model(header, agent, native_sha256, checkpoint_hashes, conditioned):
+    require(
+        header["native_extension_sha256"] == native_sha256,
+        "use the recorded native executable",
+    )
+    config, recorded_config = agent.config, header["config"]
+    if conditioned:
+        config = {key: value for key, value in config.items() if key != "seed"}
+        recorded_config = {
+            key: value for key, value in recorded_config.items() if key != "seed"
+        }
+    require(
+        config == recorded_config and agent.provenance == header["model_provenance"],
+        "recorded model identity differs",
+    )
+    require(
+        agent.environment_step == header["starting_environment_step"]
+        and agent.learner_step == header["starting_learner_step"],
+        "restored counters differ",
+    )
+    if not conditioned:
+        restored = header["restored_checkpoint"]
+        require(
+            checkpoint_hashes["metadata.json"] == restored["metadata_sha256"],
+            "checkpoint metadata differs",
+        )
+        for name, expected in restored["tensor_sha256"].items():
+            require(
+                checkpoint_hashes[f"{name}.safetensors"] == expected,
+                "checkpoint tensor differs",
+            )
+
+
+def policy_diagnostic(agent, action, action_count):
+    probabilities = np.asarray(agent.posterior_action_probabilities(), dtype=np.float64)
+    require(
+        probabilities.shape == (action_count,)
+        and np.isfinite(probabilities).all()
+        and (probabilities >= 0).all()
+        and (probabilities <= 1).all()
+        and abs(float(probabilities.sum()) - 1.0) < 1e-5,
+        "invalid unmasked action probabilities",
+    )
+    value = float(agent.posterior_value_prediction())
+    require(np.isfinite(value), "nonfinite posterior value")
+    positive = probabilities[probabilities > 0]
+    return dict(
+        origin_action_probabilities=probabilities.tolist(),
+        origin_logged_action_probability=float(probabilities[action]),
+        origin_policy_entropy=float(-np.sum(positive * np.log(positive))),
+        origin_greedy_action=int(np.argmax(probabilities)),
+        origin_posterior_value=value,
+    )
+
+
 def feature_mse(prediction, target):
     prediction = np.asarray(prediction, dtype=np.float64)
     target = np.asarray(target, dtype=np.float64)
@@ -186,7 +247,14 @@ def main() -> None:
     parser.add_argument(
         "--recorded-run", type=Path, help="Replay its first completed frozen N=1 game"
     )
+    parser.add_argument(
+        "--condition-on-recorded-actions",
+        action="store_true",
+        help="Force the recorded controls on a compatible model; not its own policy rollout",
+    )
     args = parser.parse_args()
+    if args.condition_on_recorded_actions and not args.recorded_run:
+        parser.error("--condition-on-recorded-actions requires --recorded-run")
     source_header = source_rows = source_record = None
     if args.recorded_run:
         if (
@@ -287,30 +355,10 @@ def main() -> None:
         ]
     }
     if source_header:
-        require(
-            source_header["native_extension_sha256"] == native_sha256,
-            "use the recorded native executable",
+        verify_recorded_model(
+            source_header, agent, native_sha256, checkpoint_hashes,
+            args.condition_on_recorded_actions,
         )
-        require(
-            agent.config == source_header["config"]
-            and agent.provenance == source_header["model_provenance"],
-            "recorded model identity differs",
-        )
-        require(
-            starting_environment_step == source_header["starting_environment_step"]
-            and starting_learner_step == source_header["starting_learner_step"],
-            "restored counters differ",
-        )
-        restored = source_header["restored_checkpoint"]
-        require(
-            checkpoint_hashes["metadata.json"] == restored["metadata_sha256"],
-            "checkpoint metadata differs",
-        )
-        for name, expected in restored["tensor_sha256"].items():
-            require(
-                checkpoint_hashes[f"{name}.safetensors"] == expected,
-                "checkpoint tensor differs",
-            )
         require(
             list(environment.action_meanings) == source_header["action_meanings"],
             "action vocabulary differs",
@@ -357,7 +405,11 @@ def main() -> None:
             else None
         )
         for step, action in enumerate(actions):
-            if source_rows:
+            origin_diagnostic = (
+                policy_diagnostic(agent, action, action_count)
+                if args.condition_on_recorded_actions else {}
+            )
+            if source_rows and not args.condition_on_recorded_actions:
                 require(
                     agent.act() == action,
                     f"sampled policy diverged at action {step + 1}",
@@ -428,6 +480,7 @@ def main() -> None:
                             np.asarray(control_observation, dtype=np.float64),
                             start_observation,
                             float(continuation),
+                            origin_diagnostic,
                         )
                     )
                 rollout_starts += 1
@@ -453,6 +506,17 @@ def main() -> None:
             )
             target_observation = np.asarray(agent.visual_observation, dtype=np.float64)
             posterior_reward = float(agent.posterior_reward_prediction())
+            target_identity = (
+                dict(
+                    target_rgb_sha256=hashlib.sha256(
+                        np.asarray(frame, dtype=np.uint8).tobytes()
+                    ).hexdigest(),
+                    target_feature_sha256=hashlib.sha256(
+                        target_observation.astype("<f4").tobytes()
+                    ).hexdigest(),
+                )
+                if args.condition_on_recorded_actions else {}
+            )
             continuation_target = 0.0 if terminated else discount
             for (
                 offset,
@@ -462,6 +526,7 @@ def main() -> None:
                 control_observation,
                 start_observation,
                 predicted_continuation,
+                origin_diagnostic,
             ) in pending.pop(step, []):
                 model_error = feature_mse(predicted_observation, target_observation)
                 control_error = feature_mse(control_observation, target_observation)
@@ -505,6 +570,8 @@ def main() -> None:
                                 feature_mse=model_error,
                                 persistence_mse=persistence_error,
                                 unrelated_action_feature_mse=control_error,
+                                **origin_diagnostic,
+                                **target_identity,
                             ),
                             allow_nan=False,
                         ),
@@ -539,10 +606,27 @@ def main() -> None:
         for total, count in zip(persistence_mse_sum, sample_count)
     ]
     result = {
-        "protocol": "kindle-world-probe-v2",
-        "source": "recorded_frozen_policy" if source_rows else "forced_random_coverage",
+        "protocol": "kindle-world-probe-v3",
+        "source": (
+            "recorded_action_conditioning" if args.condition_on_recorded_actions
+            else "recorded_frozen_policy" if source_rows else "forced_random_coverage"
+        ),
         "recorded_game": source_record,
-        "sampled_actions_match_source": True if source_rows else None,
+        "recorded_model": (
+            dict(config=source_header["config"],
+                 provenance=source_header["model_provenance"],
+                 checkpoint=source_header["restored_checkpoint"])
+            if source_header else None
+        ),
+        "sampled_actions_match_source": (
+            True if source_rows and not args.condition_on_recorded_actions else None
+        ),
+        "actions_forced_to_source": args.condition_on_recorded_actions,
+        "policy_diagnostic": (
+            "Unmasked origin policy/value before forced controls. Logged-policy returns "
+            "are not ground truth for another policy's value. No policy-quality claim."
+            if args.condition_on_recorded_actions else None
+        ),
         "native_extension_sha256": native_sha256,
         "checkpoint_sha256": checkpoint_hashes,
         "encoder_sha256": sha256_file(args.encoder_checkpoint),

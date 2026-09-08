@@ -199,8 +199,18 @@ def replay(tmp_path, monkeypatch):
         def visual_observation(self):
             return [float(self.seen)]
 
-        def act(self):
+        def act(self, action_mask=None):
+            if action_mask is not None:
+                assert sum(action_mask) == 1
+                return action_mask.index(True)
             return 99 if self.wrong_action else self.seen
+
+        def posterior_action_probabilities(self):
+            events.append(("policy", self.seen))
+            return [0.1 + 0.1 * self.seen, 0.2, 0.7 - 0.1 * self.seen]
+
+        def posterior_value_prediction(self):
+            return 3.0 + self.seen
 
         def observation_prediction(self):
             return self.visual_observation
@@ -303,3 +313,123 @@ def test_outputs_are_not_overwritten(replay):
     with pytest.raises(ValueError, match="fresh"):
         probe.main()
     assert output.read_text() == "preserve" and not events
+
+
+def test_conditioned_replay_is_explicitly_not_the_evaluated_policy(replay, monkeypatch):
+    environment, agent, events, output, trace = replay
+    agent.wrong_action = True
+    agent.config = dict(agent.config, seed=1009)
+    monkeypatch.setattr(sys, "argv", [*sys.argv, "--condition-on-recorded-actions"])
+    probe.main()
+    result = json.loads(output.read_text())
+    assert result["protocol"] == "kindle-world-probe-v3"
+    assert result["source"] == "recorded_action_conditioning"
+    assert result["actions_forced_to_source"] is True
+    assert result["sampled_actions_match_source"] is None
+    assert result["recorded_model"]["config"] == recorded_rows()[0]["config"]
+    assert result["learner_updates"] == 0
+    assert environment.closed and agent.seen == 2
+    assert events == [
+        ("policy", 0), *[("forecast", 0)] * 3, ("environment", 0),
+        ("policy", 1), *[("forecast", 1)] * 3, ("environment", 1),
+    ]
+    samples = [json.loads(line) for line in trace.read_text().splitlines()]
+    for row in samples:
+        origin = row["origin_action"]
+        assert row["origin_posterior_value"] == 3.0 + origin
+        assert row["origin_greedy_action"] == 2
+        assert row["origin_logged_action_probability"] == [0.1, 0.2][origin]
+        assert row["origin_policy_entropy"] > 0
+        target = row["target_action"]
+        assert row["target_rgb_sha256"] == hashlib.sha256(bytes([target])).hexdigest()
+        assert row["target_feature_sha256"] == hashlib.sha256(
+            np.array([target], dtype="<f4").tobytes()
+        ).hexdigest()
+    assert samples[-1]["origin_action_probabilities"] != samples[-2]["origin_action_probabilities"]
+
+
+@pytest.mark.parametrize("conditioned", [False, True])
+@pytest.mark.parametrize("mutation", ["native", "config", "provenance", "environment_step", "learner_step"])
+def test_both_modes_preserve_runtime_identity_and_budget_guards(conditioned, mutation):
+    header = recorded_rows()[0]
+    agent = SimpleNamespace(
+        config=copy.deepcopy(header["config"]), provenance={},
+        environment_step=10, learner_step=20,
+    )
+    native = "expected"
+    if mutation == "native":
+        native = "different"
+    elif mutation == "config":
+        agent.config["horizon"] = 200
+    elif mutation == "provenance":
+        agent.provenance = {"perception": "different"}
+    else:
+        setattr(agent, mutation, 0)
+    with pytest.raises(ValueError):
+        probe.verify_recorded_model(header, agent, native, {}, conditioned)
+
+
+@pytest.mark.parametrize("changed", ["seed", "metadata.json", "world.safetensors", "behavior.safetensors", "slow_value.safetensors"])
+def test_only_explicit_conditioning_allows_a_different_model(changed):
+    header = recorded_rows()[0]
+    agent = SimpleNamespace(
+        config=copy.deepcopy(header["config"]), provenance={},
+        environment_step=10, learner_step=20,
+    )
+    hashes = {name: "expected" for name in [
+        "metadata.json", "world.safetensors", "behavior.safetensors", "slow_value.safetensors",
+    ]}
+    if changed == "seed":
+        agent.config["seed"] = 1009
+    else:
+        hashes[changed] = "different"
+    with pytest.raises(ValueError):
+        probe.verify_recorded_model(header, agent, "expected", hashes, False)
+    probe.verify_recorded_model(header, agent, "expected", hashes, True)
+
+
+def test_conditioning_requires_a_recording(replay, monkeypatch):
+    args = list(sys.argv)
+    start = args.index("--recorded-run")
+    del args[start:start + 2]
+    monkeypatch.setattr(sys, "argv", [*args, "--condition-on-recorded-actions"])
+    with pytest.raises(SystemExit) as error:
+        probe.main()
+    assert error.value.code == 2
+    assert not replay[2]
+
+
+@pytest.mark.parametrize("action", [True, -1, 3, 0.5, None])
+def test_invalid_recorded_actions_fail_before_gpu(tmp_path, action):
+    rows = recorded_rows()
+    rows[1]["actions"] = [action]
+    path = tmp_path / "recorded.jsonl"
+    write_rows(path, rows)
+    with pytest.raises(ValueError, match="invalid recorded action"):
+        probe.recorded_first_game(path)
+
+
+@pytest.mark.parametrize("probabilities", [[0.0, 1.0], [-0.1, 0.5, 0.6], [0.1, 0.2, 0.3], [np.nan, 0.0, 1.0], [0.0, 0.0, np.inf]])
+def test_invalid_policy_probabilities_are_rejected(probabilities):
+    agent = SimpleNamespace(posterior_action_probabilities=lambda: probabilities)
+    with pytest.raises(ValueError, match="invalid unmasked"):
+        probe.policy_diagnostic(agent, 0, 3)
+
+
+def test_nonfinite_value_is_rejected():
+    agent = SimpleNamespace(
+        posterior_action_probabilities=lambda: [0.0, 1.0, 0.0],
+        posterior_value_prediction=lambda: np.nan,
+    )
+    with pytest.raises(ValueError, match="nonfinite posterior value"):
+        probe.policy_diagnostic(agent, 0, 3)
+
+
+def test_zero_probability_has_finite_entropy():
+    agent = SimpleNamespace(
+        posterior_action_probabilities=lambda: [0.0, 1.0, 0.0],
+        posterior_value_prediction=lambda: 0.0,
+    )
+    result = probe.policy_diagnostic(agent, 0, 3)
+    assert result["origin_logged_action_probability"] == 0.0
+    assert result["origin_policy_entropy"] == 0.0
