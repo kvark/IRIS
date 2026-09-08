@@ -15,7 +15,8 @@ reuse mind-games for game execution instead of building another harness.
 
 The order is:
 
-1. Keep Pong as an achieved initial-learning milestone and regression test.
+1. Keep Pong as an achieved initial-learning milestone; improve seed reliability
+   and runtime before another multi-day gameplay sweep.
 2. Establish the causal video frontend and broaden learning across Atari.
 3. Make single-actor playing plus training fast; add measured video/world
    pretraining without making it a hidden source of target-game experience.
@@ -126,8 +127,20 @@ None has timeouts. Unfinished tails are −4 over 5,408 actions, 0 over 309 and
 +11 over 871, respectively; they are not completed games. All accounting and
 checkpoint audits pass. Preserve the failed all-seeds decision without extending
 the evaluation or lowering the bar. Diagnose held-out recurrent belief and
-imagined reward/action predictions after runtime profiling, then choose a
-bounded follow-up. One strong seed is not a reliable recipe across seeds.
+imagined reward/action predictions, then choose a bounded follow-up. One strong
+seed is not a reliable recipe across seeds.
+
+The [all-seed motion diagnostic](experiments/2026-09-08-stability-and-device-residency.md)
+finds useful motion information in every trained belief; the strongest player
+does not have the strongest linear probe. Do not default to a bigger visual
+grid or more temporal input. Training first wins arrive at 160,344 / 193,232 /
+86,352 aggregate actions for seeds 0 / 1 / 2. Seed 1 earns only 12 positive
+points in its first 80k actions, versus 87 / 76 for seeds 0 / 2. This points to
+uneven discovery and learning speed, not an established numerical collapse.
+Reward/value calibration and action use are the next diagnostic targets.
+These correlations do not establish causation. A longer-budget replication
+must be declared for all seeds as a new experiment, not an extension that
+relabels the failed 200k-action gate.
 
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction

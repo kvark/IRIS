@@ -112,6 +112,12 @@ reliable learning.
   held-out control-relevant probes. A paper alone is not an implementation plan.
   Probe the trained recurrent belief before inferring a need for more temporal
   input from single-frame feature probes.
+  The completed three-seed motion diagnostic finds useful motion information
+  in every final belief, without matching the gameplay ranking. Prioritize
+  sparse-positive discovery, reward/value calibration and action-use diagnosis
+  over speculative visual expansion. Delayed first wins are not proof of
+  numerical training collapse. Declare longer budgets for all seeds as a new
+  experiment; never relabel the failed 200k-action mastery campaign.
 - Distinguish video-encoder initialization, action-conditioned world pretraining
   and policy-skill transfer. Missing action/reward labels are not NOOP/zero.
   The isolated `exp/world-pretraining` candidate includes world-only updates and

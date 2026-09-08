@@ -20,6 +20,19 @@ Read the [single project plan](docs/kindle_single_life_dreamer_plan.md) for the
 architecture, evidence and research gates, and [AGENTS.md](AGENTS.md) for working
 directions. Superseded planners and training stacks remain in git history.
 
+## Watch the current agent
+
+Local Pong footage: [seed 2 (+20)](runs/levjepa-vector-pong-20260906/seed2-eval-first-game-reconstructed.mp4)
+and [seed 0 (+14)](runs/levjepa-vector-pong-20260906/seed0-eval-first-game-reconstructed.mp4).
+For comparison, [seed 1 (−1)](runs/levjepa-vector-pong-20260906/seed1-eval-first-game-reconstructed.mp4)
+and the [untrained agent (−21)](runs/levjepa-vector-pong-20260906/untrained-first-game-reconstructed.mp4).
+
+These are each run's first completed game, reconstructed from its logged actions
+with every reward, boundary and frame count checked—not original screen captures
+or selected best games. Videos are local, git-ignored artifacts. See the
+[footage record](docs/experiments/2026-09-06-vector-pong.md#reconstructed-gameplay-footage)
+for provenance; the full frozen evaluation, not one video, determines mastery.
+
 ## Architecture
 
 ```text
