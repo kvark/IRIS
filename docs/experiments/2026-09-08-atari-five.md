@@ -133,21 +133,43 @@ replay binding and final-checkpoint checks. Its 63 new tests bring the candidate
 suite to 401 passes. It does not certify campaign budgets or independent seeds;
 those remain required before declaring reliable five-game results.
 
-Validation so far: 281 Python tests on the built package before launch; 313
-including the new scorer/declaration tests. Native v2 integration is complete;
-the fresh R64 learning arm started at 08:27:26 UTC. The first post-warmup
-2k–3k-action interval runs at 19.65 actions/s, about 1.31× aggregate and 0.164×
-per stream; this is an early learning-cost observation, not a final timing or
-quality result. Complete pilot scores remain pending. No other learned Atari
-game is certified by this declaration or by the CPU adapter results.
+Validation: 281 Python tests passed on the built package before launch; the
+separate match/task scoring and replay additions bring the candidate suite to
+401 passing tests. Native v2 integration is complete. Complete pilot scores
+remain pending. No other learned Atari game is certified by this declaration
+or by the CPU adapter results.
 
 The [task-observer follow-up](2026-09-08-atari-task-observers.md) adds actual
 Qbert/Freeway ROM checks and CPU-only full-trajectory reconstruction. Its pinned
 follower will populate the [frozen Boxing report](../../runs/atari-five-20260908.db0XSW/analysis/report.html)
 with both final ratio arms, the zero-update control and complete stream-0
-videos. The candidate suite now passes 338 tests. The retained first 20k-action
-R64 checkpoint also has all 241 expected tensors, finite values and nonnegative
-optimizer second moments; this checks numerical health, not seed reliability.
+videos. The retained first 20k-action R64 checkpoint also has all 241 expected
+tensors, finite values and nonnegative optimizer second moments; this checks
+numerical health, not seed reliability.
+
+### Completed R64 training, frozen evaluation in progress
+
+The fresh R64 arm ran from 08:27:26 to 11:17:16 UTC and exited successfully at
+exactly 200,000 actions and 12,405 updates. Its complete version-2 ledger passes:
+104 natural training episodes, no cutoffs, 75 positive returns and mean return
+13.5. This mean includes early exploration and learning; neither it nor later
+training wins is a final-policy competence score. The remaining half-update
+credit is the expected fractional remainder, not an accumulating backlog.
+
+The action loop took 10,122.083 s: 19.759 actions/s, **1.317× aggregate real
+time and 0.1646× per stream**. Including process startup and shutdown, the
+launcher measured 10,189.482 s, 19.628 actions/s and 1.308× aggregate real time.
+The complete loop spent 56.3% observing (perception plus posterior inference),
+42.5% learning and 1.1% in the emulator. These are end-to-end pilot costs with
+disclosed CPU overlap, not calibrated GPU idle gaps or an equal-recipe speedup.
+
+The final-checkpoint 75k-action frozen evaluation started at 11:17:19 UTC.
+Its sampled-policy header restores the final 200,000/12,405 counters and exactly
+matches the saved metadata and all three tensor-file hashes. The source records
+are `boxing-r64-seed0-train.{jsonl,accounting.json,checkpoint.json}` and
+`boxing-r64-seed0-eval.jsonl` in the declared run root. Frozen scoring and replay
+remain pending until that full evaluation completes. The untrained control and
+fresh R256 arm follow in the unchanged order; do not select a recipe yet.
 
 ### Longer early runtime window
 
@@ -162,8 +184,9 @@ measurement or a calibrated GPU idle-gap measurement.
 This is a descriptive window with disclosed CPU analysis overlap, not an
 AB/BA benchmark or a learning-quality result. It changes which stage deserves
 the next profile **if** R64 preserves useful learning. The first four complete
-training episode cohorts have means −0.25, +1.5, −0.125 and −3.375. They do not
-yet demonstrate useful improvement, and do not replace the final frozen gate.
+training episode cohorts had means −0.25, +1.5, −0.125 and −3.375. That early
+prefix alone did not demonstrate useful improvement and does not replace the
+final frozen gate.
 The prefix-bound measurement and raw interval endpoints are in
 `runs/atari-task-observers-20260908.TzCy2B/boxing-r64-40k-50k.json`.
 
