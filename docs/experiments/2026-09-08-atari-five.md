@@ -21,9 +21,9 @@ independent replication. Preserve the failed original three-seed Pong gate.
 | --- | --- | --- |
 | Pong | Win the match; mean return ≥15 and ≥90% natural wins over ≥20 games | Existing 200k-action recipe fails two of three seeds; new recipe must be separately declared |
 | Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | Implemented for the pilot; frozen scores pending |
-| Freeway | Repeated successful crossings during a complete timed round; target ≥25 crossings | Crossing reward verified; declare and test the full frozen gate before training |
+| Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | Observer verified against the actual ROM; holding UP scores 21 |
 | Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Validate completion and cutoff handling before its training/evaluation protocol |
-| Qbert | Complete the first pyramid, then measure progression | Validate a completion observer before training; cumulative score alone does not prove a cleared pyramid |
+| Qbert | Sustained progression: first-pyramid completion in ≥90% of ≥20 complete episodes, plus mean final score ≥15,000 | First-pyramid observer verified; one cleared pyramid alone is not mastery |
 
 The score differences and natural termination used for Boxing are implemented
 in the [pinned ALE 0.12.1 game source](https://raw.githubusercontent.com/Farama-Foundation/Arcade-Learning-Environment/v0.12.1/src/ale/games/supported/Boxing.cpp).
@@ -34,6 +34,15 @@ Breakout's two-wall/864-point goal comes from the
 Qbert's [official task description](https://ale.farama.org/environments/qbert/)
 requires changing all cubes to the target color. Any privileged completion
 observer stays outside policy inputs and does not add reward shaping.
+
+For Breakout, require both walls in ≥90% of ≥20 completed episodes for every
+replication seed. For Breakout and Qbert, retain task completion observed before
+a subsequent time cutoff without relabeling that cutoff as a natural terminal;
+a cutoff without the task is a failure. Partial final episodes remain separate.
+These bars are fixed before Kindle trains on these titles. Declare sufficient
+fixed evaluation budgets and the common three-seed training budget before their
+campaign; passing a wiring fixture or only the Qbert first-pyramid milestone
+does not meet the five-game goal.
 
 ## Bounded first comparison
 
@@ -112,3 +121,11 @@ the fresh R64 learning arm started at 08:27:26 UTC. The first post-warmup
 per stream; this is an early learning-cost observation, not a final timing or
 quality result. Complete pilot scores remain pending. No other learned Atari
 game is certified by this declaration or by the CPU adapter results.
+
+The [task-observer follow-up](2026-09-08-atari-task-observers.md) adds actual
+Qbert/Freeway ROM checks and CPU-only full-trajectory reconstruction. Its pinned
+follower will populate the [frozen Boxing report](../../runs/atari-five-20260908.db0XSW/analysis/report.html)
+with both final ratio arms, the zero-update control and complete stream-0
+videos. The candidate suite now passes 338 tests. The retained first 20k-action
+R64 checkpoint also has all 241 expected tensors, finite values and nonnegative
+optimizer second moments; this checks numerical health, not seed reliability.

@@ -109,6 +109,11 @@ reliable learning.
   unchanged while live. One pilot seed does not establish reliability; require
   a separately declared fresh three-seed replication. Verify actual child
   processes before waiting, and do not treat completed tooling as five-game wins.
+  Its CPU-only frozen-result follower pins the candidate match auditor,
+  `replay_atari.py`, `atari_tasks.py` and their dependencies too; keep them
+  unchanged while live. Task observers are post-hoc evaluation, never policy
+  inputs or added training rewards. Scripted observer fixtures are not Kindle
+  wins. Qbert's first pyramid alone is not the sustained-competence gate.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted
