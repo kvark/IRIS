@@ -361,6 +361,40 @@ live microbatching or lower the reserve. The fresh samples and correction are
 in `runs/gpu-free-memory-20260908.J76R3J/{samples.csv,summary.json}`. They do not
 backfill the unrecorded reserved/free fields of older runs.
 
+### Memory follow-up: verified cache geometry, GPU comparison pending
+
+The expanded LeVJEPA CPU graph test covers N=1/2/3/4/6/8, verifies unchanged
+shared encoder parameter names/shapes/dtypes, and checks every distinct
+layer/stream K and V cache. Each stream has 588 MiB of logical F32 cache.
+
+| Vector streams | Logical KV cache MiB | Removed versus N8 MiB |
+| ---: | ---: | ---: |
+| 8 | 4,704 | 0 |
+| 6 | 3,528 | 1,176 |
+| 4 | 2,352 | 2,352 |
+
+N6 is therefore a useful memory candidate without reducing the effective B16
+learner batch, full T64 recurrence, precision or encoder history. Logical bytes
+are not directly free memory or a performance result. After the fixed pilot
+finishes, choose the replay ratio, then separately declare and measure the
+N4/N6/N8 runtime/memory comparison at that ratio. All candidates must meet the
+unchanged directly-free 2 GiB gate before long replication. N8 remains a
+disclosed memory-failing runtime control. Any selected change to N needs a new
+collection/replication declaration and matching auditor: the current
+`kindle-atari-five-replication-v1` checker deliberately requires eight streams.
+No learning acceptance score, three-seed requirement or final-checkpoint rule
+is relaxed.
+
+The initial CPU scalar-plan probe produced only preliminary behavior/world16
+estimates before host-memory pressure prompted termination of that helper.
+The training process was not interrupted. Two follow-ups with a 10 GiB address
+space limit failed allocation before producing smaller-row world estimates.
+Do not claim a microbatch memory saving or numerical comparison from them, or
+use the overlapping interval as a calibrated throughput measurement. Those
+attempts, limits, source caveat, verified graph inventory and test output are
+preserved in `runs/memory-plan-20260908.odIjRj/review.md`. Only the CPU regression
+test changed; all live packages, settings and pinned inputs remain unchanged.
+
 ### Bounded learning-equation review
 
 A read-only comparison with the local pinned upstream DreamerV3 source and

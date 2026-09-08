@@ -330,6 +330,16 @@ memory with new numerical/runtime checks; do not lower the gate or silently
 change the pilot's microbatching. Historical monitors cannot prove free memory
 they did not record.
 
+The next memory candidate keeps the full learner and uses fewer vector streams.
+A CPU graph check verifies 588 MiB of F32 visual cache per stream; N6/N4 remove
+1,176/2,352 MiB of logical cache versus N8. This does not yet establish available
+VRAM or speed. After the pilot's final evaluations, fix the replay ratio and
+compare these counts against N8 with directly sampled free memory and matched
+timing windows. Changing N needs a fresh declared collection/replication
+protocol and matching auditor, not reinterpretation of the N8 results. Avoid
+large CPU graph compilation alongside training; the first memory probe caused
+host pressure and its capped follow-ups did not complete the world comparison.
+
 Measure acceleration as simulated game seconds / wall seconds. Report cold
 construction separately and also include end-to-end run cost. Track actual
 emulator frames, policy decisions, replay samples, imagined transitions and

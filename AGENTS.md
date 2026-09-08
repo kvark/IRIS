@@ -69,6 +69,16 @@ reliable learning.
   add concurrent GPU work. This backend update is not a major
   speedup; see `docs/experiments/2026-09-08-meganeura-refresh.md` for the tested
   current package and the preserved audit-only failure plus completed continuation.
+  A CPU graph check verifies 588 MiB of F32 visual KV cache per stream: N6/N4
+  would remove 1,176/2,352 MiB versus N8, without changing B16/T64 or full BPTT.
+  These are logical bytes, not measured free VRAM or throughput. After the pilot,
+  fix the replay ratio and compare stream counts under a new declared runtime
+  and memory protocol. Changing N requires a new replication declaration and
+  matching auditor; the existing replication-v1 checker requires N8. Keep all
+  five game gates and fresh training seeds. Do not repeat large CPU graph
+  compilation alongside training: the first memory-plan probe caused host
+  pressure, and its two capped follow-ups failed without yielding smaller-row
+  world estimates. Preserve those failures; CPU-only does not mean low impact.
   Track remaining world-training/recurrent/perception costs and profiler
   coverage in `docs/experiments/2026-09-08-device-imagination.md`.
   The current profiler's alternate mode recovers queue-submission coverage,
