@@ -190,9 +190,15 @@ reliable learning.
   native-policy evaluations. All action-generation/episode accounting passes;
   independent ALE replay was not performed. If the native control remains
   reward-starved, prioritize a separately declared persistent-exploration
-  ablation over simply extending it. The vector API has no action-override
-  seam yet: preserve actual executed actions in RSSM/replay, independent RNG,
-  default-path parity and strictly unassisted frozen evaluation before adoption.
+  ablation over simply extending it. The isolated `exp/persistent-exploration`
+  candidate adds explicit native action overrides and versioned per-stream random
+  holds, with 95 Rust and 547 Python CPU tests passing. It is not adopted and has
+  no GPU or learning result. Preserve actual executed actions in RSSM/replay,
+  independent RNG, default-path parity and strictly unassisted frozen evaluation.
+  See `docs/experiments/2026-09-08-persistent-exploration.md` for the required gates;
+  run only after Freeway and the declared common-world diagnostic release the GPU.
+  Existing campaign declarations reject the changed exploration protocol. A new
+  package requires its own matching runtime/memory evidence before long training.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

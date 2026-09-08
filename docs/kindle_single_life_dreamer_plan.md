@@ -165,7 +165,12 @@ but hundreds when random actions persist for 16 or 64 decisions. These are
 exploration controls, not learned competence. If the native pilot remains
 reward-starved, test a bounded persistent-exploration component with explicit
 executed-action provenance and unassisted frozen evaluation before simply
-spending more GPU time on a longer unchanged run.
+spending more GPU time on a longer unchanged run. The isolated
+[persistent-exploration candidate](experiments/2026-09-08-persistent-exploration.md)
+now passes 95 Rust and 547 Python CPU tests, including actual-action provenance
+and unassisted-evaluation guards. It is not adopted: native GPU causality,
+default-path parity, matching memory/runtime evidence and a fixed-budget learning
+comparison remain required after the active Freeway and common-world queues.
 
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction
