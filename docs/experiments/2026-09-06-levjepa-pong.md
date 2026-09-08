@@ -1,8 +1,12 @@
 # Native LeVJEPA and Pong mastery
 
-Started 2026-09-06. Implementation and diagnostic work is in progress; no
-LeVJEPA gameplay result is claimed yet. Earlier positive Pong results used
-DINOv3 and remain a separate control.
+Started 2026-09-06. This records the native implementation and interrupted
+serial experiment, not the latest gameplay status. The subsequent
+[vectorized Pong campaign](2026-09-06-vector-pong.md) has one passing seed and
+two failures under its stronger mastery gate. The completed
+[Boxing pilot](2026-09-08-atari-five.md) also wins with LeVJEPA, but has not yet
+established three-seed reliability. Earlier DINOv3 results remain separate
+controls; none of these follow-ups completes the interrupted serial protocol.
 
 ## Serial experiment interrupted for throughput work
 

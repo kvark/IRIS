@@ -202,10 +202,15 @@ larger score margin, retaining the faster R64 control. The extra replay costs
 roughly 2.29 times the training-loop wall time; this is not a free speedup.
 The first-80k diagnostic finds earlier posterior reward-sign separation in R256
 at roughly four times the updates, not a held-out forecast or final-policy win.
-A one-seed pilot is not reliability: finish the vector-count memory/runtime
-comparison, then declare fresh three-seed replication and each remaining game's real
-completion criterion before its training. Do not call a positive score a win
-or let more tooling substitute for actual learning results.
+A one-seed pilot is not reliability. The completed memory/runtime comparison
+selects N6 for the unchanged repaired package, without changing the learner.
+The declared sparse Freeway pilot in `runs/freeway-pilot-20260908.WWxHEM`
+started at 22:19 UTC: 200,004 fresh seed-0 actions, then 75,000 sampled frozen
+actions and a separately restored untrained control. Its gate remains ≥25
+crossings in ≥90% of ≥20 natural rounds, with mean ≥25 and no cutoffs.
+This is a pilot, not a fresh replication or a Freeway competence result.
+Declare remaining budgets and fresh three-seed replication before those runs;
+do not call a positive score a win or let tooling substitute for learning.
 The [task observers](experiments/2026-09-08-atari-task-observers.md) now distinguish
 match wins, complete Freeway rounds, both Breakout walls and Qbert pyramid
 completion. Qbert's first pyramid is only a progress milestone: sustained
@@ -218,9 +223,11 @@ Separate match/task scorers cover all five declared gates and require final
 checkpoint and frozen-replay evidence. This is evaluation readiness, not
 completed learning. The candidate campaign checker additionally requires all
 15 game/seed records, fixed budgets/config and fresh models; its passing CPU
-checks are not actual replication results. Untrained controls remain separate.
-The fresh replication will use seeds 1009/2017/3019: their eight live RNG
-inputs do not overlap under the existing `seed + stream` rule. Adjacent roots
+checks are not actual replication results. The isolated replication-v2 checker
+also binds declared vector counts to completed, matching runtime/memory gates;
+N4/N6 pass the real evidence and N8 is rejected. Untrained controls remain separate.
+The fresh replication will use seeds 1009/2017/3019: their live RNG
+inputs do not overlap for N≤8 under the existing `seed + stream` rule. Adjacent roots
 would share most live RNG streams. This does not explain the old Pong variation
 or replace the need for independent model runs and a fixed declared budget.
 
@@ -266,174 +273,101 @@ Use the panel to resolve failure modes and improve serial throughput first.
 
 ## Runtime: uncapped, accelerated, and eventually free-running
 
-These are different capabilities:
-
 | Mode | Meaning | Current status |
 | --- | --- | --- |
-| Uncapped step-driven learning | Advance the game, then compute as long as needed; no wall-clock pacing | Supported by Atari/native runners |
-| Super-real-time playing plus training | More than one simulated game second per wall second, including learner work | Not achieved by the tested 12M Pong recipe |
-| Free-running learning without time control | The game cannot be frozen while the agent computes | Required eventually; not validated by step-driven Atari |
-| Frozen evaluation | Act without parameter updates | Supported; does not establish training throughput |
+| Uncapped step-driven learning | Advance the game, then compute without wall-clock pacing | Supported |
+| Super-real-time playing plus training | More simulated game seconds than wall seconds, including learning | R64 Boxing exceeds 1× in aggregate; the selected R256 recipe does not |
+| Free-running learning without time control | The game continues while the agent computes | Required eventually; not validated by step-driven Atari |
+| Frozen evaluation | Act without parameter updates | Supported; not training throughput |
 
-The tested DINO full-BPTT, B16×T64, row-batch-16, ratio-256 Pong learner runs at
-7.26–7.28 actions/s. With action repeat four and a 60 Hz game clock this is
-about 0.48× real time, not super-real-time. Frozen evaluation is about 10.9×.
-GridWorld has no declared real-time clock, so its actions/s alone is not a
-speedup ratio.
+The selected fresh-run control is native LeVJEPA, 12M, **N6/R256/B16/T64**,
+full 64-step BPTT, microbatch 16 and F32. One learner shares policy parameters
+across six independently initialized environments; each retains its own visual
+cache, belief, RNG and contiguous replay sequences. Batched inference and
+row-independent replay/head work are implemented without batching away recurrence.
 
-The completed native LeVJEPA campaign used eight environments sharing one learner,
-batched live inference, temporal replay encoding and batched non-recurrent
-heads. Full RSSM recurrence and BPTT are preserved and production-sized losses
-and gradients are checked. Seed 0 completed 200k aggregate actions and 49,619
-updates in 7.63 hours of execution, with zero training debt. Its steady windows
-measure 7.2–7.3 aggregate actions/s, about 0.48× the game clock in aggregate
-and 0.060× per stream. GPU activity is roughly 60%, with stable 13.82 GiB usage.
-The old memory check did not record driver reservations or actual free VRAM.
-Environments take under 1% of wall time; the
-learner and perception remain the bottleneck, not CPU environment stepping.
+Use the [repaired isolated package](experiments/2026-09-08-meganeura-refresh.md#use-the-adopted-package)
+(`9cd176c1…`) or a separately validated fresh build. The default editable
+extension intentionally remains historical. The adopted Meganeura pin
+`a7e2efd9…` carries upstream `df11bb0c…` plus the two required LeVJEPA cache
+patches, with Blade 0.9.0 and Rust 1.92 minimum. The later reviewed main
+`970da8e3…` changes release metadata, not runtime source. Historical checkpoints
+retain their original backend identity and executable.
 
-This replaces the interrupted serial LeVJEPA campaign with a fresh, declared
-vector protocol, not a resumed single-stream trajectory. The fixed-B16
-N=2/4/8 throughput rule selected N=8 before observing game scores. A separate
-B32 experiment is faster but changes optimizer cadence; learning quality is
-not yet validated. See the [vectorization record](experiments/2026-09-06-vectorization.md)
-for implementation checks and rejected candidates, and the
-[completed experiment](experiments/2026-09-06-vector-pong.md) for the fixed recipe,
-complete training accounting and final frozen gates. Neither batched inference
-nor GPU busy percentage establishes super-real-time training or mastery.
-The adopted [device-resident imagination](experiments/2026-09-08-device-imagination.md)
-originally reached **8.58–8.61 aggregate actions/s: 0.572–0.574× aggregate real time,
-0.0715–0.0717× per stream**. Two fresh AB/BA pixel pairs improve throughput by
-12.9–13.3% over the separately validated host-buffer reuse, with exactly matching
-actions, rewards, updates and checkpoint tensors. Full learner calls fall from
-408 to 348 ms. GPU activity rises from 62–63% to 68–69%; peak VRAM rises by
-64 MiB to 14,212 MiB. Its former 2 GiB reserve claim is withdrawn below.
-Scientific settings are unchanged.
-The previous host feature scratch is no longer needed. Original executables and
-the default editable Python extension remain pinned controls; select the tested
-isolated package or build a fresh package for new experiments.
+### Measured throughput and memory
 
-The adopted [Meganeura refresh](experiments/2026-09-08-meganeura-refresh.md)
-advances to main snapshot `df11bb0c…` plus the two required LeVJEPA cache patches,
-pinned as `a7e2efd9…`, with shared registry Blade 0.9.0 and Rust 1.92 minimum.
-Nine focused hardware checks, two exact synthetic pairs and two pixel pairs validate it.
-The current pixel baseline is **8.64–8.70 actions/s, 0.576–0.580× aggregate and
-0.0720–0.0725× per stream**, only 0.65–1.24% more throughput. Full learner calls
-take 343–345 ms; memory stays 14,212 MiB and GPU activity spans 66–70%.
-This is primarily a correctness/maintenance update, not the major speed gain
-still needed. Logical checkpoint restore omits only derived Winograd caches,
-not learned weights or moments; historical backend identities remain strict.
+The completed [forward/reverse comparison](experiments/2026-09-08-atari-five.md#completed-vector-memory-and-runtime-comparison)
+keeps the learner configuration fixed. Each trial trains for 3,840 actual
+actions and restores for 768 frozen actions; the timed 1,536-action interval
+contains exactly 384 updates. Every same-N repeat reproduces all 241 named
+checkpoint tensors and action/episode/reset traces exactly.
+
+| Streams | Aggregate actions/s, two orders | Aggregate game/wall time | Minimum directly free VRAM | Decision |
+| ---: | ---: | ---: | ---: | --- |
+| 4 | 8.423 / 8.432 | 0.562× | 4,889 MiB | Eligible, slower |
+| 6 | 8.574 / 8.550 | 0.570–0.572× | 3,302 MiB | Selected for current package |
+| 8 | 8.672 / 8.657 | 0.577–0.578× | 1,630 MiB | Fails 2 GiB reserve |
+
+N6 is about 1.2% slower than N8, not a speedup. Per-stream acceleration is
+only about 0.095×. Different N changes collection/prefill trajectories; these
+short deterministic repeats are not a learning-quality or seed-reliability
+comparison. A changed package/configuration requires matching runtime evidence.
 
 The [memory-accounting correction](experiments/2026-09-08-atari-five.md#memory-accounting-correction)
-finds only **1,631 MiB directly reported free** at 14,212 MiB used; the earlier
-2,091 MiB calculation omitted driver-reserved memory. This fails the 2 GiB
-free-memory gate, without changing the recorded action/tensor/score evidence.
-The pinned pilot has finished unchanged. Require directly sampled
-`memory.free ≥ 2,048 MiB` before long-run replication or a larger batch. Reduce
-memory with new numerical/runtime checks; do not lower the gate or silently
-reinterpret the pilot's microbatching. Historical monitors cannot prove free memory
-they did not record.
+withdraws older reserve-pass claims based on total minus used: that calculation
+omitted driver-reserved memory. Require directly sampled free VRAM ≥2,048 MiB
+with coverage checks. Preserve original logs and safety flags; they cannot
+prove fields they never recorded. Do not lower the gate or silently change
+precision, sequence length or learner batch to pass it.
 
-The next memory candidate keeps the full learner and uses fewer vector streams.
-A CPU graph check verifies 588 MiB of F32 visual cache per stream; N6/N4 remove
-1,176/2,352 MiB of logical cache versus N8. This does not yet establish available
-VRAM or speed. The N4/N6/N8 serial-perception GPU check now passes with zero
-measured dense-feature error and unchanged pooled/dense tolerances. The declared
-full-training comparison is running in `runs/vector-memory-runtime-20260908.CcWv0d`:
-N8/N6/N4 followed by N4/N6/N8, fixed R256/B16/T64, 3,840 actions and a frozen
-restore per trial. It measures directly free memory and matched timing windows,
-with exact same-N state/trace checks; it does not test seed reliability.
-Changing N needs a fresh declared collection/replication
-protocol and matching auditor, not reinterpretation of the N8 results. Avoid
-large CPU graph compilation alongside training; the first memory probe caused
-host pressure and its capped follow-ups did not complete the world comparison.
+### What actually costs time
 
-Measure acceleration as simulated game seconds / wall seconds. Report cold
-construction separately and also include end-to-end run cost. Track actual
-emulator frames, policy decisions, replay samples, imagined transitions and
-optimizer updates; none can substitute for another clock.
+The current N6 timed windows spend roughly **74% learning, 25% observation and
+less than 1% in the emulator**. Mean GPU activity is about 69%; activity is not
+occupancy or a measurement of idle gaps. Full learner calls are approximately
+343–346 ms: world training ~160 ms, imagination ~80 ms, posterior inference
+~58 ms, with behavior and synchronization making up most of the remainder.
 
-For B×T replay samples per update, train ratio R and update duration U:
+At 15 aggregate actions/s, R256 and B16×T64 require 3.75 learner updates/s.
+The updates alone exceed the one-second budget. Including roughly 30 ms of
+observation/other work per action leaves only about **145–150 ms/update** for 1×.
+Eliminating host handoffs alone cannot deliver that: world training already
+costs more. The simplicity of Atari does not make this replay-heavy computation
+cheap.
 
-    learner updates/s required = action rate × R / (B×T)
+[Device-resident imagination](experiments/2026-09-08-device-imagination.md)
+already improved exact paired pixel throughput by 12.9–13.3%; the subsequent
+[backend refresh](experiments/2026-09-08-meganeura-refresh.md) added only
+0.65–1.24%. Do not repeat their completed queues. A
+[grouped RSSM-gate rewrite](experiments/2026-09-08-grouped-rssm-gates.md) passed
+focused output/gradient tests but failed exact full-learning parity from
+update 3. It remains experimental; its short timing is not an adopted speedup.
 
-At 15 actions/s and R256, B16×T64 requires 3.75 updates/s. The current 343–345 ms
-updates alone exceed the wall-time budget. Other work takes 29.1–29.5 ms per
-aggregate action, mainly observation/perception. Holding that cost fixed,
-aggregate 1× requires a full update of at most 148–150 ms, and 2× leaves only
-15–17 ms/update. These are conditional budgets, not measured optimizations.
-World-model training alone currently takes 161–162 ms/update, so eliminating
-host handoffs alone is insufficient. Atari simulation takes under 1% of wall
-time; the simple game does not make its high-ratio learning computation cheap.
-Aggregate acceleration still does not establish per-stream or free-running play.
+Prioritize measured world-training kernels/layout and recurrent handoffs, then
+perception. Preserve F32 gradient safeguards and full recurrence. Readback waits
+include unfinished producer compute and transfers, not just GPU idle time.
+The available external capture resolves queue submissions, not individual
+dispatches or calibrated idle gaps; use validated stage timings and untraced
+paired throughput meanwhile. Serialize GPU-heavy work, and avoid large CPU
+graph builds during learning: an earlier probe caused host-memory pressure.
 
-The next performance target is sustained >1× playing plus training on simple
-games, with 2× as a useful stretch target and retained learning quality.
-Profile the complete vectorized loop against N=1: environment/capture, preprocessing/encoder,
-posterior/action, replay, world update, imagination/behavior and synchronization.
-Prioritize grouped RSSM/layout work, batched non-recurrent heads, fewer host/GPU
-round trips and measured feature/replay packing. Preserve recovered F32 gradient
-safeguards and full-recurrence row batching. Earlier cached-read/materialization
-work already reduced a 12M canary from 7.42 to 1.05 s/update; full rows reach 0.54 s.
-Those measurements are in the kickoff report; do not repeat that investigation.
+Smaller models, larger learner batches and lower replay ratios are legitimate
+learning-compute ablations, not identical-recipe optimizations. R64 Boxing
+reaches about 1.31× aggregate real time and passes its one-seed task gate, but
+R256's mean +92.49 has much more margin than R64's +51.55. Retain R64 as the
+faster ablation and test quality across seeds before switching the control.
 
-The current stage budget is roughly 162 ms world training, 84 ms imagination,
-59 ms posterior inference, 19 ms behavior training and 19 ms parameter sync.
-Prioritize world-training kernels/layout and remaining recurrent handoffs, then
-perception. The device-copy change removes redundant CPU feature/state transfers
-without changing sampling or returns, but 95 posterior/imagination readback waits
-remain. These include unfinished producer computation; they are not idle-only
-measurements. Parameter copies also maintain backend-derived weights: replacing
-them needs more than copying the primary parameter buffer.
+Report actual emulator frames, aggregate/per-stream actions, updates, training
+debt, cold construction and end-to-end wall time. Never count vector ticks as
+interactions, sum subtimings into their parent totals, or call fast frozen
+inference super-real-time learning. The next target is sustained >1× with
+retained quality; 2× is a useful stretch target.
 
-The [earlier timing/reuse gates](experiments/2026-09-08-runtime-hardware.md) are
-complete controls, not pending queues. Current external profiling recovers
-one GPU record per queue submission only in its alternate capture mode;
-individual dispatches and precise idle gaps remain unverified. The backend's
-synthetic timeline cannot supply calibrated gaps either. Inspect actual coverage,
-not just successful import or nonempty output. Use validated stage timings and
-untraced paired throughput for decisions meanwhile. Coarse GPU activity is not
-occupancy; minor faults or historical swap do not establish disk-paging cost.
-Serialize GPU-heavy checks and preserve exact parity and memory headroom.
-
-Use one learner with batched live inference, not one full GPU model per game.
-Keep independent visual caches, beliefs, RNG streams and sequence replay. Sample
-uniformly over eligible per-stream sequence starts after the fresh-item queue;
-never concatenate unrelated environments into a temporal sequence. Preserve
-terminal observations before resetting only the affected streams. Report total
-actions, actions per stream, updates and training debt. A vector tick is not one
-interaction, and aggregate acceleration is not per-stream real-time play.
-
-Before another multi-day learning queue: finish fixed-ratio throughput controls,
-remove measured CPU/readback bubbles, and test larger replay batches if memory
-permits. Treat a changed learner batch as an algorithmic ablation, not a free
-systems speedup. Require independent reset/cache parity and validated action,
-reward, update and checkpoint ledgers before long vectorized training. Declare
-its aggregate budget and final frozen evaluations as a new experiment; do not
-reinterpret the interrupted single-stream mastery protocol.
-
-Smaller models or lower train ratios are valid experiments, not free speedups.
-Change one variable, report actual updates per real interaction, and retest
-learning. Do not claim acceleration by dropping owed training, weakening the
-reward task or changing the simulated control interval unnoticed.
-The [Boxing pilot](experiments/2026-09-08-atari-five.md)
-compares R64 against R256. Its fixed 40k–50k windows reach 19.69 versus
-8.69 actions/s: 1.312× versus 0.579× aggregate real time, or 0.164× versus
-0.0724× per stream using actual emulator frames. R256 spends 74.4% of elapsed
-time learning; R64 spends 56.1% observing (perception plus posterior inference).
-R64 also performs four times fewer updates. Both final frozen policies pass
-their one-seed gates, but R256's mean +92.4877 provides much more score margin
-than R64's +51.55. R256 is the provisional control for memory/runtime work and
-fresh replication, not a three-seed reliability claim. Optimize its dominant
-learning stage while retaining the lower-ratio learning-throughput ablation.
-
-Use mind-games' time control for accelerated development. Separately test a
-single actor in free-running mode later: timestamp observations and executed
-inputs, account for game time passing during learning, bound update work/debt
-and mark missing observations. Variable-duration transitions need explicit
-semantics; never fabricate adjacent frames. Try measured serial scheduling
-before considering actor/learner concurrency. Pausing a game does not satisfy
-the no-time-control requirement.
+Use mind-games' time control for accelerated development. Separately validate
+free-running play: timestamp observations and executed inputs, record elapsed
+game time and observation gaps, bound training debt and give variable-duration
+transitions explicit semantics. Try measured serial scheduling before
+actor/learner concurrency. Pausing the game does not satisfy this requirement.
 
 ## LeVJEPA and video/world pretraining
 
@@ -645,9 +579,11 @@ contamination before any larger swarm or shared-optimizer design.
 
 ## Immediate work and invariants
 
-Current work is LeVJEPA gameplay validation, stronger Pong mastery and
-single-learner vectorized playing-plus-training throughput. Then broaden the
-Atari panel and add the world-only pretraining seam and current-Dreamer mind-games
+Current work is the fixed-budget Freeway pilot, followed by common-distribution
+world/reward diagnostics and a declared response to the results. Keep Pong's
+failed all-seeds gate visible; broader Atari learning and fresh three-seed
+reliability remain unfinished. Stage runtime candidates separately from the
+live experiment. Add world-only pretraining and the current-Dreamer mind-games
 adapter as their gates are reached. Do not start actor/learner separation,
 independent learner swarms or another arbitrary 100-hour run as a substitute
 for stronger behavior.

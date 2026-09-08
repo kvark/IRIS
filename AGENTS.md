@@ -75,14 +75,23 @@ reliable learning.
   `memory_candidate_streams_match_serial` GPU test now passes for N4/N6/N8,
   with zero measured dense-feature error against serial encoding and unchanged
   pooled/dense tolerances. This does not establish combined learner memory.
-  The fixed-R256 N8/N6/N4 then N4/N6/N8 full-training comparison is running in
-  `runs/vector-memory-runtime-20260908.CcWv0d`: 3,840 actions plus a 768-action
-  frozen restore per trial, directly sampled free memory, and exact same-N
-  repeat checks. Preserve its pinned inputs; no competing GPU work or large
-  CPU builds. This is a runtime/memory gate, not fresh reliability evidence.
-  Changing N requires a new replication declaration and
-  matching auditor; the existing replication-v1 checker requires N8. Keep all
-  five game gates and fresh training seeds. Do not repeat large CPU graph
+  The fixed-R256 N8/N6/N4 then N4/N6/N8 comparison completed in
+  `runs/vector-memory-runtime-20260908.CcWv0d`: every same-N full checkpoint and
+  action/episode/reset trace repeats exactly. Select N6 for the unchanged
+  repaired native package: 8.55–8.57 actions/s, at least 3,302 MiB directly free.
+  N4 retains 4,889 MiB but is slower; N8 retains only 1,630 MiB and fails the
+  2 GiB gate. N6 is about 1.2% slower than N8, not a throughput improvement.
+  These short runtime repeats do not test training-seed reliability. Preserve
+  the completed evidence and pinned inputs. The isolated replication-v2 checker
+  at `exp/atari-replication-v2` binds a declared N4/N6/N8 to matching complete
+  runtime evidence; real N4/N6 pass and N8 is rejected. Its 504 passing CPU
+  tests are not a replication result. Keep all five game gates and fresh seeds.
+  A grouped-RSSM gate candidate passed focused output/gradient checks but failed
+  exact full-learning parity from update 3. It is not adopted; preserve branch
+  `exp/rssm-gate-batching` and `runs/grouped-rssm-20260908.Vodj6w`. Main source
+  is restored, but its old release binaries still contain that candidate;
+  use the documented isolated package or rebuild before running root binaries.
+  Do not repeat large CPU graph
   compilation alongside training: the first memory-plan probe caused host
   pressure, and its two capped follow-ups failed without yielding smaller-row
   world estimates. Preserve those failures; CPU-only does not mean low impact.
@@ -148,7 +157,7 @@ reliable learning.
   reliability: require a separately declared fresh three-seed replication
   using 1009, 2017 and 3019.
   Adjacent roots reuse live policy/posterior RNG streams under `seed + stream`;
-  keep the selected N8 live-seed ranges disjoint, without reinterpreting old
+  keep the declared live-seed ranges disjoint, without reinterpreting old
   results or rewriting the completed pilot. Verify actual child
   processes before waiting, and do not treat completed tooling as five-game wins.
   Its CPU-only frozen-result follower pins the candidate match auditor,
@@ -165,6 +174,14 @@ reliable learning.
   budgets/config, fresh models, final checkpoints and replays. Its CPU checks
   are complete, not a replication result. Keep untrained controls and the
   broader goal-completion audit; do not infer them from `replication_passed`.
+  The declared N6 sparse Freeway pilot started at 22:19 UTC in
+  `runs/freeway-pilot-20260908.WWxHEM`, with the unchanged repaired native package,
+  R256 and 200,004 fresh seed-0 training actions. It evaluates only the final
+  model for 75,000 sampled actions, then runs a separately restored zero-update
+  control under that evaluation protocol. Full CPU replay and complete-stream
+  videos follow both. Keep its 34 pins unchanged and GPU phases serialized;
+  do not run large CPU graph builds alongside it. This is a pilot, not fresh
+  replication, a Freeway success claim or five-game completion.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

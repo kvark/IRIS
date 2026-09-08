@@ -26,7 +26,8 @@ are identical, as is the dependency lock. Changes are package version 0.3.0,
 package exclusions, release documentation and CI packaging verification; there
 are no additional runtime fixes. The reviewed objects and tree identities are
 in `runs/meganeura-release-review-20260908.2YmT2Y/`. Keep the validated `a7e2efd9`
-runtime pin and live pilot unchanged. It includes all current upstream runtime
+runtime pin unchanged. A fresh remote check later that evening still resolves main
+to `970da8e3`. It includes all reviewed upstream runtime
 fixes plus the two required cache patches, but is not the latest upstream
 release-metadata commit.
 
@@ -160,12 +161,15 @@ in place or change an active experiment's pinned package. For a new experiment:
 ```bash
 PYTHONPATH=/x/Code/kindle/runs/zero-update-checkpoint-20260908.yxaalA/package \
   python/.venv/bin/python python/examples/atari_vector.py \
-  /models/levjepa/model.safetensors --num-envs 8 --steps 3072 \
+  /models/levjepa/model.safetensors --num-envs 6 --steps 3072 \
   --output runs/new-backend-check.jsonl
 ```
 
 Paths and outputs must be chosen for the new experiment. This example is a
-short integration run, not another declared learning-quality campaign. All
+short integration run, not another declared learning-quality campaign. N6 is
+the subsequent measured memory-safe count for the unchanged repaired package;
+see the [completed comparison](2026-09-08-atari-five.md#completed-vector-memory-and-runtime-comparison).
+All
 packages and experiment artifacts are local and git-ignored; other checkouts
 can build the pinned source normally with Rust 1.92 or newer.
 

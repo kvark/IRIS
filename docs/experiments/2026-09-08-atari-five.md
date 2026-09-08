@@ -1,7 +1,9 @@
-# Five-game learning campaign: Boxing replay-ratio pilot
+# Five-game learning campaign
 
 Declared and completed 2026-09-08. **Both R64 and R256 seed 0 pass their frozen
 Boxing gates. The pilot is complete; three-seed reliability is unproven.**
+The fixed-ratio vector memory/runtime comparison is also complete. The next
+declared pilot is sparse Freeway with six streams, started at 22:19 UTC.
 The active objective is reliable learning and wins/task completion on five
 Atari games. The completed backend refresh and world-model diagnostics are
 enabling work, not satisfaction of that objective.
@@ -22,7 +24,7 @@ independent replication. Preserve the failed original three-seed Pong gate.
 | --- | --- | --- |
 | Pong | Win the match; mean return ≥15 and ≥90% natural wins over ≥20 games | Existing 200k-action recipe fails two of three seeds; new recipe must be separately declared |
 | Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | R64: 40/40 wins, mean +51.55; R256: 162/162, +92.4877; untrained: +0.125. Fresh replication pending |
-| Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | Observer verified against the actual ROM; holding UP scores 21 |
+| Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | N6/R256 seed-0 pilot running; observer fixture holding UP scores 21, not a Kindle result |
 | Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Positive and negative actual-ROM fixtures verified; declare its training/evaluation budgets next |
 | Qbert | Sustained progression: first-pyramid completion in ≥90% of ≥20 complete episodes, plus mean final score ≥15,000 | First-pyramid observer verified; one cleared pyramid alone is not mastery |
 
@@ -91,9 +93,10 @@ the replication. The selected live-base ranges are 1009–1016, 2017–2024 and
 This is a protocol choice, not a runtime change or an explanation of Pong's
 variation. Preserve the historical results and failed all-seeds gate.
 The source-bound check is `runs/learning-review-20260908.W6fAHO/replication-seeds.json`.
-R256 is the provisional learning control selected below. The vector count,
-training/evaluation budgets and fresh replication declaration remain to be
-fixed before those runs; seed spacing alone does not establish reliability.
+R256 is the provisional learning control selected below. The completed runtime
+comparison selects N6 for the unchanged native package. Fresh replication
+budgets and its declaration remain to be fixed before those runs; seed spacing
+and a safe vector count alone do not establish reliability.
 
 ### Replication acceptance checker
 
@@ -120,6 +123,49 @@ and the real seed-0 pilot cannot be reused as fresh seed 1009. Evidence is in
 `completed-boxing-check.json`. These are checker validations, not 15 trained
 models. `replication_passed` covers the declared final task gates; untrained
 controls and the broader goal-completion audit remain separate.
+
+The separate `exp/atari-replication-v2` candidate at `21bd1ec` adds
+`kindle-atari-five-replication-v2`, without modifying the original v1 auditor or
+its pins. It accepts a strictly declared N4/N6/N8 only with matching completed
+`kindle-vector-memory-runtime-v1` evidence: config, actual native/runner/wrapper/
+encoder pins, both orderings, complete checkpoints, exact same-N states/traces,
+3840/768 action budgets, frozen zero updates, chronology and directly-free
+2 GiB/coverage checks. This is not permission to reuse the gate for a new package
+or configuration. All 504 CPU tests pass. The real completed matrix passes
+binding for N4/N6 and rejects N8, independently of synthetic tests. No fresh
+replication has started, and the five-game/three-seed acceptance rules are unchanged.
+
+## Sparse Freeway pilot
+
+Declared in `runs/freeway-pilot-20260908.WWxHEM/manifest.json` before training
+started at **22:19:55 UTC**. This is one fresh seed-0 pilot, not a reserved
+replication seed or a continuation of Boxing. Its 34 pinned inputs include
+the unchanged repaired native package `9cd176c1…`, completed memory evidence,
+LeVJEPA weights, full config, runner/wrapper/ALE/Freeway ROM, auditors and video
+recorder. Preserve them throughout the serialized queue.
+
+- Train for **200,004 actual actions**, N6/R256, 12M, B16/T64/full BPTT64,
+  microbatch 16, learning rate 4e-5, warmup 1000, AGC 0.3, reconstruction 0/future 0.25.
+  Extrinsic rewards only; no action masks, demonstrations, shaping or scripted
+  coverage. Published wrapper: 18 actions, repeat4, sticky0, reset-noops0,
+  100,000-raw-frame cutoff.
+- Evaluate only the final checkpoint for **75,000 sampled actions**, N6,
+  environment seed100000, fresh live state, zero updates. Reconstruct every
+  transition/boundary on CPU and record the whole of stream0.
+- Then save a fresh seed-0 model after six frozen actions and zero updates;
+  restore it for the same 75,000-action evaluation/replay/video protocol.
+  Identical environment seeds do not imply identical policy RNG draws after
+  restoring models with different counters.
+- Keep the original Freeway task gate, complete checkpoint/declaration/replay
+  checks, ungraded partial tails and directly sampled free VRAM ≥2,048 MiB.
+  Training has a 12-hour timeout and each frozen run two hours. No automatic
+  retry, budget extension, task-bar change or recipe selection follows a failure.
+
+Outputs are `train.jsonl`, `evaluation.{jsonl,score.json,replay.json,mp4}` and
+the corresponding `untrained-evaluation.*` files. These paths are declared
+destinations, not completed results. `completed.json` is written only after
+all phases and audits finish. No Freeway pass or fresh-seed reliability is
+claimed while the pilot runs.
 
 ## Implementation and artifacts
 
@@ -407,7 +453,7 @@ live microbatching or lower the reserve. The fresh samples and correction are
 in `runs/gpu-free-memory-20260908.J76R3J/{samples.csv,summary.json}`. They do not
 backfill the unrecorded reserved/free fields of older runs.
 
-### Memory follow-up: stream parity passed, full-training comparison running
+### Completed vector memory and runtime comparison
 
 The expanded LeVJEPA CPU graph test covers N=1/2/3/4/6/8, verifies unchanged
 shared encoder parameter names/shapes/dtypes, and checks every distinct
@@ -421,8 +467,8 @@ layer/stream K and V cache. Each stream has 588 MiB of logical F32 cache.
 
 N6 is therefore a useful memory candidate without reducing the effective B16
 learner batch, full T64 recurrence, precision or encoder history. Logical bytes
-are not directly free memory or a performance result. The newly declared
-comparison in `runs/vector-memory-runtime-20260908.CcWv0d` started at 21:01 UTC.
+are not directly free memory or a performance result. The declared comparison
+in `runs/vector-memory-runtime-20260908.CcWv0d` ran from 21:01 to 21:49:59 UTC.
 Its 24 pinned inputs include the repaired native package, complete configuration,
 runner, auditors, encoder, ALE/ROM and checkpoint schema. The order is N8/N6/N4
 then N4/N6/N8. Each starts fresh with seed 7301, executes 3,840 training actions,
@@ -432,14 +478,38 @@ The timed 2,304–3,840-action interval contains exactly 384 updates; it is runt
 warmup, not completed learning-rate warmup. Different N changes prefill and
 trajectories. R256/B16/T64/full BPTT, precision and objectives remain fixed.
 Direct free memory is sampled every 250 ms across training and restore, with
-explicit coverage checks. The six-trial comparison makes no automatic stream
-selection and launches no long runs. All candidates must meet the
-unchanged directly-free 2 GiB gate before long replication. N8 remains a
-disclosed memory-failing runtime control. Any selected change to N needs a new
-collection/replication declaration and matching auditor: the current
-`kindle-atari-five-replication-v1` checker deliberately requires eight streams.
-No learning acceptance score, three-seed requirement or final-checkpoint rule
-is relaxed.
+explicit coverage checks. All six trials completed; all 241 named checkpoint
+tensors, optimizer counters, native format/layout, finite ordered return
+normalizers and frozen restores validate. Every same-N repeat has identical
+complete named state and action/episode/reset traces. No natural episode
+completed in these short trials; this is not a learning-quality experiment.
+
+| Streams | Actions/s, forward / reverse order | Minimum free during training / restore, MiB | 2 GiB gate |
+| ---: | ---: | ---: | --- |
+| 4 | 8.42295 / 8.43191 | 4,889 / 4,997 | Pass |
+| 6 | 8.57385 / 8.54996 | 3,302 / 3,413 | Pass |
+| 8 | 8.67182 / 8.65733 | 1,630 / 1,739 | Fail |
+
+Coverage passes across every phase: maximum sampled gaps are 0.251–0.270 s,
+within the declared 1.5 s limit. N6's warmed aggregate acceleration is
+0.57159× / 0.57000×, or about 0.095× per stream. Its timed windows spend
+132.48/132.99 s learning and 45.69/45.68 s observing out of
+179.15/179.65 s; the emulator takes only 0.84 s. Mean GPU activity is
+68.88%/68.72%, not a measurement of idle gaps or occupancy.
+
+**Decision after completion:** select N6 as the fastest count that meets the
+memory gate for this unchanged package/configuration. It is 1.13%/1.24% slower
+than N8 and 1.79%/1.40% faster than N4. This is a memory-safe collection choice,
+not a systems speedup, identical learning history across N, or independent-seed
+reliability. The generator's historical `stream_count_selected: false` remains
+unchanged; this later decision is recorded here and in the Freeway declaration.
+The original v1 replication checker still requires N8. The separate v2 candidate
+above binds the selected count to this completed evidence. No learning score,
+three-seed requirement or final-checkpoint rule is relaxed.
+
+Manifest SHA-256: `563d22605dafb228dbdd564aaef7e1f96d12aa87a4e1ae79f2d51f8a1121c506`.
+Summary SHA-256: `4aad4e5f16cf9e4290c77e9788766d6d70957a2b7d3c840dfa80b12c3caa3857`.
+All 24 original pins validate at completion. Do not restart the completed queue.
 
 The initial CPU scalar-plan probe produced only preliminary behavior/world16
 estimates before host-memory pressure prompted termination of that helper.
