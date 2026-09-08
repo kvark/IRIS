@@ -258,7 +258,7 @@ for implementation checks and rejected candidates, and the
 complete training accounting and final frozen gates. Neither batched inference
 nor GPU busy percentage establishes super-real-time training or mastery.
 The adopted [device-resident imagination](experiments/2026-09-08-device-imagination.md)
-now reaches **8.58–8.61 aggregate actions/s: 0.572–0.574× aggregate real time,
+originally reached **8.58–8.61 aggregate actions/s: 0.572–0.574× aggregate real time,
 0.0715–0.0717× per stream**. Two fresh AB/BA pixel pairs improve throughput by
 12.9–13.3% over the separately validated host-buffer reuse, with exactly matching
 actions, rewards, updates and checkpoint tensors. Full learner calls fall from
@@ -267,6 +267,17 @@ actions, rewards, updates and checkpoint tensors. Full learner calls fall from
 The previous host feature scratch is no longer needed. Original executables and
 the default editable Python extension remain pinned controls; select the tested
 isolated package or build a fresh package for new experiments.
+
+The adopted [Meganeura refresh](experiments/2026-09-08-meganeura-refresh.md)
+advances to main snapshot `df11bb0c…` plus the two required LeVJEPA cache patches,
+pinned as `a7e2efd9…`, with shared registry Blade 0.9.0 and Rust 1.92 minimum.
+Nine focused hardware checks, two exact synthetic pairs and two pixel pairs validate it.
+The current pixel baseline is **8.64–8.70 actions/s, 0.576–0.580× aggregate and
+0.0720–0.0725× per stream**, only 0.65–1.24% more throughput. Full learner calls
+take 343–345 ms; memory stays 14,212 MiB and GPU activity spans 66–70%.
+This is primarily a correctness/maintenance update, not the major speed gain
+still needed. Logical checkpoint restore omits only derived Winograd caches,
+not learned weights or moments; historical backend identities remain strict.
 
 Measure acceleration as simulated game seconds / wall seconds. Report cold
 construction separately and also include end-to-end run cost. Track actual
@@ -277,12 +288,12 @@ For B×T replay samples per update, train ratio R and update duration U:
 
     learner updates/s required = action rate × R / (B×T)
 
-At 15 actions/s and R256, B16×T64 requires 3.75 updates/s. The current 348 ms
-updates alone exceed the wall-time budget. Other work takes 29.1–29.6 ms per
+At 15 actions/s and R256, B16×T64 requires 3.75 updates/s. The current 343–345 ms
+updates alone exceed the wall-time budget. Other work takes 29.1–29.5 ms per
 aggregate action, mainly observation/perception. Holding that cost fixed,
 aggregate 1× requires a full update of at most 148–150 ms, and 2× leaves only
 15–17 ms/update. These are conditional budgets, not measured optimizations.
-World-model training alone currently takes 163–164 ms/update, so eliminating
+World-model training alone currently takes 161–162 ms/update, so eliminating
 host handoffs alone is insufficient. Atari simulation takes under 1% of wall
 time; the simple game does not make its high-ratio learning computation cheap.
 Aggregate acceleration still does not establish per-stream or free-running play.
@@ -297,8 +308,8 @@ safeguards and full-recurrence row batching. Earlier cached-read/materialization
 work already reduced a 12M canary from 7.42 to 1.05 s/update; full rows reach 0.54 s.
 Those measurements are in the kickoff report; do not repeat that investigation.
 
-The current stage budget is roughly 164 ms world training, 85 ms imagination,
-60 ms posterior inference, 19 ms behavior training and 19 ms parameter sync.
+The current stage budget is roughly 162 ms world training, 84 ms imagination,
+59 ms posterior inference, 19 ms behavior training and 19 ms parameter sync.
 Prioritize world-training kernels/layout and remaining recurrent handoffs, then
 perception. The device-copy change removes redundant CPU feature/state transfers
 without changing sampling or returns, but 95 posterior/imagination readback waits

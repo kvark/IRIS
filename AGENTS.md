@@ -50,12 +50,19 @@ reliable learning.
   have completed; preserve their controls and do not restart their queues.
   Original pinned inputs are in `runs/readback-hardware-20260907/manifest.json`;
   earlier results are in `docs/experiments/2026-09-08-runtime-hardware.md`.
-  Device-resident imagination is now adopted after three hardware tests,
-  three exact synthetic pairs and two exact pixel pairs. It removes redundant
-  host feature/state transfers and the retained host scratch without changing
-  learning arithmetic. Pixel throughput rises 12.9–13.3% over buffer reuse to
-  8.58–8.61 actions/s, still only 0.572–0.574× aggregate real time. GPU activity
-  is 68–69%; peak VRAM rises 64 MiB while retaining the 2 GiB safety reserve.
+  Device-resident imagination is adopted after exact hardware, synthetic and
+  pixel checks. It removes redundant host feature/state transfers and scratch
+  without changing learning arithmetic. The Meganeura refresh is now adopted
+  at a7e2efd9 (main df11bb0c plus the two required LeVJEPA cache patches), with
+  shared registry Blade 0.9.0 and Rust 1.92 minimum. Do not lose cached query
+  blocks or cache aliases when updating again. Require logical weights and all
+  optimizer moments on restore, excluding only plan-identified Winograd caches.
+  Keep backend identity checks and historical executables intact.
+  Current exact pixel pairs reach 8.64–8.70 actions/s, only 0.576–0.580× aggregate
+  real time and 0.0720–0.0725× per stream. GPU activity spans 66–70%; 14,212 MiB
+  peak memory retains the 2 GiB reserve. This backend update is not a major
+  speedup; see `docs/experiments/2026-09-08-meganeura-refresh.md` for the tested
+  current package and the preserved audit-only failure plus completed continuation.
   Track remaining world-training/recurrent/perception costs and profiler
   coverage in `docs/experiments/2026-09-08-device-imagination.md`.
   The current profiler's alternate mode recovers queue-submission coverage,

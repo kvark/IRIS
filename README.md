@@ -113,6 +113,10 @@ pip install maturin
 maturin develop --release --extras test
 ```
 
+During pinned local experiments, use an isolated package rather than replacing
+the historical editable extension. The [backend refresh record](docs/experiments/2026-09-08-meganeura-refresh.md#use-the-adopted-package)
+shows how to select the validated current package in this workspace.
+
 ## Native use
 
 ```rust,ignore
@@ -237,15 +241,17 @@ the exact protocol.
 LeVJEPA's dense layers and Dreamer's live posterior/policy are GPU-batched;
 visual caches, beliefs, RNGs and replay sequences remain separate. CPU emulator
 steps are synchronous: measured environment work is below 1% of wall time.
-With the adopted GPU-resident imagination path, the N=8, 12M/B16/T64/R256 recipe
-runs at 8.58–8.61 aggregate actions/s on the RTX 5080: 0.572–0.574× the game
-clock in aggregate and 0.0715–0.0717× per stream. This is 12.9–13.3% faster
-than the host-buffer-reuse control, with exact actions/reports/checkpoint tensors
-in both pixel pairs. GPU activity is 68–69%, with 14,212 MiB peak use and the
-2 GiB reserve intact. Super-real-time playing **with training** is not yet achieved.
-See the [runtime result](docs/experiments/2026-09-08-device-imagination.md)
-for stage costs and the tested isolated Python package; the default local
-editable extension is deliberately still the pinned historical control.
+With GPU-resident imagination and the refreshed backend, the N=8,
+12M/B16/T64/R256 recipe runs at 8.64–8.70 aggregate actions/s on the RTX 5080:
+0.576–0.580× the game clock in aggregate and 0.0720–0.0725× per stream.
+Both pixel pairs have exact actions/reports/checkpoint tensor values. GPU
+activity is 66–70%, with 14,212 MiB peak use and the 2 GiB reserve intact.
+Super-real-time playing **with training** is not yet achieved. The backend
+refresh adds only 0.65–1.24% observed throughput over the prior device-resident
+control. See the [runtime optimization](docs/experiments/2026-09-08-device-imagination.md)
+and [backend refresh](docs/experiments/2026-09-08-meganeura-refresh.md) for stage
+costs and the tested package; the default local editable extension deliberately
+remains the pinned historical control.
 
 ```bash
 python python/examples/profile_atari_vector.py /models/levjepa/model.safetensors \
