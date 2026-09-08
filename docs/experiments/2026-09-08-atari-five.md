@@ -410,11 +410,14 @@ preserved in `runs/memory-plan-20260908.odIjRj/review.md`. Only the CPU regressi
 test changed; all live packages, settings and pinned inputs remain unchanged.
 
 The test-only follow-up `vision::levjepa::tests::memory_candidate_streams_match_serial`
-is now compiled but **not GPU-validated**. It checks N4 and N6 against serial
-encoding on 36 synthetic arrival ticks, including gaps, independent resets,
-stream 0 crossing two chunk boundaries, and reversed arrival order. The original
-N2 case remains separate and unchanged in its input sequence and numerical tolerances. The
-shared helper also verifies the pinned encoder content hash before loading it.
+is now compiled but **not GPU-validated**. It checks N4/N6 candidates and the
+existing N8 control against serial encoding, on 36/42/56 synthetic arrival
+ticks respectively. Every non-reference stream exercises its own reset within
+the sequence, with gaps, chunk boundaries and reversed arrival order. The
+original N2 case retains its 36-tick input sequence and numerical tolerances.
+The shared helper verifies the pinned encoder content hash before loading it
+and requires complete observation/token output lengths. N8's historical
+backend-pair checks do not substitute for this serial-perception comparison.
 Pooled/dense maximum absolute error must stay below 0.005, and every active
 frame's dense relative L2 error below 1e-4. No numerical threshold was relaxed.
 
@@ -431,9 +434,10 @@ cargo test --release --locked -p kindle --lib \
 GPU execution remains pending; this is test readiness, not a vector-count
 selection, combined learner-memory gate, throughput measurement or learning
 result. Workspace formatting/Clippy and all 92 CPU tests pass, with 21 GPU
-tests ignored. Source identity and CPU completion output are in
-`runs/vector-count-parity-20260908.aO5sDA/validation.json`. No native package,
-runner, live input or learning implementation changed.
+tests ignored. Current source identity, CPU completion and release-build output
+are in `runs/vector-count-parity-20260908.aO5sDA/validation-with-control.json`.
+The earlier N4/N6-only readiness artifacts and binary are preserved in that
+directory. No native package, runner, live input or learning implementation changed.
 
 ### Bounded learning-equation review
 
