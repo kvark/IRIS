@@ -523,7 +523,10 @@ pins remain unchanged. `seed2-startup-verification.json` binds the header,
 first-update log prefix and live launcher-child identity; it is not a completed
 training ledger or a competence result.
 
-## Seed 2 training progress
+## Seed 2 completed training and frozen handoff
+
+Training ends at **2026-09-08 01:21:02 UTC** with the full 200k-action budget
+audited. Execution takes 27,471.11 s, plus 66.59 s of cold construction.
 
 All completed checkpoints pass all 241 tensor checks, with no timeouts:
 
@@ -538,20 +541,24 @@ All completed checkpoints pass all 241 tensor checks, with no timeouts:
 | 140,000 | 34,619 | 559,896 | 97 | 27 | −9.6598 |
 | 160,000 | 39,619 | 639,877 | 108 | 38 | −6.7315 |
 | 180,000 | 44,619 | 719,860 | 118 | 48 | −4.4661 |
+| 200,000 | 49,619 | 799,842 | 130 | 60 | −2.3308 |
 
 The first training win is +1 at aggregate action 86,352 on stream 6
 (10,794 stream actions). The five winning returns through 100k are
 +1, +1, +17, +18 and +12, in their original order.
 
-The byte-exact prefix ledgers reconcile replay and update credit. The latest
-prefix has 180,126 inserted records, 100,000 retained and 80,126 FIFO evictions,
-with zero training debt. Earlier checkpoints through 80k have no evictions.
-The unchanged full-run auditor still rejects each unfinished prefix for missing
-`run_end`; these are not completed budgets or frozen evaluations. Archives and
-reports use `seed2-{step:06d}-{checkpoint,inspection.json,prefix-accounting.json}`.
+The intermediate byte-exact prefix ledgers through 180k reconcile replay and
+update credit; the full-run auditor correctly rejects those unfinished prefixes
+for missing `run_end`. The final closed log passes the complete-budget auditor.
+It contains 200,138 replay insertions, 100,000 retained records and 100,138 FIFO
+evictions, with zero training debt. Earlier checkpoints through 80k have no
+evictions. Archives and tensor inspections use
+`seed2-{step:06d}-{checkpoint,inspection.json}`; intermediate ledgers use
+`seed2-{step:06d}-prefix-accounting.json`. Final accounting is in
+`seed2-train.accounting.json` and `seed2-final-training-verification.json`.
 
 Each warmed window below contains 2,500 updates. Game/wall ratios use actual
-emulator frames; the latest window contains 39,995.
+emulator frames; the final window contains 39,990.
 
 | Actions | Wall seconds | Aggregate actions/s | Aggregate game/wall | GPU activity | Power W | Full learner-call seconds |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -564,22 +571,33 @@ emulator frames; the latest window contains 39,995.
 | 130k–140k | 1,385.57 | 7.217 | 0.4811× | 59.82% | 137.55 | 1,072.26 |
 | 150k–160k | 1,382.96 | 7.231 | 0.4819× | 59.64% | 137.99 | 1,072.18 |
 | 170k–180k | 1,384.29 | 7.224 | 0.4815× | 59.84% | 138.33 | 1,074.55 |
+| 190k–200k | 1,383.95 | 7.226 | 0.4816× | 59.63% | 138.54 | 1,075.28 |
 
 Per-stream game/wall ratios remain about 0.0601×–0.0605×. All measured GPU
 windows keep VRAM fixed at 14,148 MiB, with maximum sample gaps of 1.018 s.
-The latest window contains 1,384 GPU samples; observation processing takes
-303.48 s and environment stepping 4.33 s. No candidate build or CPU-heavy
+The final window contains 1,383 GPU samples; observation processing takes
+301.91 s and environment stepping 4.33 s. No candidate build or CPU-heavy
 test overlaps these windows; read-only monitoring, checkpoint saves and
 uncontrolled other host activity remain.
 These are health windows, not quiet-system speed comparisons or calibrated
-idle traces. `seed2-throughput-*.json` binds the action and GPU-log prefixes.
+idle traces. `seed2-throughput-*.json` binds the audited action data and consumed
+GPU-log prefixes; the final window binds the entire closed training log.
 
-The 160k–180k training interval completes ten games, all wins with mean
-return +20. Its latest 175k–180k window has two wins averaging +21 and
-56 positive / 5 negative point events. The `seed2-window-*.json` files retain
+The 180k–200k training interval completes twelve games, all wins with mean
+return +18.6667. Its final 195k–200k window has four wins averaging +19.75 and
+60 positive / 2 negative point events. The `seed2-window-*.json` files retain
 the 5k learner summaries, completed-game results and sample-weighted reward
 predictions. These are training diagnostics, not final frozen results or a
 passed mastery gate.
+
+The frozen N=1 evaluator starts at **01:21:04 UTC**, PID 1945500; its native
+header arrives at **01:22:11 UTC** after 67.09 s of construction. It loads the
+exact final 200k-action / 49,619-update checkpoint. The rolling and archived
+copies match its metadata and all tensor-file identities. The source log,
+checkpoint checks, byte-exact evaluation header and live child identity are
+bound by `seed2-final-training-verification.json`. Sampled evaluation is still
+running toward the declared 75k actions, with no learner updates observed at
+handoff. Startup validation is not completed frozen evaluation or mastery.
 
 `seed2-10000-20000-runtime-budget.json` derives a conditional cost model from
 the 10k–20k window: 0.42796 s per full learner call, including cleanup outside
@@ -644,8 +662,11 @@ new evaluations. Original pixel bytes were not retained for direct comparison.
 - `seed0-eval-first-game-reconstructed.mp4`: +14, natural completion,
   2,816 actions / 11,262 frames / 187.70 s of game time.
 - `seed1-eval-first-game-reconstructed.mp4`: −1, natural completion,
-  6,859 actions / 27,434 frames / 457.23 s of game time. This first game is
-  reconstructed while the fixed evaluation budget is still running.
+  6,859 actions / 27,434 frames / 457.23 s of game time.
+- `seed2-eval-first-game-reconstructed.mp4`: +20, natural completion,
+  1,713 actions / 6,850 frames / 114.17 s of game time. Reconstruction finishes
+  while the fixed evaluation budget is still running; it does not execute
+  the policy again or add a new evaluation result.
 - `untrained-first-game-reconstructed.mp4`: −21, natural completion,
   792 actions / 3,168 frames / 52.80 s of game time.
 
