@@ -129,3 +129,21 @@ with both final ratio arms, the zero-update control and complete stream-0
 videos. The candidate suite now passes 338 tests. The retained first 20k-action
 R64 checkpoint also has all 241 expected tensors, finite values and nonnegative
 optimizer second moments; this checks numerical health, not seed reliability.
+
+### Longer early runtime window
+
+The fixed 40k–50k R64 interval executes 10,000 actions and 625 updates in
+507.845 seconds: **19.691 actions/s, 1.313× aggregate real time, 0.164× per
+stream**. Its 508 GPU samples average 82.12% activity and peak at 14,212 MiB.
+Python stage totals are 284.987 s observing (56.1%), 216.736 s learning (42.7%),
+5.394 s emulating (1.1%), and less than 1 s combined acting/resetting. Observation
+time includes perception and posterior inference; it is not a pure encoder
+measurement or a calibrated GPU idle-gap measurement.
+
+This is a descriptive window with disclosed CPU analysis overlap, not an
+AB/BA benchmark or a learning-quality result. It changes which stage deserves
+the next profile **if** R64 preserves useful learning. The first four complete
+training episode cohorts have means −0.25, +1.5, −0.125 and −3.375. They do not
+yet demonstrate useful improvement, and do not replace the final frozen gate.
+The prefix-bound measurement and raw interval endpoints are in
+`runs/atari-task-observers-20260908.TzCy2B/boxing-r64-40k-50k.json`.
