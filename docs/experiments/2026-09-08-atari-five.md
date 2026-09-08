@@ -1,7 +1,7 @@
 # Five-game learning campaign: Boxing replay-ratio pilot
 
-Declared and launched 2026-09-08. **R64 seed 0 passes its frozen Boxing gate;
-the pilot and three-seed reliability are incomplete.**
+Declared and completed 2026-09-08. **Both R64 and R256 seed 0 pass their frozen
+Boxing gates. The pilot is complete; three-seed reliability is unproven.**
 The active objective is reliable learning and wins/task completion on five
 Atari games. The completed backend refresh and world-model diagnostics are
 enabling work, not satisfaction of that objective.
@@ -21,7 +21,7 @@ independent replication. Preserve the failed original three-seed Pong gate.
 | Game | Task meaning | Status of acceptance protocol |
 | --- | --- | --- |
 | Pong | Win the match; mean return ≥15 and ≥90% natural wins over ≥20 games | Existing 200k-action recipe fails two of three seeds; new recipe must be separately declared |
-| Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | R64 seed 0 passes: 40/40 frozen wins, mean +51.55 versus untrained +0.125; R256 and replication pending |
+| Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | R64: 40/40 wins, mean +51.55; R256: 162/162, +92.4877; untrained: +0.125. Fresh replication pending |
 | Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | Observer verified against the actual ROM; holding UP scores 21 |
 | Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Positive and negative actual-ROM fixtures verified; declare its training/evaluation budgets next |
 | Qbert | Sustained progression: first-pyramid completion in ≥90% of ≥20 complete episodes, plus mean final score ≥15,000 | First-pyramid observer verified; one cleared pyramid alone is not mastery |
@@ -91,8 +91,9 @@ the replication. The selected live-base ranges are 1009–1016, 2017–2024 and
 This is a protocol choice, not a runtime change or an explanation of Pong's
 variation. Preserve the historical results and failed all-seeds gate.
 The source-bound check is `runs/learning-review-20260908.W6fAHO/replication-seeds.json`.
-Training/evaluation budgets and the chosen recipe remain to be declared before
-those fresh runs; changing seed spacing alone does not establish reliability.
+R256 is the provisional learning control selected below. The vector count,
+training/evaluation budgets and fresh replication declaration remain to be
+fixed before those runs; seed spacing alone does not establish reliability.
 
 ### Replication acceptance checker
 
@@ -162,14 +163,15 @@ those remain required before declaring reliable five-game results.
 
 Validation: 281 Python tests passed on the built package before launch; the
 separate match/task scoring and replay additions bring the candidate suite to
-401 passing tests. Native v2 integration is complete. Complete pilot scores
-remain pending. No other learned Atari game is certified by this declaration
+401 passing tests. Native v2 integration and the pilot are complete. The frozen
+scores are below. No other learned Atari game is certified by this declaration
 or by the CPU adapter results.
 
 The [task-observer follow-up](2026-09-08-atari-task-observers.md) adds actual
 Qbert/Freeway ROM checks and CPU-only full-trajectory reconstruction. Its pinned
 follower published the R64 result in the [frozen Boxing report](../../runs/atari-five-20260908.db0XSW/analysis/report.html),
-including its complete stream-0 video. The other rows are still pending.
+including its complete stream-0 video. The continuation report below contains
+the remaining completed rows; the original report is preserved.
 The retained first 20k-action R64 checkpoint also has all 241 expected
 tensors, finite values and nonnegative optimizer second moments; this checks
 numerical health, not seed reliability.
@@ -245,12 +247,12 @@ free memory; its safety claim is withdrawn by the correction below. Their
 exact tensor/action comparisons are unchanged. Manifests, raw logs and comparisons are
 in `runs/zero-update-checkpoint-20260908.yxaalA/`.
 
-### Live continuation
+### Completed continuation
 
 The remaining stages started at 12:29:21 UTC in
 [`runs/atari-five-continue-20260908.JrdVto`](../../runs/atari-five-continue-20260908.JrdVto/).
 Its [current report](../../runs/atari-five-continue-20260908.JrdVto/report.html)
-links both completed score audits and full-stream movies; R256 remains pending.
+links all three completed score audits and full-stream movies.
 The original report and failure artifacts stay unchanged.
 
 The control reused the verified eight-action initialization and repaired native
@@ -266,11 +268,11 @@ stream-0 matches (−1/+2/+5/−27/−3) and the tail: 37,485 frames at 60 Hz.
 | --- | ---: | ---: | --- |
 | Initial seed-0 weights, zero updates | 21/40 | +0.125 | Fail |
 | R64, seed-0 final 200k-action checkpoint | 40/40 | +51.550 | Pass |
-| R256, seed-0 final 200k-action checkpoint | Pending | Pending | Pending |
+| R256, seed-0 final 200k-action checkpoint | 162/162 | +92.488 | Pass |
 
-The observed mean gap is +51.425 points. This supports substantial learned
-improvement for this Boxing seed, not reliability across training seeds or a
-selected replay ratio. Both frozen runs use the declared 75k-action/N8 sampled
+The mean gaps above the untrained control are +51.425 points for R64 and
++92.3627 for R256. This supports substantial learned improvement for this Boxing
+seed, not reliability across training seeds. All three frozen runs use the declared 75k-action/N8 sampled
 protocol. Preserve the disclosed save-only package difference for the control;
 its initial parameters/actions match exactly, as verified above.
 
@@ -308,12 +310,41 @@ The retained 20k snapshot and earlier health evidence remain in
 
 The 75k-action/N8 sampled frozen evaluation started at 19:35:07 UTC from that
 final checkpoint, retaining the original native package and learner counter.
-Its policy score, complete ledger and CPU replay remain pending. The continuation
-pins both packages, initial state, repair evidence, old results, runner and
-auditors; keep them unchanged while live. It scores and reconstructs each
-complete frozen run without automatic recipe selection or restart. Finish R256
-evaluation before choosing a ratio; fresh three-seed replication and the other
-games still remain.
+It completed at 20:15:35 UTC with **162/162 natural wins, mean +92.4877, no
+draws, losses, cutoffs or updates**. Eight partial tails remain ungraded.
+Its stream-bootstrap 95% mean interval is [91.89375, 93.08333], and its
+descriptive Wilson win interval is [0.97684, 1]. These are conditional on this
+policy, not confidence intervals over independently trained models. The larger
+game count comes from quicker natural match completion at the same 75k-action
+budget; the evaluation was not extended.
+
+The final checkpoint, original declaration, full action ledger and complete CPU
+replay all pass. Replay/video generation finished at 20:16:14 UTC, followed by
+the continuation's successful exit. The video is the entire unselected stream 0:
+21 matches plus its ungraded tail, 37,475 H.264 frames at 60 Hz and 160×210.
+Its first match returns +86; the inspected ending frame shows a knockout against
+14 opposing points. Original gameplay pixels were not recorded, so this is an
+exact action/reward/frame-ledger reconstruction, not a pixel-archive comparison.
+The evaluation, replay and movie SHA-256 values respectively are:
+
+- `6caeed58e669d5000854a5ba90dfef770cbd867d2791eed1b40673b5dc831e65`
+- `c632743109bb86ab8ba1f4a287c7e05aac3ff83155b16911ddf28e2b57767550`
+- `81a22e29edf7655ce7de23123ae27ef16f916d360141b652f67b2968b3390033`
+
+The frozen loop takes 2,359.773 s at 31.7827 actions/s, 2.11785× aggregate
+real time. That is inference-only throughput, not playing-plus-training speed.
+Preserve the original packages, repair evidence, shared auditors and failure.
+Neither queue should be restarted.
+
+**Decision:** use R256 provisionally for the next memory/runtime comparison and
+fresh reliability work. Its score margin over the unchanged 50-point mean gate
+is +42.49, versus only +1.55 for R64. This choice trades roughly 2.29 times the
+training-loop wall time and four times the updates for the stronger one-seed
+result. It does not prove that R256 is reliable, faster, or preferable on every
+game. Retain R64 as the faster learning-throughput ablation. Keep R256, B16/T64,
+full BPTT, precision and objectives fixed when comparing N4/N6/N8 memory/runtime;
+declare that comparison before launch, then the chosen collection protocol and
+fresh three-seed budgets. All five game gates remain unchanged.
 
 ### Fixed 40k–50k runtime comparison
 
@@ -335,7 +366,8 @@ of R64's. Emulation costs 5.394 seconds in either arm. Observation includes
 perception and posterior inference; these host stages are not pure encoder or
 kernel timings. Reprofile the dominant stage of the eventual replicated recipe,
 not GPU activity alone. R64's lower cost also buys four times fewer updates;
-finish the frozen comparison before selecting a ratio.
+the completed frozen comparison selects R256 provisionally for its larger
+score margin, not because of GPU activity or these timing windows alone.
 
 The 508/1,150 GPU samples cover both windows, with maximum gaps of 1.001/1.018
 seconds. Peak memory is 14,212 MiB in both; mean sampled power is 185.75/153.64 W.
@@ -359,23 +391,23 @@ available memory as distinct fields in its
 [FB memory accounting](https://docs.nvidia.com/deploy/nvidia-smi/index.html#fb-memory-usage).
 
 The old device-imagination/backend/pixel checks used total minus peak usage;
-their claimed 2 GiB free-memory pass is therefore unverified, and the current
-live recipe directly **fails** that gate. Preserve every original monitor,
+their claimed 2 GiB free-memory pass is therefore unverified, and the N8
+training recipe directly **fails** that gate. Preserve every original monitor,
 summary and pinned input, including the save repair's misleading
 `free_gpu_mib: 2209`; do not rewrite historical safety flags. Exact action,
 checkpoint, optimizer and score evidence remains valid independently of this
 accounting error.
 
-The running pilot is stable and retains positive headroom, so finish its
-unchanged fixed budget and evaluation without adding GPU work. Before fresh
-long-run replication or increasing batch size, require sampled `memory.free`
+The pilot retained positive headroom and finished its unchanged fixed budget
+and evaluation. Before fresh long-run replication or increasing batch size,
+require sampled `memory.free`
 of at least 2,048 MiB, with total/reserved/used recorded alongside it. A memory
 reduction must pass new numerical and runtime checks; do not silently change
 live microbatching or lower the reserve. The fresh samples and correction are
 in `runs/gpu-free-memory-20260908.J76R3J/{samples.csv,summary.json}`. They do not
 backfill the unrecorded reserved/free fields of older runs.
 
-### Memory follow-up: verified cache geometry, GPU comparison pending
+### Memory follow-up: stream parity passed, full-training comparison pending
 
 The expanded LeVJEPA CPU graph test covers N=1/2/3/4/6/8, verifies unchanged
 shared encoder parameter names/shapes/dtypes, and checks every distinct
@@ -389,9 +421,9 @@ layer/stream K and V cache. Each stream has 588 MiB of logical F32 cache.
 
 N6 is therefore a useful memory candidate without reducing the effective B16
 learner batch, full T64 recurrence, precision or encoder history. Logical bytes
-are not directly free memory or a performance result. After the fixed pilot
-finishes, choose the replay ratio, then separately declare and measure the
-N4/N6/N8 runtime/memory comparison at that ratio. All candidates must meet the
+are not directly free memory or a performance result. With R256 provisionally
+selected, separately declare and measure the N4/N6/N8 runtime/memory comparison
+at that fixed ratio. All candidates must meet the
 unchanged directly-free 2 GiB gate before long replication. N8 remains a
 disclosed memory-failing runtime control. Any selected change to N needs a new
 collection/replication declaration and matching auditor: the current
@@ -410,7 +442,7 @@ preserved in `runs/memory-plan-20260908.odIjRj/review.md`. Only the CPU regressi
 test changed; all live packages, settings and pinned inputs remain unchanged.
 
 The test-only follow-up `vision::levjepa::tests::memory_candidate_streams_match_serial`
-is now compiled but **not GPU-validated**. It checks N4/N6 candidates and the
+has now **passed on the GPU**. It checks N4/N6 candidates and the
 existing N8 control against serial encoding, on 36/42/56 synthetic arrival
 ticks respectively. Every non-reference stream exercises its own reset within
 the sequence, with gaps, chunk boundaries and reversed arrival order. The
@@ -421,7 +453,9 @@ backend-pair checks do not substitute for this serial-perception comparison.
 Pooled/dense maximum absolute error must stay below 0.005, and every active
 frame's dense relative L2 error below 1e-4. No numerical threshold was relaxed.
 
-Run this only after the complete pilot queue has released the selected GPU:
+The declared hardware check ran after the full pilot queue released the GPU.
+Its exact compiled binary and source hashes are recorded in the run artifacts;
+the equivalent Cargo command is:
 
 ```sh
 MEGANEURA_DEVICE_ID=0x2c02 \
@@ -431,13 +465,17 @@ cargo test --release --locked -p kindle --lib \
   -- --ignored --exact --nocapture
 ```
 
-GPU execution remains pending; this is test readiness, not a vector-count
-selection, combined learner-memory gate, throughput measurement or learning
-result. Workspace formatting/Clippy and all 92 CPU tests pass, with 21 GPU
+N4, N6 and N8 each have zero measured dense-feature maximum absolute error.
+The pooled-feature, complete-length, relative-L2, reset/gap and chunk checks
+also pass, with no threshold changes. This is not a vector-count selection,
+combined learner-memory gate, throughput measurement or learning result.
+Workspace formatting/Clippy and all 92 CPU tests pass, with 21 GPU
 tests ignored. Current source identity, CPU completion and release-build output
 are in `runs/vector-count-parity-20260908.aO5sDA/validation-with-control.json`.
 The earlier N4/N6-only readiness artifacts and binary are preserved in that
-directory. No native package, runner, live input or learning implementation changed.
+directory. `gpu-declaration.json` and `gpu-result.json` contain the selected
+device, exact binary/source identity and complete passing output. No native
+package, runner, pilot input or learning implementation changed.
 
 ### Bounded learning-equation review
 
@@ -479,7 +517,8 @@ R256 separates reward signs earlier by interaction count while spending roughly
 four times the updates. Its own training trajectories also differ. This does
 not select a ratio, explain Pong's seed variation, or establish final-policy
 quality. In particular, R64's weak early fitting did not prevent its later
-frozen pass. Finish the unchanged fixed-budget comparison before choosing an
-intervention. Prefix hashes, counts, behavior statistics and the reproducible
+frozen pass. The completed frozen-policy results above guide the provisional
+R256 choice; this prefix analysis remains diagnostic. Prefix hashes, counts,
+behavior statistics and the reproducible
 script are in `runs/boxing-reward-fit-20260908.cDT725/summary.json` and
 `compare_prefixes.py`; the original R64 evidence remains unchanged.

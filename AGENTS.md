@@ -60,23 +60,22 @@ reliable learning.
   Keep backend identity checks and historical executables intact.
   Current exact pixel pairs reach 8.64–8.70 actions/s, only 0.576–0.580× aggregate
   real time and 0.0720–0.0725× per stream. GPU activity spans 66–70%; 14,212 MiB
-  peak usage leaves only 1,631 MiB of directly reported free memory in the live
+  peak usage left only 1,631 MiB of directly reported free memory in the completed
   pilot. The old total-minus-used check omitted driver reservations and does
   not establish the 2 GiB safety gate. Preserve those raw results but withdraw
   the reserve-pass claim. Record memory.free and memory.reserved directly;
   require at least 2,048 MiB measured free before new long-run replication or
-  a larger batch. Let the unchanged, stable pilot finish; do not restart it or
-  add concurrent GPU work. This backend update is not a major
+  a larger batch. The unchanged pilot has finished; do not restart its queue.
+  Keep GPU-heavy work serialized. This backend update is not a major
   speedup; see `docs/experiments/2026-09-08-meganeura-refresh.md` for the tested
   current package and the preserved audit-only failure plus completed continuation.
   A CPU graph check verifies 588 MiB of F32 visual KV cache per stream: N6/N4
   would remove 1,176/2,352 MiB versus N8, without changing B16/T64 or full BPTT.
-  These are logical bytes, not measured free VRAM or throughput. After the pilot,
-  run the staged LeVJEPA `memory_candidate_streams_match_serial` GPU test for
-  N4/N6 and the existing N8 control before the stream-count comparison. Its
-  code compiles and CPU checks pass, but this GPU test has not run; the old N2
-  result does not cover these counts.
-  Then fix the replay ratio and compare stream counts under a new declared runtime
+  These are logical bytes, not measured free VRAM or throughput. The LeVJEPA
+  `memory_candidate_streams_match_serial` GPU test now passes for N4/N6/N8,
+  with zero measured dense-feature error against serial encoding and unchanged
+  pooled/dense tolerances. This does not establish combined learner memory.
+  Fix the provisional R256 control and compare stream counts under a new declared runtime
   and memory protocol. Changing N requires a new replication declaration and
   matching auditor; the existing replication-v1 checker requires N8. Keep all
   five game gates and fresh training seeds. Do not repeat large CPU graph
@@ -127,26 +126,26 @@ reliable learning.
   criterion. Keep game-specific wins separate from generic episode accounting.
   The active five-game objective targets Pong, Boxing, Freeway, Breakout and
   Qbert; see `docs/experiments/2026-09-08-atari-five.md`. The isolated
-  `exp/atari-five` v2 runner starts with a fixed 200k-action Boxing R64/R256
+  `exp/atari-five` v2 runner completed the fixed 200k-action Boxing R64/R256
   pilot and 75k-action N8 frozen evaluations. R64 seed 0 passes its frozen gate:
   40/40 wins, mean +51.55, with complete checkpoint/declaration/replay checks.
   The original queue and follower stopped on a zero-update control restore
   failure. The save-only repair now passes CPU/GPU checks, exact 12M initial
   actions/parameters and complete trained-state preservation, retaining strict
-  restore checks. Preserve the original artifacts. The live continuation in
+  restore checks. Preserve the original artifacts. The completed continuation in
   `runs/atari-five-continue-20260908.JrdVto` completed the repaired zero-update
   control: 21/40 wins, mean +0.125, with full checkpoint/replay checks. R256
-  finished 200k actions and 49,619 updates with the original native package;
-  all 241 final tensors pass the CPU health check. Its 75k frozen evaluation is
-  running, not yet scored. The continuation also pins the
-  repair evidence and shared auditors: keep them unchanged while live. Do not
-  rerun R64 or select a ratio before both arms and the control finish. Keep the pinned
-  package/runner unchanged while live. One pilot seed does not establish
+  finished 200k actions and 49,619 updates with the original native package.
+  Its 75k frozen evaluation passes: 162/162 natural wins, mean +92.4877,
+  no cutoffs or updates, with complete checkpoint/declaration/replay checks.
+  Use R256 provisionally for its larger score margin, retaining R64 as the faster
+  ablation; this costs roughly 2.29 times the training-loop wall time. Preserve
+  the completed queue, repair evidence, packages and shared auditors. One pilot seed does not establish
   reliability: require a separately declared fresh three-seed replication
   using 1009, 2017 and 3019.
   Adjacent roots reuse live policy/posterior RNG streams under `seed + stream`;
   keep the selected N8 live-seed ranges disjoint, without reinterpreting old
-  results or changing the live pilot. Verify actual child
+  results or rewriting the completed pilot. Verify actual child
   processes before waiting, and do not treat completed tooling as five-game wins.
   Its CPU-only frozen-result follower pins the candidate match auditor,
   `replay_atari.py`, `atari_tasks.py` and their dependencies too; keep them

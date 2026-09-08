@@ -182,7 +182,7 @@ game-specific competence criteria; a positive Atari score is not generally a win
 The active pinned Pong runner and auditor stay unchanged.
 
 The next bounded [five-game campaign](experiments/2026-09-08-atari-five.md)
-targets Pong, Boxing, Freeway, Breakout and Qbert. Its first live experiment
+targets Pong, Boxing, Freeway, Breakout and Qbert. Its completed first experiment
 compares replay ratios 64 and 256 on Boxing, with the same LeVJEPA model,
 200k fresh interactions per arm and 75k frozen sampled actions. Training and
 evaluation both use eight independent streams sharing one learner. Version-2
@@ -194,12 +194,16 @@ the successful arm and failure. Explicit-zero optimizer saves are now validated
 against exact initial actions/parameters and all trained tensor state. The
 control now completes 40 natural matches with 21 wins and mean +0.125, versus
 R64's +51.55, with complete checkpoint/replay checks and zero learning updates.
-This supports substantial learned improvement for one Boxing seed. R256 is
-now training with the original native package; its final result remains pending.
+R256 now also passes: 162/162 natural wins, mean +92.4877, no cutoffs or updates,
+with the original native package and complete checkpoint/declaration/replay
+checks. Both policies received the same action budgets; R256 finishes matches
+sooner, yielding more completed games. Use R256 provisionally for its much
+larger score margin, retaining the faster R64 control. The extra replay costs
+roughly 2.29 times the training-loop wall time; this is not a free speedup.
 The first-80k diagnostic finds earlier posterior reward-sign separation in R256
 at roughly four times the updates, not a held-out forecast or final-policy win.
-A one-seed pilot is not reliability: select a recipe, then
-declare a fresh three-seed replication and each remaining game's real
+A one-seed pilot is not reliability: finish the vector-count memory/runtime
+comparison, then declare fresh three-seed replication and each remaining game's real
 completion criterion before its training. Do not call a positive score a win
 or let more tooling substitute for actual learning results.
 The [task observers](experiments/2026-09-08-atari-task-observers.md) now distinguish
@@ -324,17 +328,18 @@ The [memory-accounting correction](experiments/2026-09-08-atari-five.md#memory-a
 finds only **1,631 MiB directly reported free** at 14,212 MiB used; the earlier
 2,091 MiB calculation omitted driver-reserved memory. This fails the 2 GiB
 free-memory gate, without changing the recorded action/tensor/score evidence.
-Keep the stable, pinned pilot running unchanged, but require directly sampled
+The pinned pilot has finished unchanged. Require directly sampled
 `memory.free ≥ 2,048 MiB` before long-run replication or a larger batch. Reduce
 memory with new numerical/runtime checks; do not lower the gate or silently
-change the pilot's microbatching. Historical monitors cannot prove free memory
+reinterpret the pilot's microbatching. Historical monitors cannot prove free memory
 they did not record.
 
 The next memory candidate keeps the full learner and uses fewer vector streams.
 A CPU graph check verifies 588 MiB of F32 visual cache per stream; N6/N4 remove
 1,176/2,352 MiB of logical cache versus N8. This does not yet establish available
-VRAM or speed. After the pilot's final evaluations, fix the replay ratio and
-compare these counts against N8 with directly sampled free memory and matched
+VRAM or speed. The N4/N6/N8 serial-perception GPU check now passes with zero
+measured dense-feature error and unchanged pooled/dense tolerances. Keep the
+provisional R256 recipe fixed and compare these counts with directly sampled free memory and matched
 timing windows. Changing N needs a fresh declared collection/replication
 protocol and matching auditor, not reinterpretation of the N8 results. Avoid
 large CPU graph compilation alongside training; the first memory probe caused
@@ -409,14 +414,15 @@ Change one variable, report actual updates per real interaction, and retest
 learning. Do not claim acceleration by dropping owed training, weakening the
 reward task or changing the simulated control interval unnoticed.
 The [Boxing pilot](experiments/2026-09-08-atari-five.md)
-now measures R64 against R256. Its fixed 40k–50k windows reach 19.69 versus
+compares R64 against R256. Its fixed 40k–50k windows reach 19.69 versus
 8.69 actions/s: 1.312× versus 0.579× aggregate real time, or 0.164× versus
 0.0724× per stream using actual emulator frames. R256 spends 74.4% of elapsed
 time learning; R64 spends 56.1% observing (perception plus posterior inference).
-R64 also performs four times fewer updates. Keep the R256 control and finish
-both frozen evaluations before choosing a ratio; the R64 seed-0 pass is not
-three-seed reliability. Compare interaction efficiency and wall-clock learning
-quality before adoption, then optimize the dominant stage of that recipe.
+R64 also performs four times fewer updates. Both final frozen policies pass
+their one-seed gates, but R256's mean +92.4877 provides much more score margin
+than R64's +51.55. R256 is the provisional control for memory/runtime work and
+fresh replication, not a three-seed reliability claim. Optimize its dominant
+learning stage while retaining the lower-ratio learning-throughput ablation.
 
 Use mind-games' time control for accelerated development. Separately test a
 single actor in free-running mode later: timestamp observations and executed
