@@ -581,8 +581,24 @@ mod tests {
     #[test]
     #[ignore = "requires GPU and pinned LeVJEPA weights"]
     fn batched_streams_match_serial_with_asymmetric_resets_and_gaps() {
+        check_batched_streams_match_serial(2);
+    }
+
+    #[test]
+    #[ignore = "requires GPU and pinned LeVJEPA weights; run after the active pilot"]
+    fn memory_candidate_streams_match_serial() {
+        for streams in [4, 6] {
+            check_batched_streams_match_serial(streams);
+        }
+    }
+
+    fn check_batched_streams_match_serial(streams: usize) {
         let checkpoint =
             std::env::var_os("KINDLE_LEVJEPA_WEIGHTS").expect("set KINDLE_LEVJEPA_WEIGHTS");
+        assert_eq!(
+            super::super::checkpoint_sha256(Path::new(&checkpoint)).unwrap(),
+            CHECKPOINT_SHA256
+        );
         let frame = |stream: usize, tick: usize| {
             crate::RgbFrame::new(
                 64,
@@ -593,11 +609,11 @@ mod tests {
             )
         };
         let active = |stream, tick| stream == 0 || ![4, 15, 16, 32].contains(&tick);
-        let reset = |stream, tick| tick == 0 || (stream == 1 && tick == 7);
+        let reset = |stream, tick| tick == 0 || (stream > 0 && tick == 7 * stream);
         let mut expected = Vec::new();
         {
             let mut serial = LeVJepaPerception::load(&checkpoint, None, None).unwrap();
-            for stream in 0..2 {
+            for stream in 0..streams {
                 serial.reset();
                 let mut values = Vec::new();
                 for tick in 0..36 {
@@ -616,12 +632,14 @@ mod tests {
                 expected.push(values);
             }
         }
-        let mut batch = LeVJepaPerception::load_batched(&checkpoint, 2, None, None).unwrap();
+        let mut batch = LeVJepaPerception::load_batched(&checkpoint, streams, None, None).unwrap();
         let mut worst = 0.0_f32;
         for tick in 0..36 {
-            let frames = [frame(0, tick), frame(1, tick)];
+            let frames = (0..streams)
+                .map(|stream| frame(stream, tick))
+                .collect::<Vec<_>>();
             // Reversed input order must not change stream ownership.
-            let arrivals: Vec<_> = (0..2)
+            let arrivals: Vec<_> = (0..streams)
                 .rev()
                 .filter(|&s| active(s, tick))
                 .map(|s| (s, &frames[s], reset(s, tick)))
@@ -633,7 +651,7 @@ mod tests {
                 for (actual, expected) in observation.as_slice().iter().zip(reference.as_slice()) {
                     assert!(
                         (actual - expected).abs() < 0.005,
-                        "pooled stream {stream} tick {tick}"
+                        "pooled N{streams} stream {stream} tick {tick}"
                     );
                 }
                 let actual = &tokens[stream * PATCHES * HIDDEN..(stream + 1) * PATCHES * HIDDEN];
@@ -646,12 +664,15 @@ mod tests {
                 }
                 assert!(
                     (error / energy).sqrt() < 1e-4,
-                    "dense stream {stream} tick {tick}"
+                    "dense N{streams} stream {stream} tick {tick}"
                 );
             }
         }
-        assert!(worst < 0.005, "batched maximum absolute error {worst}");
-        eprintln!("LeVJEPA batched/serial maximum absolute error {worst}");
+        assert!(
+            worst < 0.005,
+            "N{streams} batched maximum absolute error {worst}"
+        );
+        eprintln!("LeVJEPA N{streams} batched/serial maximum absolute error {worst}");
     }
 
     #[test]

@@ -72,7 +72,10 @@ reliable learning.
   A CPU graph check verifies 588 MiB of F32 visual KV cache per stream: N6/N4
   would remove 1,176/2,352 MiB versus N8, without changing B16/T64 or full BPTT.
   These are logical bytes, not measured free VRAM or throughput. After the pilot,
-  fix the replay ratio and compare stream counts under a new declared runtime
+  run the staged LeVJEPA `memory_candidate_streams_match_serial` GPU test for
+  N4/N6 before the stream-count comparison. Its code compiles and CPU checks
+  pass, but this GPU test has not run; the old N2 result does not cover it.
+  Then fix the replay ratio and compare stream counts under a new declared runtime
   and memory protocol. Changing N requires a new replication declaration and
   matching auditor; the existing replication-v1 checker requires N8. Keep all
   five game gates and fresh training seeds. Do not repeat large CPU graph
