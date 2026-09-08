@@ -187,7 +187,9 @@ compares replay ratios 64 and 256 on Boxing, with the same LeVJEPA model,
 200k fresh interactions per arm and 75k frozen sampled actions. Training and
 evaluation both use eight independent streams sharing one learner. Version-2
 episode accounting and game-specific scoring are isolated from the historical
-Pong controls. A one-seed pilot is not reliability: select a recipe, then
+Pong controls. R64 training has completed its fixed budget with valid accounting;
+its final frozen evaluation is running, and the control/R256 results are pending.
+A one-seed pilot is not reliability: select a recipe, then
 declare a fresh three-seed replication and each remaining game's real
 completion criterion before its training. Do not call a positive score a win
 or let more tooling substitute for actual learning results.
