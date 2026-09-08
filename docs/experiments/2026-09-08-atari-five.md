@@ -76,8 +76,22 @@ quality against the untrained policy as well as actions, updates, wall time,
 aggregate/per-stream game clocks and GPU memory. If both fail, that is a
 learning result requiring diagnosis, not permission to call positive rewards
 mastery. A selected recipe needs a new, predeclared replication on three fresh
-seeds (for example 3, 4, 5) before a reliability claim. Any longer budget applies
+seeds **1009, 2017 and 3019** before a reliability claim. Any longer budget applies
 to every replication seed and is fixed before starting them.
+
+These seed numbers are selected before replication or final pilot results.
+The earlier adjacent-seed example is deliberately replaced: each N8 model
+seeds live policy/posterior streams with `config.seed + stream`, followed by
+the corresponding RNG-domain XOR. Adjacent roots therefore reuse seven of
+eight seeded live streams. Distinct model initialization and replay RNGs mean
+the trajectories need not match, but this is unwanted shared randomness in
+the replication. The selected live-base ranges are 1009–1016, 2017–2024 and
+3019–3026, mutually disjoint and separate from the pilot/integration ranges.
+This is a protocol choice, not a runtime change or an explanation of Pong's
+variation. Preserve the historical results and failed all-seeds gate.
+The source-bound check is `runs/learning-review-20260908.W6fAHO/replication-seeds.json`.
+Training/evaluation budgets and the chosen recipe remain to be declared before
+those fresh runs; changing seed spacing alone does not establish reliability.
 
 ## Implementation and artifacts
 

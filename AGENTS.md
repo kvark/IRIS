@@ -107,7 +107,10 @@ reliable learning.
   `exp/atari-five` v2 runner starts with a fixed 200k-action Boxing R64/R256
   pilot and 75k-action N8 frozen evaluations. Keep its pinned package/runner
   unchanged while live. One pilot seed does not establish reliability; require
-  a separately declared fresh three-seed replication. Verify actual child
+  a separately declared fresh three-seed replication using 1009, 2017 and 3019.
+  Adjacent roots reuse live policy/posterior RNG streams under `seed + stream`;
+  keep the selected N8 live-seed ranges disjoint, without reinterpreting old
+  results or changing the live pilot. Verify actual child
   processes before waiting, and do not treat completed tooling as five-game wins.
   Its CPU-only frozen-result follower pins the candidate match auditor,
   `replay_atari.py`, `atari_tasks.py` and their dependencies too; keep them
