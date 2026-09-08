@@ -290,6 +290,15 @@ reconstructs each complete frozen run without automatic recipe selection or
 restart. Finish R256 before choosing a ratio; fresh three-seed replication and
 the other games still remain.
 
+The scheduled 20k-action R256 checkpoint is retained in
+`runs/boxing-r256-health-20260908.YeSTeX/checkpoint`. Its CPU check binds the
+recorded save and log prefix, verifies all 241 complete finite tensors against
+the validated logical schema, and checks nonnegative optimizer second moments.
+World/behavior native counters and Kindle's learner counter all equal 4,619;
+the slow-value copy has zero optimizer steps, and training debt is zero.
+`summary.json` records this numerical-health check, not a final-policy or
+seed-reliability result. No GPU restore/evaluation or live recipe change occurred.
+
 ### Longer early runtime window
 
 The fixed 40k–50k R64 interval executes 10,000 actions and 625 updates in
