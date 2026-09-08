@@ -201,12 +201,39 @@ stopped. Preserve their failure records and completed R64 evidence; the
 original queue must not be restarted.
 
 The save-only repair and hardware/continuation gates are declared in
-`runs/zero-update-checkpoint-20260908.yxaalA/declaration.md`. Materialize the
-initial zero moments without taking an optimizer step; keep all restore
-requirements and already trained state unchanged. Validate fresh and trained
-round trips, then regenerate only the failed control in a new artifact root,
-checking its initial weights/actions exactly against the original. Finish the
-untrained control and original-recipe R256 arm before selecting a ratio.
+`runs/zero-update-checkpoint-20260908.yxaalA/declaration.md`. The repair is
+implemented in main `1acaca7` / candidate `9d9cec4`: fresh saves materialize the
+initial zero moments without taking an optimizer step. Already allocated state
+and all restore requirements remain unchanged; old incomplete zero-update
+checkpoints are not silently accepted.
+
+Validation passes: workspace formatting/Clippy, 92 Rust CPU tests, four GPU
+regressions (fresh/acted zero-update saves, trained restore, vector-one/serial
+learning and logical-cache restore), and 401 Python tests against the isolated
+actual package. The real N8/12M/B16/T64 initialization matches every original
+action and all 95 original parameter tensors exactly, adding only 146 complete
+F32-zero optimizer tensors. Restoring/resaving the trained R64 model retains all
+241 tensor payloads and every saved counter exactly. The two pixel checks peak
+at 14,094 MiB, leaving 2,209 MiB. Their manifests, raw logs and comparisons are
+in `runs/zero-update-checkpoint-20260908.yxaalA/`.
+
+### Live continuation
+
+The remaining stages started at 12:29:21 UTC in
+[`runs/atari-five-continue-20260908.JrdVto`](../../runs/atari-five-continue-20260908.JrdVto/).
+Its [current report](../../runs/atari-five-continue-20260908.JrdVto/report.html)
+links the retained R64 score/movie and will add both remaining frozen runs.
+The original report and failure artifacts stay unchanged.
+
+The control reuses the verified eight-action initialization and repaired native
+package `9cd176c1…`; its full 75k-action sampled N8 evaluation has restarted
+from that exact zero-update state. This is the only package change: the pending
+fresh R256 200k training and 75k frozen evaluation still use the original
+`831c631d…` package, matching the completed R64 arm. The continuation pins both
+packages, initial state, repair evidence, old results, runner and auditors.
+It scores and reconstructs each completed frozen run without automatic recipe
+selection or restart. Finish the control and R256 arm before choosing a ratio;
+fresh three-seed replication and the other games still remain.
 
 ### Longer early runtime window
 
