@@ -407,7 +407,7 @@ live microbatching or lower the reserve. The fresh samples and correction are
 in `runs/gpu-free-memory-20260908.J76R3J/{samples.csv,summary.json}`. They do not
 backfill the unrecorded reserved/free fields of older runs.
 
-### Memory follow-up: stream parity passed, full-training comparison pending
+### Memory follow-up: stream parity passed, full-training comparison running
 
 The expanded LeVJEPA CPU graph test covers N=1/2/3/4/6/8, verifies unchanged
 shared encoder parameter names/shapes/dtypes, and checks every distinct
@@ -421,9 +421,19 @@ layer/stream K and V cache. Each stream has 588 MiB of logical F32 cache.
 
 N6 is therefore a useful memory candidate without reducing the effective B16
 learner batch, full T64 recurrence, precision or encoder history. Logical bytes
-are not directly free memory or a performance result. With R256 provisionally
-selected, separately declare and measure the N4/N6/N8 runtime/memory comparison
-at that fixed ratio. All candidates must meet the
+are not directly free memory or a performance result. The newly declared
+comparison in `runs/vector-memory-runtime-20260908.CcWv0d` started at 21:01 UTC.
+Its 24 pinned inputs include the repaired native package, complete configuration,
+runner, auditors, encoder, ALE/ROM and checkpoint schema. The order is N8/N6/N4
+then N4/N6/N8. Each starts fresh with seed 7301, executes 3,840 training actions,
+and restores for 768 frozen sampled actions. Reusing the seed within each N is
+an exact state/trace-repeat check, not independent learning replication.
+The timed 2,304–3,840-action interval contains exactly 384 updates; it is runtime
+warmup, not completed learning-rate warmup. Different N changes prefill and
+trajectories. R256/B16/T64/full BPTT, precision and objectives remain fixed.
+Direct free memory is sampled every 250 ms across training and restore, with
+explicit coverage checks. The six-trial comparison makes no automatic stream
+selection and launches no long runs. All candidates must meet the
 unchanged directly-free 2 GiB gate before long replication. N8 remains a
 disclosed memory-failing runtime control. Any selected change to N needs a new
 collection/replication declaration and matching auditor: the current
