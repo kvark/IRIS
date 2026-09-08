@@ -159,6 +159,14 @@ same-model forecast checks and common RGB/feature hashes. Forced recorded
 controls are model diagnostics, not new gameplay successes; off-policy logged
 returns are not unbiased targets for the evaluated critic.
 
+The [Freeway CPU discovery check](experiments/2026-09-08-freeway-discovery.md)
+finds no rewards under independent random actions in three 200,004-action arms,
+but hundreds when random actions persist for 16 or 64 decisions. These are
+exploration controls, not learned competence. If the native pilot remains
+reward-starved, test a bounded persistent-exploration component with explicit
+executed-action provenance and unassisted frozen evaluation before simply
+spending more GPU time on a longer unchanged run.
+
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction
 control has strong late training but only 2 food / 98 deaths when frozen.

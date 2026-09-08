@@ -167,6 +167,12 @@ destinations, not completed results. `completed.json` is written only after
 all phases and audits finish. No Freeway pass or fresh-seed reliability is
 claimed while the pilot runs.
 
+A separate [CPU discovery diagnostic](2026-09-08-freeway-discovery.md) now
+completes three random seeds for hold lengths 1/16/64. Independent random
+actions produce no rewards; persistent random actions discover hundreds but
+remain far below the task bar. This is a candidate exploration lead, not a
+change to the live pilot or a native learning result.
+
 ## Implementation and artifacts
 
 Candidate worktree: `/x/Code/.kindle-atari-five`, branch `exp/atari-five`.
