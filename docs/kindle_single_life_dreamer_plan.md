@@ -338,9 +338,12 @@ The next memory candidate keeps the full learner and uses fewer vector streams.
 A CPU graph check verifies 588 MiB of F32 visual cache per stream; N6/N4 remove
 1,176/2,352 MiB of logical cache versus N8. This does not yet establish available
 VRAM or speed. The N4/N6/N8 serial-perception GPU check now passes with zero
-measured dense-feature error and unchanged pooled/dense tolerances. Keep the
-provisional R256 recipe fixed and compare these counts with directly sampled free memory and matched
-timing windows. Changing N needs a fresh declared collection/replication
+measured dense-feature error and unchanged pooled/dense tolerances. The declared
+full-training comparison is running in `runs/vector-memory-runtime-20260908.CcWv0d`:
+N8/N6/N4 followed by N4/N6/N8, fixed R256/B16/T64, 3,840 actions and a frozen
+restore per trial. It measures directly free memory and matched timing windows,
+with exact same-N state/trace checks; it does not test seed reliability.
+Changing N needs a fresh declared collection/replication
 protocol and matching auditor, not reinterpretation of the N8 results. Avoid
 large CPU graph compilation alongside training; the first memory probe caused
 host pressure and its capped follow-ups did not complete the world comparison.

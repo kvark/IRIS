@@ -75,8 +75,12 @@ reliable learning.
   `memory_candidate_streams_match_serial` GPU test now passes for N4/N6/N8,
   with zero measured dense-feature error against serial encoding and unchanged
   pooled/dense tolerances. This does not establish combined learner memory.
-  Fix the provisional R256 control and compare stream counts under a new declared runtime
-  and memory protocol. Changing N requires a new replication declaration and
+  The fixed-R256 N8/N6/N4 then N4/N6/N8 full-training comparison is running in
+  `runs/vector-memory-runtime-20260908.CcWv0d`: 3,840 actions plus a 768-action
+  frozen restore per trial, directly sampled free memory, and exact same-N
+  repeat checks. Preserve its pinned inputs; no competing GPU work or large
+  CPU builds. This is a runtime/memory gate, not fresh reliability evidence.
+  Changing N requires a new replication declaration and
   matching auditor; the existing replication-v1 checker requires N8. Keep all
   five game gates and fresh training seeds. Do not repeat large CPU graph
   compilation alongside training: the first memory-plan probe caused host
