@@ -49,8 +49,8 @@ reliable learning.
   The bounded readback diagnostic worker completed its three hardware tests
   and three exact synthetic canary pairs after the campaign/watcher. Its
   original identity and pinned inputs are recorded in
-  `runs/readback-hardware-20260907/manifest.json`; inspect its events and process
-  before starting any other GPU job. Do not modify its pinned worker or inputs.
+  `runs/readback-hardware-20260907/manifest.json`. It has exited; preserve its
+  pinned worker and inputs as controls, not as a reason to restart its queue.
   It validates those hardware tests and synthetic canary pairs only;
   completion does not imply profiler adoption, GPU-idle attribution or pixel parity.
   The separate timer pixel gate also passes both fixed-budget pairs with exact
@@ -58,6 +58,13 @@ reliable learning.
   gated buffer-reuse candidate in
   `docs/experiments/2026-09-08-runtime-hardware.md`. Neither coarse GPU activity
   nor the two API-only external captures establishes calibrated GPU idle gaps.
+  The five-net-line imagined-feature buffer reuse is adopted in source after
+  exact hardware/canary/pixel checks and 3.47–4.45% higher pixel throughput.
+  It retains 150 MiB of host capacity; peak VRAM is unchanged and training is
+  still only about 0.51× aggregate real time. The tested reuse Python package
+  is isolated; the default editable extension remains the pinned parent.
+  Select the documented reuse package or build current source into a fresh
+  package for new experiments. Do not overwrite the historical control inputs.
 - Change one scientific variable per comparison. Report real interactions,
   learner updates, wall time, model/data provenance, all seeds, and failures.
   A short integration test or an historical score is not a matched benchmark.

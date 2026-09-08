@@ -295,6 +295,7 @@ impl D3TrainScheduler {
 pub struct DreamerCore {
     gpu: Arc<blade_graphics::Context>,
     readback: Readback,
+    imagined_feature_scratch: Vec<f32>,
     config: DreamerConfig,
     perception_identity: Option<PerceptionIdentity>,
     bins: TwoHotBins,
@@ -460,6 +461,7 @@ impl DreamerCore {
         let size = config.network();
         Self {
             readback: Readback::new(Arc::clone(&gpu)),
+            imagined_feature_scratch: Vec::new(),
             gpu,
             bins: TwoHotBins::new(config.value_bins),
             replay: SequenceReplay::new(config.replay_capacity),
@@ -1090,6 +1092,7 @@ impl DreamerCore {
         let stage = Instant::now();
         self.sync_behavior_inference();
         timing.behavior_sync_seconds = stage.elapsed().as_secs_f64();
+        self.imagined_feature_scratch = behavior_batch.imagined_feature;
         self.learner_step += 1;
         timing.total_seconds = started.elapsed().as_secs_f64();
         Some(LearnReport {
@@ -1557,7 +1560,9 @@ impl DreamerCore {
         let return_scale = self.return_normalizer.scale();
 
         let imagined_rows = starts * horizon;
-        let mut imagined_feature = Vec::with_capacity(imagined_rows * self.config.feature_dim());
+        let mut imagined_feature = std::mem::take(&mut self.imagined_feature_scratch);
+        imagined_feature.clear();
+        imagined_feature.reserve(imagined_rows * self.config.feature_dim());
         let mut action_target = vec![0.0; imagined_rows * self.config.action_count];
         let mut imagined_weight = vec![0.0; imagined_rows];
         let mut imagined_value_target = vec![0.0; imagined_rows * self.config.value_bins];
@@ -2850,6 +2855,7 @@ mod tests {
         config.skip_full_optimize = true;
         let gpu = Arc::new(crate::init_gpu_context().unwrap());
         let mut agent = DreamerCore::with_gpu(config, Arc::clone(&gpu));
+        assert!(agent.imagined_feature_scratch.is_empty());
         let (world_parameters, behavior_parameters) = agent.trainable_parameter_counts();
         assert!(world_parameters > 0 && behavior_parameters > 0);
         assert!(
@@ -2926,6 +2932,13 @@ mod tests {
             .behavior_train
             .read_param("behavior.actor.out.bias", &mut initial_actor_parameter);
         let report = agent.learn().expect("nine frames fill one tiny sequence");
+        assert_eq!(
+            agent.imagined_feature_scratch.len(),
+            agent.config.batch_size
+                * agent.config.batch_length
+                * agent.config.imagination_length
+                * agent.config.feature_dim()
+        );
         assert_eq!(report.learner_step, 1);
         assert_eq!(report.replay_len, 9);
         assert!(report.world.total_loss.is_finite());
@@ -2985,6 +2998,7 @@ mod tests {
 
         let metadata = read_checkpoint_metadata(&checkpoint).unwrap();
         let mut restored = DreamerCore::restore_with_gpu(&checkpoint, gpu, metadata).unwrap();
+        assert!(restored.imagined_feature_scratch.is_empty());
         assert_eq!(restored.learner_step(), 1);
         assert_eq!(restored.environment_step(), 8);
         assert_eq!(restored.replay_len(), 0);
@@ -3030,6 +3044,15 @@ mod tests {
         let report = restored.learn().expect("refilled replay learns");
         assert_eq!(report.learner_step, 2);
         assert_eq!(report.behavior.actor_update_scale, 1.0);
+        let pointer = restored.imagined_feature_scratch.as_ptr();
+        let capacity = restored.imagined_feature_scratch.capacity();
+        let report = restored
+            .learn()
+            .expect("a second update reuses host feature storage");
+        assert_eq!(report.learner_step, 3);
+        assert!(report.world.total_loss.is_finite() && report.behavior.total_loss.is_finite());
+        assert_eq!(restored.imagined_feature_scratch.as_ptr(), pointer);
+        assert_eq!(restored.imagined_feature_scratch.capacity(), capacity);
         drop(restored);
         fs::remove_dir_all(checkpoint).unwrap();
     }

@@ -236,7 +236,12 @@ The [serialized hardware checks](experiments/2026-09-08-runtime-hardware.md)
 validate native host timers with three exact synthetic pairs and two exact pixel
 pairs; measured timer overhead spans small differences of both signs. External
 captures contain no usable GPU-workload timeline, so calibrated GPU idle gaps
-remain unknown. Host-buffer reuse has its own hardware and pixel decision gate.
+remain unknown. The separately gated buffer reuse is now adopted in source:
+two exact pixel pairs improve throughput by 3.47–4.45%, reaching about
+7.6 aggregate actions/s (0.51× aggregate, 0.063× per stream). It retains
+150 MiB of host capacity; GPU activity is 61–65% and peak VRAM is unchanged.
+Original pinned executables remain intact; the tested reuse package and build
+instructions are recorded with the result, not silently installed over a control.
 
 Measure acceleration as simulated game seconds / wall seconds. Report cold
 construction separately and also include end-to-end run cost. Track actual
@@ -285,13 +290,16 @@ timeline, not a calibrated GPU clock. Use those durations for workload cost,
 not the drawn gaps as evidence of GPU idleness.
 Check repeated host feature-buffer allocation/copying as well: minor faults
 and historical swapped bytes do not establish disk paging or its elapsed cost.
-A small [host-buffer reuse candidate](https://github.com/kvark/kindle/blob/6ef7ba6bf9293367ffdeaf7985dcc6a615fb505e/docs/experiments/2026-09-07-host-feature-reuse.md)
-reproduces the allocation-fault reduction in a CPU packing test; native parity
-and end-to-end timing gates remain pending. It is not adopted.
+A small [host-buffer reuse change](experiments/2026-09-08-runtime-hardware.md#buffer-reuse-pixel-result-and-decision)
+passes its two hardware tests, three exact synthetic pairs and two exact pixel
+pairs. It reduces full learner-call time by 4.30–5.43% and is adopted in source.
+The full-call measurement includes destruction that the inner timer omits;
+the retained 150 MiB capacity is a host-memory tradeoff, not a GPU-memory saving.
 The [bounded hardware/parity handoff](experiments/2026-09-06-vector-pong.md#queued-diagnostic-handoff)
 has completed its three hardware tests and three synthetic canary pairs.
-Timer pixel-loop validation also passes. Calibrated queue gaps and buffer-reuse
-adoption remain separate gates. Continue serializing GPU-heavy follow-ups.
+Timer pixel-loop validation and the separate buffer-reuse gate also pass.
+Calibrated queue gaps remain unknown. Continue serializing GPU-heavy follow-ups;
+do not combine isolated candidates without their own validation.
 
 Use one learner with batched live inference, not one full GPU model per game.
 Keep independent visual caches, beliefs, RNG streams and sequence replay. Sample
