@@ -182,6 +182,17 @@ reliable learning.
   videos follow both. Keep its 34 pins unchanged and GPU phases serialized;
   do not run large CPU graph builds alongside it. This is a pilot, not fresh
   replication, a Freeway success claim or five-game completion.
+  The completed CPU-only Freeway discovery check in
+  `runs/freeway-discovery-20260908.Zig71a` compares hold lengths 1/16/64 at
+  200,004 actions each on three seeds. Independent random actions find no
+  crossing rewards; hold16 finds 293/324/328 and hold64 finds 706/716/721.
+  These are random exploration controls, not learned task wins or matched
+  native-policy evaluations. All action-generation/episode accounting passes;
+  independent ALE replay was not performed. If the native control remains
+  reward-starved, prioritize a separately declared persistent-exploration
+  ablation over simply extending it. The vector API has no action-override
+  seam yet: preserve actual executed actions in RSSM/replay, independent RNG,
+  default-path parity and strictly unassisted frozen evaluation before adoption.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted
