@@ -46,25 +46,24 @@ reliable learning.
   `docs/experiments/2026-09-06-vector-pong.md`. Do not replace the binaries,
   runners or auditors of an active pinned experiment. Stage follow-on candidates
   separately and keep GPU-heavy checks serialized with measured training.
-  The bounded readback diagnostic worker completed its three hardware tests
-  and three exact synthetic canary pairs after the campaign/watcher. Its
-  original identity and pinned inputs are recorded in
-  `runs/readback-hardware-20260907/manifest.json`. It has exited; preserve its
-  pinned worker and inputs as controls, not as a reason to restart its queue.
-  It validates those hardware tests and synthetic canary pairs only;
-  completion does not imply profiler adoption, GPU-idle attribution or pixel parity.
-  The separate timer pixel gate also passes both fixed-budget pairs with exact
-  actions/reports/tensors. Track its measured overhead and the independently
-  gated buffer-reuse candidate in
-  `docs/experiments/2026-09-08-runtime-hardware.md`. Neither coarse GPU activity
-  nor the two API-only external captures establishes calibrated GPU idle gaps.
-  The five-net-line imagined-feature buffer reuse is adopted in source after
-  exact hardware/canary/pixel checks and 3.47–4.45% higher pixel throughput.
-  It retains 150 MiB of host capacity; peak VRAM is unchanged and training is
-  still only about 0.51× aggregate real time. The tested reuse Python package
-  is isolated; the default editable extension remains the pinned parent.
-  Select the documented reuse package or build current source into a fresh
-  package for new experiments. Do not overwrite the historical control inputs.
+  The readback worker, timer and host-buffer-reuse hardware/canary/pixel gates
+  have completed; preserve their controls and do not restart their queues.
+  Original pinned inputs are in `runs/readback-hardware-20260907/manifest.json`;
+  earlier results are in `docs/experiments/2026-09-08-runtime-hardware.md`.
+  Device-resident imagination is now adopted after three hardware tests,
+  three exact synthetic pairs and two exact pixel pairs. It removes redundant
+  host feature/state transfers and the retained host scratch without changing
+  learning arithmetic. Pixel throughput rises 12.9–13.3% over buffer reuse to
+  8.58–8.61 actions/s, still only 0.572–0.574× aggregate real time. GPU activity
+  is 68–69%; peak VRAM rises 64 MiB while retaining the 2 GiB safety reserve.
+  Track remaining world-training/recurrent/perception costs and profiler
+  coverage in `docs/experiments/2026-09-08-device-imagination.md`.
+  The current profiler's alternate mode recovers queue-submission coverage,
+  not per-dispatch kernel detail or verified idle gaps. Completed captures are
+  diagnostic artifacts, not another pending queue or traced speed benchmark.
+  The tested Python package is isolated; the default editable extension remains
+  the pinned historical control. Select the documented package or build current
+  source into a fresh package for new experiments. Do not overwrite controls.
 - Change one scientific variable per comparison. Report real interactions,
   learner updates, wall time, model/data provenance, all seeds, and failures.
   A short integration test or an historical score is not a matched benchmark.
@@ -87,7 +86,8 @@ reliable learning.
   GPU traces synthesized from host submission times are not calibrated
   GPU idle-gap measurements; distinguish pass durations from timeline placement.
   External captures require usable imported output and expected GPU workload
-  records; a successful CLI exit alone is insufficient.
+  coverage across the run; a successful CLI exit or one GPU row is insufficient.
+  Preserve raw results when a later coverage audit rejects a preliminary gate.
   Batch row-independent replay encoding and heads across time without batching
   away recurrence or introducing future inputs. Check production-sized losses,
   all parameter gradients and reset causality; composed losses need complete

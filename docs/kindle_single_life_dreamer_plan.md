@@ -130,7 +130,7 @@ the evaluation or lowering the bar. Diagnose held-out recurrent belief and
 imagined reward/action predictions, then choose a bounded follow-up. One strong
 seed is not a reliable recipe across seeds.
 
-The [all-seed motion diagnostic](experiments/2026-09-08-stability-and-device-residency.md)
+The [all-seed motion diagnostic](experiments/2026-09-08-device-imagination.md#completed-held-out-motion-probes)
 finds useful motion information in every trained belief; the strongest player
 does not have the strongest linear probe. Do not default to a bigger visual
 grid or more temporal input. Training first wins arrive at 160,344 / 193,232 /
@@ -205,8 +205,10 @@ mere improvement over random is the lower learning gate, not “beating” a gam
 Report the full seed distribution and which threshold each title passed.
 Not every Atari game has a final ending.
 
-Do not spend weeks on an unprofiled full sweep. At the present 3.8 hours per
-100k aggregate actions, 26 games × 3 seeds would cost roughly 300 GPU hours before controls.
+Do not spend weeks on an unprofiled full sweep. The completed campaign cost
+3.8 hours per 100k aggregate actions: roughly 300 GPU hours for 26 games × 3
+seeds before controls. The new short runtime gate improves that rate, not its
+order of magnitude.
 Use the panel to resolve failure modes and improve serial throughput first.
 
 ## Runtime: uncapped, accelerated, and eventually free-running
@@ -226,10 +228,10 @@ about 0.48× real time, not super-real-time. Frozen evaluation is about 10.9×.
 GridWorld has no declared real-time clock, so its actions/s alone is not a
 speedup ratio.
 
-The current native LeVJEPA run uses eight environments sharing one learner,
+The completed native LeVJEPA campaign used eight environments sharing one learner,
 batched live inference, temporal replay encoding and batched non-recurrent
 heads. Full RSSM recurrence and BPTT are preserved and production-sized losses
-and gradients are checked. Seed 0 completes 200k aggregate actions and 49,619
+and gradients are checked. Seed 0 completed 200k aggregate actions and 49,619
 updates in 7.63 hours of execution, with zero training debt. Its steady windows
 measure 7.2–7.3 aggregate actions/s, about 0.48× the game clock in aggregate
 and 0.060× per stream. GPU activity is roughly 60%, with stable 13.82 GiB usage
@@ -245,16 +247,16 @@ for implementation checks and rejected candidates, and the
 [completed experiment](experiments/2026-09-06-vector-pong.md) for the fixed recipe,
 complete training accounting and final frozen gates. Neither batched inference
 nor GPU busy percentage establishes super-real-time training or mastery.
-The [serialized hardware checks](experiments/2026-09-08-runtime-hardware.md)
-validate native host timers with three exact synthetic pairs and two exact pixel
-pairs; measured timer overhead spans small differences of both signs. External
-captures contain no usable GPU-workload timeline, so calibrated GPU idle gaps
-remain unknown. The separately gated buffer reuse is now adopted in source:
-two exact pixel pairs improve throughput by 3.47–4.45%, reaching about
-7.6 aggregate actions/s (0.51× aggregate, 0.063× per stream). It retains
-150 MiB of host capacity; GPU activity is 61–65% and peak VRAM is unchanged.
-Original pinned executables remain intact; the tested reuse package and build
-instructions are recorded with the result, not silently installed over a control.
+The adopted [device-resident imagination](experiments/2026-09-08-device-imagination.md)
+now reaches **8.58–8.61 aggregate actions/s: 0.572–0.574× aggregate real time,
+0.0715–0.0717× per stream**. Two fresh AB/BA pixel pairs improve throughput by
+12.9–13.3% over the separately validated host-buffer reuse, with exactly matching
+actions, rewards, updates and checkpoint tensors. Full learner calls fall from
+408 to 348 ms. GPU activity rises from 62–63% to 68–69%; peak VRAM rises by
+64 MiB to 14,212 MiB, retaining the 2 GiB reserve. Scientific settings are unchanged.
+The previous host feature scratch is no longer needed. Original executables and
+the default editable Python extension remain pinned controls; select the tested
+isolated package or build a fresh package for new experiments.
 
 Measure acceleration as simulated game seconds / wall seconds. Report cold
 construction separately and also include end-to-end run cost. Track actual
@@ -265,16 +267,15 @@ For B×T replay samples per update, train ratio R and update duration U:
 
     learner updates/s required = action rate × R / (B×T)
 
-At 15 actions/s and R256, B16×T64 requires 3.75 updates/s. Updates alone at
-about 0.43 s each exceed the wall-time budget. Removing a sleep or accelerating
-only game rendering cannot fix that.
-
-Seed 2's warmed N=8 window makes the constraint concrete: full learner calls
-take 0.428 s/update, and other work takes 30.69 ms per aggregate action. Holding
-that other cost fixed, aggregate 1× requires at most 0.144 s/update (about 3×
-faster); 2× leaves only 10.5 ms/update. These are conditional arithmetic budgets,
-not measured optimizations. Perception cost matters especially for the 2× target;
-aggregate acceleration still does not establish per-stream or free-running play.
+At 15 actions/s and R256, B16×T64 requires 3.75 updates/s. The current 348 ms
+updates alone exceed the wall-time budget. Other work takes 29.1–29.6 ms per
+aggregate action, mainly observation/perception. Holding that cost fixed,
+aggregate 1× requires a full update of at most 148–150 ms, and 2× leaves only
+15–17 ms/update. These are conditional budgets, not measured optimizations.
+World-model training alone currently takes 163–164 ms/update, so eliminating
+host handoffs alone is insufficient. Atari simulation takes under 1% of wall
+time; the simple game does not make its high-ratio learning computation cheap.
+Aggregate acceleration still does not establish per-stream or free-running play.
 
 The next performance target is sustained >1× playing plus training on simple
 games, with 2× as a useful stretch target and retained learning quality.
@@ -286,33 +287,24 @@ safeguards and full-recurrence row batching. Earlier cached-read/materialization
 work already reduced a 12M canary from 7.42 to 1.05 s/update; full rows reach 0.54 s.
 Those measurements are in the kickoff report; do not repeat that investigation.
 
-The current [handoff inventory](experiments/2026-09-06-vectorization.md#remaining-handoffs-read-only-inventory)
-counts 95 explicit posterior/imagination readbacks per update. The
-[completed synthetic timing gate](experiments/2026-09-08-runtime-hardware.md#readback-hardware-and-synthetic-timing-result)
-confirms those counts, exact numerical parity and no material timer overhead
-in three short alternating pairs. It measures about 79 ms of readback waits,
-32 ms of imagination input writes and 30 ms of target assembly per update;
-waits include producer computation, not just idle time. The pixel gate confirms
-these transfer counts and exact actions, reports and tensors; GPU compute still
-needs separate attribution. Prefer eliminating deterministic-state and
-feature copies before changing sampling/return arithmetic. Even removing both
-whole stages at zero cost would not reach aggregate real time at the current
-recipe; world training and perception also need measured improvements.
-The backend's GPU trace places pass durations on a synthetic host-submission
-timeline, not a calibrated GPU clock. Use those durations for workload cost,
-not the drawn gaps as evidence of GPU idleness.
-Check repeated host feature-buffer allocation/copying as well: minor faults
-and historical swapped bytes do not establish disk paging or its elapsed cost.
-A small [host-buffer reuse change](experiments/2026-09-08-runtime-hardware.md#buffer-reuse-pixel-result-and-decision)
-passes its two hardware tests, three exact synthetic pairs and two exact pixel
-pairs. It reduces full learner-call time by 4.30–5.43% and is adopted in source.
-The full-call measurement includes destruction that the inner timer omits;
-the retained 150 MiB capacity is a host-memory tradeoff, not a GPU-memory saving.
-The [bounded hardware/parity handoff](experiments/2026-09-06-vector-pong.md#queued-diagnostic-handoff)
-has completed its three hardware tests and three synthetic canary pairs.
-Timer pixel-loop validation and the separate buffer-reuse gate also pass.
-Calibrated queue gaps remain unknown. Continue serializing GPU-heavy follow-ups;
-do not combine isolated candidates without their own validation.
+The current stage budget is roughly 164 ms world training, 85 ms imagination,
+60 ms posterior inference, 19 ms behavior training and 19 ms parameter sync.
+Prioritize world-training kernels/layout and remaining recurrent handoffs, then
+perception. The device-copy change removes redundant CPU feature/state transfers
+without changing sampling or returns, but 95 posterior/imagination readback waits
+remain. These include unfinished producer computation; they are not idle-only
+measurements. Parameter copies also maintain backend-derived weights: replacing
+them needs more than copying the primary parameter buffer.
+
+The [earlier timing/reuse gates](experiments/2026-09-08-runtime-hardware.md) are
+complete controls, not pending queues. Current external profiling recovers
+one GPU record per queue submission only in its alternate capture mode;
+individual dispatches and precise idle gaps remain unverified. The backend's
+synthetic timeline cannot supply calibrated gaps either. Inspect actual coverage,
+not just successful import or nonempty output. Use validated stage timings and
+untraced paired throughput for decisions meanwhile. Coarse GPU activity is not
+occupancy; minor faults or historical swap do not establish disk-paging cost.
+Serialize GPU-heavy checks and preserve exact parity and memory headroom.
 
 Use one learner with batched live inference, not one full GPU model per game.
 Keep independent visual caches, beliefs, RNG streams and sequence replay. Sample
@@ -335,10 +327,9 @@ Change one variable, report actual updates per real interaction, and retest
 learning. Do not claim acceleration by dropping owed training, weakening the
 reward task or changing the simulated control interval unnoticed.
 After profiling, include R128/R64 as separate bounded learning-throughput
-ablations if systems changes alone fall short. A constant-cost model of the
-measured N=8 window estimates only 0.79× at R128 and 1.16× at R64; neither is
-a measured result or evidence of retained learning. Keep the R256 control and
-compare both interaction efficiency and wall-clock learning quality before adoption.
+ablations if systems changes alone fall short. Keep the R256 control and compare
+both interaction efficiency and wall-clock learning quality before adoption;
+arithmetic extrapolation is not measured speed or evidence of retained learning.
 
 Use mind-games' time control for accelerated development. Separately test a
 single actor in free-running mode later: timestamp observations and executed

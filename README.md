@@ -233,14 +233,15 @@ the exact protocol.
 LeVJEPA's dense layers and Dreamer's live posterior/policy are GPU-batched;
 visual caches, beliefs, RNGs and replay sequences remain separate. CPU emulator
 steps are synchronous: measured environment work is below 1% of wall time.
-The measured N=8, 12M/B16/T64/R256 recipe runs at about 7.3 aggregate actions/s
-on the RTX 5080, or 0.49× the game clock in aggregate and 0.061× per stream.
-GPU activity is roughly 60%, with 14,148 MiB peak use. Batched inference is
-supported; super-real-time playing **with training** is not yet achieved.
-The adopted host-buffer reuse improves two exact pixel pairs by 3.47–4.45%,
-to about 7.6 aggregate actions/s, while retaining 150 MiB of host capacity.
-See the [runtime measurements](docs/experiments/2026-09-08-runtime-hardware.md)
-for full-call timings and isolated optimization gates.
+With the adopted GPU-resident imagination path, the N=8, 12M/B16/T64/R256 recipe
+runs at 8.58–8.61 aggregate actions/s on the RTX 5080: 0.572–0.574× the game
+clock in aggregate and 0.0715–0.0717× per stream. This is 12.9–13.3% faster
+than the host-buffer-reuse control, with exact actions/reports/checkpoint tensors
+in both pixel pairs. GPU activity is 68–69%, with 14,212 MiB peak use and the
+2 GiB reserve intact. Super-real-time playing **with training** is not yet achieved.
+See the [runtime result](docs/experiments/2026-09-08-device-imagination.md)
+for stage costs and the tested isolated Python package; the default local
+editable extension is deliberately still the pinned historical control.
 
 ```bash
 python python/examples/profile_atari_vector.py /models/levjepa/model.safetensors \
