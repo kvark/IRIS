@@ -130,11 +130,19 @@ record the package, wheel and original-control hashes. All 253 Python tests and
 test also passes, bringing the focused backend hardware checks to nine. This
 does not switch the active frontend away from LeVJEPA.
 
+The subsequent [zero-update save repair](2026-09-08-atari-five.md#preserved-zero-update-restore-failure)
+keeps this backend pin and strict restore checks, but ensures fresh checkpoints
+contain explicit zero optimizer moments. Its isolated package is
+`runs/zero-update-checkpoint-20260908.yxaalA/package`, native SHA-256
+`9cd176c1e293d23ca553285008ce19b3507c0b16e848fbbd26bd72d9b1831bb9`.
+It passes the CPU/GPU and real 12M checkpoint checks linked above. Preserve the
+original refresh package as an artifact; use the repaired package for fresh work.
+
 Keep the older editable extension for historical checkpoints; do not replace it
-in place. For new Python experiments in this workspace, select the package:
+in place or change an active experiment's pinned package. For a new experiment:
 
 ```bash
-PYTHONPATH=/x/Code/kindle/runs/meganeura-package-20260908.Ec48N4/package \
+PYTHONPATH=/x/Code/kindle/runs/zero-update-checkpoint-20260908.yxaalA/package \
   python/.venv/bin/python python/examples/atari_vector.py \
   /models/levjepa/model.safetensors --num-envs 8 --steps 3072 \
   --output runs/new-backend-check.jsonl

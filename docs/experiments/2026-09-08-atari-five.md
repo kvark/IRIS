@@ -21,7 +21,7 @@ independent replication. Preserve the failed original three-seed Pong gate.
 | Game | Task meaning | Status of acceptance protocol |
 | --- | --- | --- |
 | Pong | Win the match; mean return ≥15 and ≥90% natural wins over ≥20 games | Existing 200k-action recipe fails two of three seeds; new recipe must be separately declared |
-| Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | R64 seed 0 passes: 40/40 frozen wins, mean +51.55; control, R256 and replication pending |
+| Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | R64 seed 0 passes: 40/40 frozen wins, mean +51.55 versus untrained +0.125; R256 and replication pending |
 | Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | Observer verified against the actual ROM; holding UP scores 21 |
 | Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Positive and negative actual-ROM fixtures verified; declare its training/evaluation budgets next |
 | Qbert | Sustained progression: first-pyramid completion in ≥90% of ≥20 complete episodes, plus mean final score ≥15,000 | First-pyramid observer verified; one cleared pyramid alone is not mastery |
@@ -222,18 +222,47 @@ in `runs/zero-update-checkpoint-20260908.yxaalA/`.
 The remaining stages started at 12:29:21 UTC in
 [`runs/atari-five-continue-20260908.JrdVto`](../../runs/atari-five-continue-20260908.JrdVto/).
 Its [current report](../../runs/atari-five-continue-20260908.JrdVto/report.html)
-links the retained R64 score/movie and will add both remaining frozen runs.
+links both completed score audits and full-stream movies; R256 remains pending.
 The original report and failure artifacts stay unchanged.
 
-The control reuses the verified eight-action initialization and repaired native
-package `9cd176c1…`; its full 75k-action sampled N8 evaluation has restarted
-from that exact zero-update state. This is the only package change: the pending
-fresh R256 200k training and 75k frozen evaluation still use the original
-`831c631d…` package, matching the completed R64 arm. The continuation pins both
-packages, initial state, repair evidence, old results, runner and auditors.
-It scores and reconstructs each completed frozen run without automatic recipe
-selection or restart. Finish the control and R256 arm before choosing a ratio;
-fresh three-seed replication and the other games still remain.
+The control reused the verified eight-action initialization and repaired native
+package `9cd176c1…`. Its full 75k-action sampled N8 evaluation finished at
+13:07:22 UTC with **21 wins, six draws and 13 losses over 40 natural matches,
+mean +0.125, no cutoffs and zero updates**. Its stream-bootstrap 95% mean
+interval is [−2.35, 2.6]; the descriptive Wilson win interval is [0.3750, 0.6706].
+All 241 checkpoint tensors and the complete replay pass their checks. Eight
+partial final episodes remain ungraded. The H.264 movie contains all five
+stream-0 matches (−1/+2/+5/−27/−3) and the tail: 37,485 frames at 60 Hz.
+
+| Frozen policy | Natural wins / matches | Mean score difference | Declared gate |
+| --- | ---: | ---: | --- |
+| Initial seed-0 weights, zero updates | 21/40 | +0.125 | Fail |
+| R64, seed-0 final 200k-action checkpoint | 40/40 | +51.550 | Pass |
+| R256, seed-0 final 200k-action checkpoint | Pending | Pending | Pending |
+
+The observed mean gap is +51.425 points. This supports substantial learned
+improvement for this Boxing seed, not reliability across training seeds or a
+selected replay ratio. Both frozen runs use the declared 75k-action/N8 sampled
+protocol. Preserve the disclosed save-only package difference for the control;
+its initial parameters/actions match exactly, as verified above.
+
+The control's source log SHA-256 is
+`78800eb98d36f073bdd0b98250522d0fdc810ce477414d1f34bab4a6aec2d1c2`;
+the movie SHA-256 is
+`80673b91da8c7d695f945dc114ac777cfcf81bcafee60d6352993728b15ba4f7`.
+The complete evidence is `boxing-untrained.{score.json,replay.json,mp4}` in
+the continuation root.
+
+Fresh R256 training started at 13:07:57 UTC with the original `831c631d…`
+package, matching the completed R64 arm. Its header verifies seed 0, no restore,
+zero starting counters, N8 and the declared 200k-action/R256 LeVJEPA recipe.
+The first 2k actions produce the expected 119 updates with zero debt; early
+throughput includes prefill and is not a steady-state result. Its final 75k
+frozen evaluation is still pending. The continuation pins both packages,
+initial state, repair evidence, old results, runner and auditors. It scores and
+reconstructs each complete frozen run without automatic recipe selection or
+restart. Finish R256 before choosing a ratio; fresh three-seed replication and
+the other games still remain.
 
 ### Longer early runtime window
 
