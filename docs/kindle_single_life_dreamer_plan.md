@@ -1,6 +1,6 @@
 # Kindle: one actor learning to play
 
-Updated 2026-09-07. This is the single project roadmap. Detailed measurements
+Updated 2026-09-08. This is the single project roadmap. Detailed measurements
 and commands live in the [kickoff report](experiments/2026-09-05-kickoff.md) and
 [self-learning report](experiments/2026-09-05-self-learning.md), not a second plan.
 Working rules are in [AGENTS.md](../AGENTS.md).
@@ -37,18 +37,18 @@ for gameplay progress or a reason to split the agent.
 ## Architecture: measured stepping stone versus target
 
 The original frozen competence controls use DINOv3 ViT-S/16. Native LeVJEPA
-now also wins under frozen evaluation, but **both completed seeds fail the
-declared mastery gate**: at least 20 natural games, mean return ≥+15 and ≥90%
-wins. Each evaluates its final 200k-action model for 75k sampled actions with
-zero updates; the results below show substantial seed variation. Seed 2 in the
-[vector experiment](experiments/2026-09-06-vector-pong.md) is running, but this
-recipe cannot pass the all-seeds gate after the completed failures.
+now also wins under frozen evaluation. All three seeds of the
+[vector experiment](experiments/2026-09-06-vector-pong.md) are complete:
+**seed 2 passes the declared mastery gate; seeds 0 and 1 fail**. The gate requires
+at least 20 natural games, mean return ≥+15 and ≥90% wins for every seed.
+Each evaluates its final 200k-action model for 75k sampled actions with zero
+updates. Substantial seed variation remains, and the all-seeds gate fails.
 Numerical parity and useful learned behavior are demonstrated, not consistent
 mastery or a pretrained action-conditioned world model.
 
 | Part | Running implementation | Target and missing work |
 | --- | --- | --- |
-| Perception | DINOv3 control; native LeVJEPA with two completed frozen seeds, both frontends projected/pooled to 7×7×64 | Finish seed-variation measurement, resolve the failed mastery gate and test Atari breadth; reduce runtime cost |
+| Perception | DINOv3 control; native LeVJEPA with three completed frozen seeds, both frontends projected/pooled to 7×7×64 | Diagnose the failed all-seeds mastery gate and test Atari breadth; reduce runtime cost |
 | World model | Categorical Dreamer RSSM; causal feature prediction, reward, continuation, balanced KL and replay value | Retain this learning/control baseline; bootstrap compatible dynamics from other games |
 | Behavior | Imagined categorical actor and two-hot critic, trained from the agent's own rewarded actions | Retain behavior across compatible games; measure adaptation and forgetting |
 | Runtime | Serial control and native vectorized LeVJEPA/RSSM/policy inference; one shared learner | Reduce learner/perception cost and attribute GPU underutilization; retain trustworthy per-stream clocks and recovery |
@@ -120,11 +120,14 @@ The new native LeVJEPA vector recipe has a stronger, separately declared gate:
 | --- | ---: | --- |
 | 0 | +10.2778 / 18 of 18 | Fails game count and mean return |
 | 1 | +0.5 / 7 of 12 | Fails game count, mean return and win fraction |
+| 2 | +20.4651 / 43 of 43 | Passes all three per-seed criteria |
 
-Neither evaluation has timeouts. Unfinished tails are −4 over 5,408 actions
-and 0 over 309 actions, respectively. Do not extend the evaluation or lower
-the bar after seeing it. Complete seed 2 to measure reliability before choosing
-a bounded follow-up. This is learned gameplay, not a passed mastery claim.
+None has timeouts. Unfinished tails are −4 over 5,408 actions, 0 over 309 and
++11 over 871, respectively; they are not completed games. All accounting and
+checkpoint audits pass. Preserve the failed all-seeds decision without extending
+the evaluation or lowering the bar. Diagnose held-out recurrent belief and
+imagined reward/action predictions after runtime profiling, then choose a
+bounded follow-up. One strong seed is not a reliable recipe across seeds.
 
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction
@@ -226,9 +229,11 @@ N=2/4/8 throughput rule selected N=8 before observing game scores. A separate
 B32 experiment is faster but changes optimizer cadence; learning quality is
 not yet validated. See the [vectorization record](experiments/2026-09-06-vectorization.md)
 for implementation checks and rejected candidates, and the
-[live experiment](experiments/2026-09-06-vector-pong.md) for the fixed recipe,
+[completed experiment](experiments/2026-09-06-vector-pong.md) for the fixed recipe,
 complete training accounting and final frozen gates. Neither batched inference
 nor GPU busy percentage establishes super-real-time training or mastery.
+The [serialized hardware checks](experiments/2026-09-08-runtime-hardware.md)
+declare the next timing, trace and host-buffer comparisons before execution.
 
 Measure acceleration as simulated game seconds / wall seconds. Report cold
 construction separately and also include end-to-end run cost. Track actual

@@ -595,9 +595,10 @@ header arrives at **01:22:11 UTC** after 67.09 s of construction. It loads the
 exact final 200k-action / 49,619-update checkpoint. The rolling and archived
 copies match its metadata and all tensor-file identities. The source log,
 checkpoint checks, byte-exact evaluation header and live child identity are
-bound by `seed2-final-training-verification.json`. Sampled evaluation is still
-running toward the declared 75k actions, with no learner updates observed at
-handoff. Startup validation is not completed frozen evaluation or mastery.
+bound by `seed2-final-training-verification.json`. At handoff, sampled evaluation
+is still running toward the declared 75k actions, with no learner updates
+observed. This historical startup report remains distinct from the completed
+frozen audit below.
 
 `seed2-10000-20000-runtime-budget.json` derives a conditional cost model from
 the 10k–20k window: 0.42796 s per full learner call, including cleanup outside
@@ -608,6 +609,40 @@ calls at or below 0.14386 s; aggregate 2× needs 0.01054 s unless other costs
 also improve. The model excludes construction and changes in policy, episode
 length, replay distribution, scheduling or GPU occupancy. It is an experiment-
 selection aid, not a measured speedup, retained-quality result or adopted change.
+
+## Seed 2 final frozen result: per-seed gate passed
+
+The complete evaluation ends at **2026-09-08 02:22:40 UTC**: 75,000 sampled
+actions, 299,938 actual frames and zero learner updates. All **43 completed
+games are natural wins**, with mean return **+20.4651** and no timeouts.
+The unfinished tail is +11 over 871 actions; it is not a completed game or win.
+
+| Predeclared criterion | Required | Seed 2 | Result |
+| --- | ---: | ---: | --- |
+| Natural completed games | ≥20 | 43 | Pass |
+| Mean return over all completed games | ≥+15 | +20.4651 | Pass |
+| Natural wins / all completed games | ≥90% | 43/43 = 100% | Pass |
+
+Complete accounting/protocol/checkpoint checks pass. The final training save,
+rolling and archived checkpoints, frozen restore and 241-tensor inspection
+match. The point ledger reconciles all 914 positive and 23 negative events:
+completed returns sum to 880, plus the unfinished +11 tail. The closed evaluation
+log SHA-256 is
+`34fb23d83786641ba9fdc3ebe7e48366676d4fb3878eb147fb8ccccbeb221fdc`.
+`seed2-final-frozen-audit.json` binds these checks and all episode records;
+`seed2-eval.accounting.json` is the launcher's complete-budget audit.
+
+Frozen execution takes 3,628.81 s plus 67.09 s construction: 20.668 actions/s
+and 1.3776× the game clock. CPU-only isolated extension builds/interface tests
+overlap approximately 01:43–01:49 UTC; this is a run-health measurement, not a
+quiet-system comparison or playing-plus-training throughput.
+
+All three seeds are now complete. The unmodified `mastery-audit.json` records
+**seed 0 fail, seed 1 fail, seed 2 pass**, hence a failed all-seeds gate. Its
+SHA-256 is `cc3417f54c06c0ea19e4e735681f795c54054a437ee761458736495a39161a81`.
+The launcher exits 1 for that valid failed mastery decision, not a training or
+evaluation crash. Preserve the recipe, endpoints and failures. The next
+[runtime checks](2026-09-08-runtime-hardware.md) remain separate experiments.
 
 ## Queued diagnostic handoff
 

@@ -31,8 +31,9 @@ reliable learning.
   Retain the accepted DINOv3 plus causal-prediction Pong controls. Native
   batched DINO is an explicit matched-control candidate, not a default frontend
   switch; require GPU stream parity and a newly declared comparison before use.
-  LeVJEPA now also wins under final frozen evaluation, but both completed
-  vectorized seeds fail the predeclared mastery gate; seed 2 is unfinished.
+  All three LeVJEPA vectorized seeds have completed frozen evaluation. Seed 2
+  passes the predeclared mastery gate; seeds 0 and 1 fail, so the recipe does
+  not pass the all-seeds gate.
   Do not equate training wins or one frozen seed with three-seed mastery,
   or describe the DINO stepping stone as the full video pivot.
   Native LeVJEPA work and the stronger, predeclared three-seed Pong mastery gate

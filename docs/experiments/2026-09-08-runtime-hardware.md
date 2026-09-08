@@ -1,8 +1,10 @@
 # Serialized runtime hardware checks
 
-Declared before candidate GPU execution. The three-seed LeVJEPA campaign is
-finishing its last frozen evaluation. Keep its inputs and the queued readback
-worker unchanged, and wait for both the campaign/watcher and worker to exit.
+Declared before candidate GPU execution, while the three-seed LeVJEPA campaign
+was finishing its last frozen evaluation. The complete campaign now records
+two failed seeds and one passed seed, with valid accounting throughout. Keep
+its inputs and the queued readback worker unchanged, and wait for both the
+campaign/watcher and worker to exit.
 This is a runtime diagnostic and parity experiment, not another mastery test.
 
 ## Prepared inputs
