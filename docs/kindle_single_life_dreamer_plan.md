@@ -192,8 +192,10 @@ mean +51.55, no cutoffs or updates, with complete checkpoint and replay audits.
 The untrained control hit a zero-update checkpoint restore edge case; preserve
 the successful arm and failure. Explicit-zero optimizer saves are now validated
 against exact initial actions/parameters and all trained tensor state. The
-control has restarted in the declared continuation; R256 will still use the
-original native package. Their results are pending.
+control now completes 40 natural matches with 21 wins and mean +0.125, versus
+R64's +51.55, with complete checkpoint/replay checks and zero learning updates.
+This supports substantial learned improvement for one Boxing seed. R256 is
+now training with the original native package; its final result remains pending.
 A one-seed pilot is not reliability: select a recipe, then
 declare a fresh three-seed replication and each remaining game's real
 completion criterion before its training. Do not call a positive score a win
