@@ -152,6 +152,13 @@ These correlations do not establish causation. A longer-budget replication
 must be declared for all seeds as a new experiment, not an extension that
 relabels the failed 200k-action gate.
 
+The common-recording follow-up is now CPU-tested and declared in
+`runs/common-world-20260908.7gWHsJ`, with GPU checks pending after Freeway.
+It scores all three models on the same recorded first matches, with exact
+same-model forecast checks and common RGB/feature hashes. Forced recorded
+controls are model diagnostics, not new gameplay successes; off-policy logged
+returns are not unbiased targets for the evaluated critic.
+
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction
 control has strong late training but only 2 food / 98 deaths when frozen.
