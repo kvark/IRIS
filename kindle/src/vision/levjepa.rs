@@ -526,31 +526,56 @@ mod tests {
 
     #[test]
     fn vector_graph_shares_weights_but_not_history() {
-        let mut graph = Graph::new();
-        let output = build_encoder(&mut graph, 3);
-        assert_eq!(graph.node(output).ty.shape, [3 * PATCHES, HIDDEN]);
-        let parameters: Vec<_> = graph
-            .nodes()
-            .iter()
-            .filter_map(|node| match &node.op {
-                meganeura::graph::Op::Parameter { name } => Some(name.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            parameters
+        let mut expected_weights = None;
+        for streams in [1, 2, 3, 4, 6, 8] {
+            let mut graph = Graph::new();
+            let output = build_encoder(&mut graph, streams);
+            assert_eq!(graph.node(output).ty.shape, [streams * PATCHES, HIDDEN]);
+            let parameters: Vec<_> = graph
+                .nodes()
                 .iter()
-                .filter(|name| name.starts_with("encoder."))
-                .count(),
-            292
-        );
-        assert_eq!(
-            parameters
+                .filter_map(|node| match &node.op {
+                    meganeura::graph::Op::Parameter { name } => Some((name, node)),
+                    _ => None,
+                })
+                .collect();
+            let weights = parameters
                 .iter()
-                .filter(|name| name.starts_with("cache."))
-                .count(),
-            3 * LAYERS * 2
-        );
+                .filter(|(name, _)| name.starts_with("encoder."))
+                .map(|(name, node)| ((*name).clone(), node.ty.clone()))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            assert_eq!(weights.len(), 292);
+            if let Some(expected) = &expected_weights {
+                assert_eq!(&weights, expected);
+            } else {
+                expected_weights = Some(weights);
+            }
+            let caches = parameters
+                .iter()
+                .filter(|(name, _)| name.starts_with("cache."))
+                .map(|(name, node)| ((*name).clone(), *node))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            assert_eq!(parameters.len(), 292 + streams * LAYERS * 2);
+            assert_eq!(caches.len(), streams * LAYERS * 2);
+            for layer in 0..LAYERS {
+                for stream in 0..streams {
+                    for kind in ["k", "v"] {
+                        let cache = caches[&format!("cache.{layer}.{stream}.{kind}")];
+                        assert_eq!(cache.ty.shape, [FRAMES, PATCHES * HIDDEN]);
+                        assert_eq!(cache.ty.dtype, meganeura::DType::F32);
+                    }
+                }
+            }
+            let cache_bytes = caches
+                .values()
+                .map(|node| node.ty.num_elements() * size_of::<f32>())
+                .sum::<usize>();
+            assert_eq!(cache_bytes, streams * 588 * 1024 * 1024);
+            eprintln!(
+                "streams={streams} logical_cache_mib={}",
+                cache_bytes / 1024 / 1024
+            );
+        }
     }
 
     #[test]
