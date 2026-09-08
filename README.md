@@ -33,6 +33,10 @@ or selected best games. Videos are local, git-ignored artifacts. See the
 [footage record](docs/experiments/2026-09-06-vector-pong.md#reconstructed-gameplay-footage)
 for provenance; the full frozen evaluation, not one video, determines mastery.
 
+The local [forecast-versus-match report](runs/world-evaluation-20260908.Xzx3pN/report.html)
+compares each frozen world model with those same games. It includes feature and
+reward baselines, full prediction traces and clickable point times in the videos.
+
 ## Architecture
 
 ```text
@@ -292,6 +296,31 @@ tensors, but legacy files without hashes cannot prove generation consistency.
 Individual file renames are not an atomic generation: a torn hashed save can be
 detected but is not automatically recoverable.
 Keep a separate known-good checkpoint until generation-based recovery is added.
+
+### Evaluate the world model separately
+
+`probe_atari_dynamics.py` forecasts features, rewards and discounted continuation
+before seeing the target frames. `--recorded-run` replays the first complete game
+of a frozen single-stream vector evaluation, failing if sampled actions or real
+transitions differ. Use the checkpoint's original native build; historical models
+cannot be restored by silently changing their backend metadata.
+
+```bash
+PYTHONPATH=python MEGANEURA_DEVICE_ID=0x2c02 \
+  python python/examples/probe_atari_dynamics.py /models/levjepa/model.safetensors \
+  checkpoints/pong-final --recorded-run runs/pong-eval.jsonl \
+  --horizon 15 --stride 5 --output runs/world-probe.json \
+  --trace runs/world-predictions.jsonl
+```
+
+Output paths must be fresh. One-step forecasts cover every action; longer
+forecasts start at the declared stride and condition on the recorded controls
+without intermediate observations. Compare against feature persistence, unrelated
+actions and zero rewards; inspect positive/negative event errors separately.
+Posterior reward estimates already see the frame and are not forecasts.
+These are LeVJEPA/DINO feature predictions, not rendered imagined video, and
+good prediction scores alone do not establish a good policy. Omitting the
+recording runs a forced-random coverage diagnostic, not learned-policy evaluation.
 
 `LearnReport.timing` separates replay, posterior, imagination, training and
 synchronization wall time. The synthetic canary avoids perception/environment

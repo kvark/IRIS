@@ -118,6 +118,20 @@ reliable learning.
   over speculative visual expansion. Delayed first wins are not proof of
   numerical training collapse. Declare longer budgets for all seeds as a new
   experiment; never relabel the failed 200k-action mastery campaign.
+- Evaluate the world model separately from its policy. The completed frozen
+  first-match replays in `docs/experiments/2026-09-08-world-evaluation.md` match
+  every recorded action and transition without learning. All three use action
+  information in feature prediction; seed 1 has weaker point-reward magnitude
+  estimates even after seeing the frame. Prioritize reward/value reliability
+  and policy action use on a common held-out distribution, not speculative
+  perception expansion. These own-policy trajectories do not establish causation.
+  Forecast before consuming the target; separate prior from posterior reward
+  estimates, include persistence/unrelated-action/zero-reward baselines, and
+  report positive/negative/terminal counts. LeVJEPA cache resets can inflate
+  persistence error, and a fixed stride can miss sparse classes entirely.
+  Feature error is not imagined RGB, AUC is not magnitude calibration, and a
+  strong model score is not policy competence. Preserve the original executable
+  for historical model diagnostics; do not rewrite backend metadata to restore.
 - Distinguish video-encoder initialization, action-conditioned world pretraining
   and policy-skill transfer. Missing action/reward labels are not NOOP/zero.
   The isolated `exp/world-pretraining` candidate includes world-only updates and

@@ -137,7 +137,17 @@ grid or more temporal input. Training first wins arrive at 160,344 / 193,232 /
 86,352 aggregate actions for seeds 0 / 1 / 2. Seed 1 earns only 12 positive
 points in its first 80k actions, versus 87 / 76 for seeds 0 / 2. This points to
 uneven discovery and learning speed, not an established numerical collapse.
-Reward/value calibration and action use are the next diagnostic targets.
+The [separate world-model evaluation](experiments/2026-09-08-world-evaluation.md)
+now reproduces each recorded first game exactly, with zero updates. All three
+models predict features better with actual controls than with unrelated controls.
+Seed 1 has weaker point-reward estimates even after seeing the frame: positive /
+negative event MAE is 0.351 / 0.430, versus 0.043 / 0.281 for seed 0. This is a
+more concrete diagnostic lead than speculative visual expansion, not proof of
+the cause. Reward/value reliability and policy action use on a common held-out
+distribution are next. Preserve event counts, distinguish prior forecasts from
+posterior inference, and compare feature persistence and zero rewards. Good
+feature prediction or event ranking alone is not a good policy. Fixed-stride
+long forecasts can miss entire sparse classes; terminal accuracy is unestablished.
 These correlations do not establish causation. A longer-budget replication
 must be declared for all seeds as a new experiment, not an extension that
 relabels the failed 200k-action gate.
