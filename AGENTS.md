@@ -114,6 +114,8 @@ reliable learning.
   unchanged while live. Task observers are post-hoc evaluation, never policy
   inputs or added training rewards. Scripted observer fixtures are not Kindle
   wins. Qbert's first pyramid alone is not the sustained-competence gate.
+  Breakout's 864-point rule has a verified actual-ROM scripted fixture and
+  negative controls; preserve its distinction from Kindle's learned results.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted
