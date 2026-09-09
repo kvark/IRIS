@@ -2,8 +2,9 @@
 
 Measured 2026-09-09, first from a fixed 72,000-action prefix and then from the
 completed 200,004-action plain-policy Freeway training run. These are post-hoc
-training diagnostics, not frozen evaluations, candidate results or five-game
-success. The original experiment and its full budget remain unchanged.
+training diagnostics; the subsequent frozen evaluation is recorded separately
+below. Neither establishes a candidate result or five-game success. The original
+experiment and its full budget remain unchanged.
 
 ## Original fixed-prefix diagnostic
 
@@ -60,8 +61,9 @@ seed variation; its common-recording world diagnostic remains pending.
 
 Training exited successfully at 04:45:50 UTC after 200,004 actions and 49,651
 updates. The original launcher accepted its declared accounting and started
-the 75,000-action frozen evaluation. That evaluation and the separately restored
-untrained comparison are still pending; the whole pilot is not complete.
+the 75,000-action frozen evaluation, now complete as recorded below. The CPU
+training-result artifact retains its original 04:59 UTC scope and pending flags;
+it is not rewritten to include later phases. The whole pilot is not complete.
 
 The separate CPU-only [completed-training result](../../runs/freeway-training-complete-20260909.MnYwlJ/result.json)
 checks the closed log, all 34 declaration pins and the exact final checkpoint.
@@ -104,3 +106,37 @@ Result SHA-256:
 `5e4928c496da2d7e36370e1d71296c9b0789bff1137732b8117ce30499856d42`.
 The result also records its script/helper hashes and the final checkpoint's
 metadata and three tensor-file hashes. The original prefix evidence is retained.
+
+## Final frozen policy: no learned crossing skill
+
+The declared final checkpoint completed all 75,000 sampled evaluation actions
+at 05:25:07 UTC, with zero learner updates. All 36 completed rounds are natural;
+every round and unfinished tail returns zero. There are no cutoffs or task
+successes. It fails the unchanged Freeway gate: mean ≥25 and at least 25
+crossings in ≥90% of ≥20 natural rounds. This is a learned-policy failure, not
+merely an evaluation too short to count enough rounds.
+
+The launcher completed full CPU replay and scoring before starting its untrained
+control. A separate read-only rerun of the task auditor reproduces the saved
+[score](../../runs/freeway-pilot-20260908.WWxHEM/evaluation.score.json) exactly,
+with all 34 pins unchanged, the final checkpoint complete and finite, and
+training/evaluation identities and budgets matching. The
+[replay](../../runs/freeway-pilot-20260908.WWxHEM/evaluation.replay.json) checks
+every reward, boundary and emulator-frame count while executing the recorded
+actions across all six streams; original RGB frames were not archived.
+
+The [whole stream-0 video](../../runs/freeway-pilot-20260908.WWxHEM/evaluation.mp4)
+contains all six completed rounds and its unfinished tail: 49,999 frames,
+833.317 seconds, 160×210 H.264. It is reconstructed from the verified action
+ledger, not a selected success. Video SHA-256:
+`c01f05f97531b82d75ece11efea6d72b2bfd58f137bbc722ff3aac98c1316f78`.
+Score SHA-256:
+`0bfed44777555f1c5a710baa3a581a893fe1ed6366af95f9282e40d25ba48b7d`.
+
+Frozen collection runs at 32.788 actions/s, 2.186× aggregate and 0.3643×
+per-stream real time. These are evaluation rates, not accelerated learning.
+The fresh zero-update checkpoint was saved successfully; its separately restored
+75,000-action evaluation started at 05:26:54 UTC. The untrained comparison and
+whole-pilot memory audit remain pending. Preserve the serialized common-world,
+runtime-validation and persistent-exploration follow-ups; no recipe is adopted
+and no fresh reliability replication has started.

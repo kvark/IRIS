@@ -245,10 +245,13 @@ A one-seed pilot is not reliability. The completed memory/runtime comparison
 selects N6 for the unchanged repaired package, without changing the learner.
 The declared sparse Freeway pilot in `runs/freeway-pilot-20260908.WWxHEM`
 completed 200,004 fresh seed-0 training actions at 04:45 UTC on September 9,
-with no rewarded rounds. Its 75,000-action sampled frozen evaluation is running;
-the separately restored untrained comparison remains pending. Its gate remains ≥25
-crossings in ≥90% of ≥20 natural rounds, with mean ≥25 and no cutoffs.
-This is a pilot, not a fresh replication or a Freeway competence result.
+with no rewarded rounds. Its completed 75,000-action sampled frozen evaluation
+also returns zero in all 36 natural rounds, with no cutoffs or updates and full
+checkpoint/replay checks. It fails the unchanged gate of ≥25 crossings in ≥90%
+of ≥20 natural rounds, mean ≥25 and no cutoffs. The separately restored untrained
+control is running; the whole-pilot audit remains pending. The
+[complete failure video and evidence](experiments/2026-09-09-freeway-zero-signal.md#final-frozen-policy-no-learned-crossing-skill)
+are available. This pilot is not fresh replication or Freeway competence.
 Declare remaining budgets and fresh three-seed replication before those runs;
 do not call a positive score a win or let tooling substitute for learning.
 The [task observers](experiments/2026-09-08-atari-task-observers.md) now distinguish

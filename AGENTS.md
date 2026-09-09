@@ -189,8 +189,12 @@ reliable learning.
   replication, a Freeway success claim or five-game completion.
   Its training completed at 04:45 UTC on September 9: 200,004 actions, 49,651
   updates and 96 natural rounds, all unrewarded. The final 241 saved tensor
-  entries are complete and finite, with valid moments/counters. Frozen
-  evaluation is running; the final comparison and whole-pilot audit are pending.
+  entries are complete and finite, with valid moments/counters. Its completed
+  75k frozen evaluation fails: 36 natural rounds, all zero reward, with zero
+  updates, full replay and checkpoint checks. The complete stream-0 video is
+  `evaluation.mp4` in the pilot directory, not a successful rollout. The fresh
+  zero-update save passes and its restored evaluation is running; the baseline
+  result and whole-pilot audit remain pending. Preserve the queued follow-ups.
   The completed CPU-only Freeway discovery check in
   `runs/freeway-discovery-20260908.Zig71a` compares hold lengths 1/16/64 at
   200,004 actions each on three seeds. Independent random actions find no
