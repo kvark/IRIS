@@ -1,4 +1,4 @@
-# Freeway persistence: hold64 passes; matched comparison in progress
+# Freeway exploration: both trained arms pass; untrained control pending
 
 Predeclared 2026-09-09 in `runs/freeway-persistence-learning-20260909.C0GoqT`.
 The 82-pin manifest SHA is
@@ -10,8 +10,11 @@ and ran hold64 training from 07:31:02 to 13:59:12 UTC, completing its fixed
 checks and matches the frozen restore exactly. Unassisted evaluation completed
 at 14:38:30 UTC and passes: 36/36 natural rounds reach 25 crossings, mean 31.0556,
 with no cutoffs or updates. CPU replay and scoring completed at 14:39:08 UTC.
-The matched hold1 arm started at 14:39:09 UTC, PID 2206517, process start ticks
-103690355. Its result and the restored untrained control remain pending.
+The matched hold1 arm also completed 200,004 actions / 49,651 updates, at
+21:07:19 UTC. Its unassisted evaluation finished at 21:46:39 UTC and also passes:
+36/36 qualifying natural rounds, mean 29.0278, no cutoffs or updates. Replay and
+scoring completed at 21:47:18 UTC. The separately restored untrained evaluation
+started at 21:48:27 UTC; its result and the whole-pilot GPU checks remain pending.
 
 ## Question and fixed comparison
 
@@ -89,10 +92,52 @@ maximum gap 0.268 seconds, at least 3,413 MiB directly free and 87.42% mean
 activity. Coverage and the free-memory gate pass. This is evaluation-only
 throughput, not playing-plus-training speed or a matched runtime gain.
 
-This establishes one trained policy's unassisted task pass. The matched hold1
-and untrained results are still required before attributing the improvement
-to persistence or selecting a recipe. Fresh seeds 1009/2017/3019 remain required
-for reliability; no replication or five-game completion is claimed.
+This establishes one trained policy's unassisted task pass. The completed hold1
+comparison below also passes, so persistence is not necessary for success on
+this seed. The untrained result remains required before selecting a recipe.
+Fresh seeds 1009/2017/3019 remain required for reliability; no replication or
+five-game completion is claimed.
+
+## Completed matched hold1 result
+
+Both arms finish the same training and frozen budgets with the same package.
+Only their training-time exploration block duration differs; neither frozen policy
+uses exploration overrides.
+
+| Training exploration | Rewarded training rounds / 96 | Assisted training mean | Frozen mean | Frozen qualifying rounds / 36 |
+| --- | ---: | ---: | ---: | ---: |
+| Hold64, probability .5 | 96 | 14.1146 | 31.0556 | 36 |
+| Hold1, probability .5 | 67 | 6.6771 | 29.0278 | 36 |
+
+Hold1's frozen returns range from 27 to 32 crossings. All rounds terminate
+naturally, with zero learner updates and fresh recurrent state. Its
+[task score](../../runs/freeway-persistence-learning-20260909.C0GoqT/hold1-evaluation.score.json)
+and [complete CPU replay](../../runs/freeway-persistence-learning-20260909.C0GoqT/hold1-evaluation.replay.json)
+pass. A separate CPU recheck reproduces the score through a fresh candidate-
+package process, validates both full ledgers and all 82 pins, and rechecks all
+241 complete finite saved entries, optimizer counters and final-save/restore
+identities. The four training/evaluation/replay/scoring processes exit normally
+and their output hashes agree with the launcher records. The score SHA-256 is
+`ef81f3dbca21e8821a086d6162a953906a28836a311a1614eb190adfce63a303`.
+
+The [full hold1 stream-0 video](../../runs/freeway-persistence-learning-20260909.C0GoqT/hold1-evaluation.mp4)
+contains all six rounds and the ungraded tail: 49,999 reconstructed raw frames
+at 60 fps, 13:53.32. All frames decode successfully; video SHA-256 is
+`65ea74c0b9fef836640fb48a4736eb40fe2fa09ddd21bba95281e8600b18546c`.
+Original pixels were not archived; reconstruction uses the complete executed-
+action ledger, not selected highlights.
+
+Hold1 trains at 8.6126 actions/s (0.57416× aggregate real time); its frozen
+evaluation reaches 32.7557 actions/s (2.18367× aggregate, 0.36394× per stream).
+These fixed-order measurements are not a runtime counterbalance or speedup.
+Whole-pilot GPU coverage and memory validation await the untrained control.
+
+Hold64 has a 2.0278-crossing mean advantage in this paired seed, but both arms
+meet the task gate. Do not turn that difference into a seed-reliability claim
+or claim held actions are required for learning. The earlier plain-policy
+failure and random-discovery controls are context, not extra matched training
+arms. Finish the untrained control before recipe selection; keep all fresh
+replication gates and seeds unchanged.
 
 ## Action ordering versus a simple UP bias
 
@@ -158,9 +203,9 @@ at least 3,302 MiB directly free, and 68.63% mean activity. This includes the
 training process's construction/warmup; it is not a matched speedup, SM occupancy
 measurement or the completed pilot's all-phase memory gate.
 
-The completed frozen result above uses only this final model. Hold1 and the
-untrained control retain their declared budgets. No recipe is adopted and no
-fresh-seed replication is started.
+The completed frozen result above uses only this final model. Hold1 has also
+finished its declared training and frozen budgets; the untrained control
+continues. No recipe is adopted and no fresh-seed replication is started.
 
 ## First training signal, not competence
 
@@ -170,7 +215,7 @@ at action 978 on stream 5 under an explicit override. There are no completed
 rounds yet. Of 902 learner updates, 900 report nonzero absolute advantage and
 nonzero imagined mean reward; the inspected learner scalars are finite.
 The original plain-policy pilot found no rewards in its entire 200,004 actions;
-the new matched hold1 result remains pending.
+the matched hold1 result was still pending at this early inspection.
 
 This establishes reward discovery and a nonzero learning signal, not useful
 reward discrimination or unassisted behavior. At the prefix endpoint the
@@ -235,9 +280,9 @@ candidate/control throughput 0.999197 and 0.999774, 13 covered GPU phases and
 at least 3,303 MiB directly free. The saved
 [runtime proof](../../runs/freeway-persistence-learning-20260909.C0GoqT/runtime-proof.json)
 has SHA-256 `ff18757852d52840c5654febad3a63c533d5edb9431ca36d6019e5988914628e`.
-A fresh independent CPU recheck reproduces it exactly. Hold64 has completed
-training, frozen evaluation and replay; hold1 is now training and the restored
-untrained control follows without changing their budgets.
+A fresh independent CPU recheck reproduces it exactly. Both trained arms have
+completed training, frozen evaluation and replay. The restored untrained
+control is running without changing any budget.
 
 The 47 CPU launcher/proof tests pass. They include real old v2 ledger parsing
 through the candidate package and explicitly fabricated gate fixtures. They

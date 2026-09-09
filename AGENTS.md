@@ -233,9 +233,13 @@ reliable learning.
   coverage retains at least 3,302 MiB directly free. Its completed 75k unassisted
   frozen evaluation passes: 36/36 natural rounds reach 25 crossings, mean 31.0556,
   no cutoffs or updates, with complete checkpoint/replay/video checks. Frozen
-  GPU coverage retains at least 3,413 MiB free. Hold1 started at 14:39 UTC;
-  its result and the untrained control remain pending at their fixed budgets.
-  One pilot pass is not persistence's matched benefit, recipe adoption or replication.
+  GPU coverage retains at least 3,413 MiB free. Hold1 also completed 200,004
+  actions / 49,651 updates and its 75k unassisted frozen evaluation: 36/36
+  qualifying natural rounds, mean 29.0278, no cutoffs or updates, with complete
+  state/replay/video checks. Both arms pass on this seed; hold64's 2.0278-crossing
+  mean advantage does not establish that persistence is necessary or reliable.
+  The restored untrained control is running at its fixed budget; whole-pilot
+  GPU validation remains pending. No recipe adoption or fresh replication yet.
   See `docs/experiments/2026-09-09-freeway-persistence.md`.
   The original plain-policy Freeway training log at 200,004 actions extends the preserved 72k
   diagnostic: all 49,651 updates have zero reported absolute advantage, despite

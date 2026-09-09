@@ -202,8 +202,13 @@ Complete final state, exploration accounting and the frozen restore match;
 full-training GPU coverage passes with at least 3,302 MiB free. Its completed
 unassisted evaluation passes: 36/36 natural rounds reach 25 crossings, mean
 31.0556, with no cutoffs or updates and complete checkpoint/replay/video checks.
-Hold1 is now training; its result and the untrained control remain pending. The
-47 CPU launcher/proof tests are not gameplay evidence. This paired pilot is
+Hold1 also completes its fixed budgets and passes the frozen gate: 36/36
+qualifying natural rounds, mean 29.0278, no cutoffs or updates, with complete
+checkpoint/replay/video checks. Both exploration arms succeed on this seed;
+hold64's 2.0278-crossing mean advantage does not establish that persistence is
+necessary or reliable across seeds. The restored untrained control and
+whole-pilot GPU validation remain pending. The 47 CPU launcher/proof tests
+are not gameplay evidence. This paired pilot is
 distinct from the required fresh three-seed, five-game replication, and cannot
 select a recipe automatically.
 Post-hoc [action-order controls](experiments/2026-09-09-freeway-persistence.md#action-ordering-versus-a-simple-up-bias)
@@ -282,8 +287,9 @@ all four GPU-phase coverage/memory checks pass; the pilot is complete. The
 are available. This pilot is not fresh replication or Freeway competence.
 The subsequent [persistent-exploration pilot](experiments/2026-09-09-freeway-persistence.md#completed-unassisted-hold64-result)
 does pass the frozen Freeway gate on seed 0: 36/36 qualifying rounds, mean 31.0556,
-with complete final-checkpoint and replay checks. Its matched controls are still
-running; it does not yet establish persistence's benefit or fresh-seed reliability.
+with complete final-checkpoint and replay checks. The matched hold1 arm also
+passes: 36/36 qualifying rounds, mean 29.0278. The untrained control is running;
+neither the score difference nor these two passes establishes fresh-seed reliability.
 Declare remaining budgets and fresh three-seed replication before those runs;
 do not call a positive score a win or let tooling substitute for learning.
 The [task observers](experiments/2026-09-08-atari-task-observers.md) now distinguish
@@ -660,9 +666,11 @@ contamination before any larger swarm or shared-optimizer design.
 
 ## Immediate work and invariants
 
-Current work is the fixed Freeway hold64/hold1 learning comparison. Hold64
-passes its unassisted frozen gate; hold1 is training and the untrained control
-follows. Keep these budgets fixed before recipe selection or fresh replication.
+Current work is completing the fixed Freeway exploration comparison. Hold64
+and hold1 both pass their unassisted frozen gates; the restored untrained
+control is running. Keep its budget fixed and complete whole-pilot validation
+before recipe selection or fresh replication. Persistence improves the mean
+score in this one paired seed, but is not required for its task-gate pass.
 The common-distribution world report finds
 strong recording-dependent reward errors, including in the best Pong player;
 prioritize reward discovery/generalization and measured training coverage.
