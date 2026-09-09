@@ -94,6 +94,42 @@ and untrained results are still required before attributing the improvement
 to persistence or selecting a recipe. Fresh seeds 1009/2017/3019 remain required
 for reliability; no replication or five-game completion is claimed.
 
+## Action ordering versus a simple UP bias
+
+The completed policy selects an UP-labelled action variant on 68,596/75,000
+decisions (91.46%). A separate, post-hoc
+[CPU diagnostic](../../runs/freeway-open-loop-20260909.Mm13RB/completed.json)
+compares its recorded action order with constant UP and three independently
+shuffled orders. Each shuffle preserves every stream's exact action counts
+across all 12,500 decisions, including the partial tail. Controls use the same
+ROM, wrapper, six environment seeds and 75,000-action budget; their actions
+are precomputed and do not use observations.
+
+| Action sequence | Mean crossings | Rounds reaching 25 / 36 |
+| --- | ---: | ---: |
+| Recorded policy order | 31.0556 | 36 |
+| Constant UP | 21.3333 | 0 |
+| Shuffle 70271 | 19.8056 | 0 |
+| Shuffle 81271 | 20.7778 | 0 |
+| Shuffle 92271 | 20.0000 | 0 |
+
+All rounds terminate naturally. Every arm repeats exactly in fresh environments
+with reversed stream execution order, including observation and transition
+hashes. The recorded-order arm also reproduces every original transition and
+the archived reconstruction's stream-0 raw-frame hash. A separate CPU recheck
+verifies all 17 pins, saved action bytes, shuffle counts/RNG rules, episode/tail
+accounting and task scores. Five fabricated action-list checks pass; these are
+not learning evidence. The completed-result SHA-256 is
+`14512d415abe69e758210255a0539a15110c12e24d22ef52f108295361df6da8`.
+
+The learned action frequencies alone do not reproduce its score under these
+controls. Ordering matters, but shuffling also changes run lengths and timing:
+this does not isolate visual feedback from useful open-loop temporal structure
+or prove planning. The shuffles use the evaluated policy's own action marginals,
+so they are not held-out policy benchmarks or additional Kindle wins. This
+CPU-only work loaded no native model extension and changed no live inputs.
+It does not replace hold1, the untrained control or fresh-seed replication.
+
 ## Completed hold64 training and frozen handoff
 
 All 96 natural training rounds receive rewards, with mean 14.1146 crossings

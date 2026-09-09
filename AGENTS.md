@@ -170,6 +170,8 @@ reliable learning.
   unchanged while live. Task observers are post-hoc evaluation, never policy
   inputs or added training rewards. Scripted observer fixtures are not Kindle
   wins. Qbert's first pyramid alone is not the sustained-competence gate.
+  Distinguish action-order sensitivity from visual-feedback or planning evidence;
+  post-hoc action shuffles are not extra Kindle wins or held-out policy benchmarks.
   Breakout's 864-point rule has a verified actual-ROM scripted fixture and
   negative controls; preserve its distinction from Kindle's learned results.
   The separate candidate `audit_atari_tasks.py` covers Freeway/Breakout/Qbert

@@ -206,6 +206,9 @@ Hold1 is now training; its result and the untrained control remain pending. The
 47 CPU launcher/proof tests are not gameplay evidence. This paired pilot is
 distinct from the required fresh three-seed, five-game replication, and cannot
 select a recipe automatically.
+Post-hoc [action-order controls](experiments/2026-09-09-freeway-persistence.md#action-ordering-versus-a-simple-up-bias)
+do not reproduce its score with constant UP or shuffled per-stream actions;
+ordering matters beyond action counts, without establishing visual-feedback dependence.
 The [completed-training control diagnostic](experiments/2026-09-09-freeway-zero-signal.md)
 finds zero rewards across 96 natural rounds and zero reported absolute advantage
 in all 49,651 updates through 200,004 actions. All 241 saved tensor entries are
