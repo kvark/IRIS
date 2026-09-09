@@ -30,6 +30,7 @@ use super::readback::Readback;
 use super::replay::{FrameFlags, ReplayFrame, Reward, SequenceBatch, SequenceReplay};
 use super::runtime::{
     build_session, configure_d3_optimizer, ema_matching, initialize_d3, sync_matching,
+    sync_matching_many,
 };
 use super::world;
 use super::{BLADE_REV, DREAMERV3_UPSTREAM_REV, MEGANEURA_REV};
@@ -443,16 +444,18 @@ impl DreamerCore {
             &behavior_train_graph,
             config.seed ^ 0x5eed_0000_0000_0001,
         );
-        for target in [
-            &mut world_observe_batch,
-            &mut world_observe_live,
-            &mut world_transition,
-            &mut world_transition_live,
-            &mut world_heads,
-            &mut world_heads_live,
-        ] {
-            sync_matching(&world_train, target, "world.");
-        }
+        sync_matching_many(
+            &world_train,
+            &mut [
+                &mut world_observe_batch,
+                &mut world_observe_live,
+                &mut world_transition,
+                &mut world_transition_live,
+                &mut world_heads,
+                &mut world_heads_live,
+            ],
+            "world.",
+        );
         sync_matching(&behavior_train, &mut behavior_online, "behavior.");
         sync_matching(&behavior_train, &mut behavior_slow, "behavior.value.");
         sync_matching(&behavior_train, &mut policy_live, "behavior.actor.");
@@ -1434,19 +1437,16 @@ impl DreamerCore {
     }
 
     fn sync_world_inference(&mut self) {
-        for target in [
+        let mut targets = vec![
             &mut self.world_observe_batch,
             &mut self.world_observe_live,
             &mut self.world_transition,
             &mut self.world_transition_live,
             &mut self.world_heads,
             &mut self.world_heads_live,
-        ] {
-            sync_matching(&self.world_train, target, "world.");
-        }
-        if let Some(decoder) = &mut self.world_prediction_live {
-            sync_matching(&self.world_train, decoder, "world.");
-        }
+        ];
+        targets.extend(self.world_prediction_live.as_mut());
+        sync_matching_many(&self.world_train, &mut targets, "world.");
     }
 
     fn imagine_and_target(
