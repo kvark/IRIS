@@ -204,6 +204,15 @@ reliable learning.
   bound to the actual Freeway launcher; it waits for full pilot completion, then
   runs common-world and the candidate gate once, stopping on failure. Preserve
   these inputs. It starts no long learning run and does not adopt exploration.
+  A separate conditional learning declaration now waits on that actual follower:
+  `runs/freeway-persistence-learning-20260909.C0GoqT`, 82 pins and 47 passing
+  CPU launcher/proof tests. It reverifies raw runtime evidence before any GPU
+  use, then compares .5 exploration probability with hold64 versus hold1, each
+  fresh seed 0, 200,004 training and 75,000 unassisted frozen actions, followed
+  by a separately restored untrained control. Both arms use the same new package;
+  the old plain-policy pilot is context, not the matched hold1 arm. Keep its
+  inputs fixed; it has no learning result and cannot adopt a recipe or launch
+  replication. See `docs/experiments/2026-09-09-freeway-persistence.md`.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

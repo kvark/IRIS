@@ -175,6 +175,13 @@ The declared GPU gate and process-bound follower now wait for the complete
 Freeway pilot, then run common-world and candidate validation in order. They
 cannot restart the pilot or launch a long learning arm. Their 31 CPU checks are
 handoff/binding evidence, not new world-model, speed or gameplay results.
+A separate [conditional learning pilot](experiments/2026-09-09-freeway-persistence.md)
+now waits on that validation queue. After rechecking the actual runtime evidence,
+it compares hold64 and hold1 at the same .5 exploration probability, seed 0,
+200,004 actions per arm and 75,000 unassisted frozen actions, plus a separately
+restored untrained control. The launcher/proof checks pass 47 CPU tests; no
+new learning arm has started. A paired pilot remains distinct from the required
+fresh three-seed, five-game replication, and cannot select a recipe automatically.
 
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction
