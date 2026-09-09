@@ -96,14 +96,15 @@ complete unchanged checkpoint state, correct earliest stop and direct-memory
 coverage/reserve checks. Validate the native path rather than relying only
 on fabricated CPU streams. Do not insert work into the current pinned queues;
 Freeway, common-world, the exploration gate and its declared learning pilot
-retain their order. No new GPU worker or long learning run has been launched.
+completed in that order. The following frozen-only GPU gate is now running;
+no new long learning run has been launched.
 
 The cap-check manifest SHA-256 is
 `7107388290448246c77e46db85fcc133e472d80ec31a628cd195b2ce207d657f`;
 its result SHA-256 is
 `f4669872d97524ea2e409762c78ca99cb81e3e993c5704a871ab3b964dd787cb`.
 
-## GPU check declared, not running
+## GPU check running
 
 The frozen-only check is now declared in
 `runs/episode-evaluation-gate-20260909.8f1yKj`, with 55 input pins and manifest
@@ -112,6 +113,13 @@ It binds the actual persistence-learning launcher, PID 2120848/start tick
 98610096. There is no new follower or automatic launch. The real readiness
 check refuses execution while that predecessor is live, before GPU queries
 or creation of run-event outputs.
+
+The Freeway learning pilot completed normally at 22:28:24 UTC on September 9.
+An independent CPU recheck verifies all trained/control results, complete saved
+state, replay bindings, 82 pins and all six raw GPU windows. Only then was this
+gate launched manually, with its first control starting at 22:30:32 UTC.
+The launcher is PID 2257970/start tick 106518451 at this check. Results are still
+pending; preserve this active gate rather than launching another copy.
 
 Using the completed Boxing R256 model, the fixed order is control v2 for
 18,000 actions; candidate v4 until every stream completes one episode, capped
@@ -133,7 +141,7 @@ claim from these timings.
 All 30 CPU gate tests pass. They include reading the real completed checkpoint's
 241 saved tensors and explicitly fabricated binding/capture/stopping fixtures,
 not execution of this GPU comparison. Preserve the pinned candidate inputs.
-After the entire existing queue completes and releases the GPU, run:
+The command already launched after the predecessor released the GPU is:
 
 ```sh
 python/.venv/bin/python runs/episode-evaluation-gate-20260909.8f1yKj/run_gate.py

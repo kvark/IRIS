@@ -206,8 +206,12 @@ Hold1 also completes its fixed budgets and passes the frozen gate: 36/36
 qualifying natural rounds, mean 29.0278, no cutoffs or updates, with complete
 checkpoint/replay/video checks. Both exploration arms succeed on this seed;
 hold64's 2.0278-crossing mean advantage does not establish that persistence is
-necessary or reliable across seeds. The restored untrained control and
-whole-pilot GPU validation remain pending. The 47 CPU launcher/proof tests
+necessary or reliable across seeds. The restored untrained control returns zero
+in all 36 natural rounds and partial tails. All six GPU-phase checks pass;
+the complete pilot is independently verified and its launcher has exited.
+Provisionally carry hold64 into fresh Freeway confirmation for its larger score
+margin and rewarded training coverage; retain hold1 as the simpler successful
+control, without assuming held actions help other games. The 47 CPU launcher/proof tests
 are not gameplay evidence. This paired pilot is
 distinct from the required fresh three-seed, five-game replication, and cannot
 select a recipe automatically.
@@ -288,8 +292,9 @@ are available. This pilot is not fresh replication or Freeway competence.
 The subsequent [persistent-exploration pilot](experiments/2026-09-09-freeway-persistence.md#completed-unassisted-hold64-result)
 does pass the frozen Freeway gate on seed 0: 36/36 qualifying rounds, mean 31.0556,
 with complete final-checkpoint and replay checks. The matched hold1 arm also
-passes: 36/36 qualifying rounds, mean 29.0278. The untrained control is running;
-neither the score difference nor these two passes establishes fresh-seed reliability.
+passes: 36/36 qualifying rounds, mean 29.0278. The completed untrained control
+scores zero, and all pilot validation passes. Neither the score difference nor
+these two trained passes establishes fresh-seed reliability.
 Declare remaining budgets and fresh three-seed replication before those runs;
 do not call a positive score a win or let tooling substitute for learning.
 The [task observers](experiments/2026-09-08-atari-task-observers.md) now distinguish
@@ -666,11 +671,14 @@ contamination before any larger swarm or shared-optimizer design.
 
 ## Immediate work and invariants
 
-Current work is completing the fixed Freeway exploration comparison. Hold64
-and hold1 both pass their unassisted frozen gates; the restored untrained
-control is running. Keep its budget fixed and complete whole-pilot validation
-before recipe selection or fresh replication. Persistence improves the mean
-score in this one paired seed, but is not required for its task-gate pass.
+The fixed Freeway exploration comparison is complete: hold64 and hold1 both
+pass their unassisted frozen gates; the restored untrained control scores zero.
+All budgets, checkpoints, replays and GPU phases validate. Carry hold64
+provisionally into fresh Freeway confirmation, retaining the successful hold1
+control; neither result proves reliability. Do not restart the completed queue.
+Current GPU work is the already-declared episode-count evaluation gate, followed
+by the bounded world-sync runtime comparison. Then declare remaining game pilots
+and fresh three-seed replication against the selected validated package.
 The common-distribution world report finds
 strong recording-dependent reward errors, including in the best Pong player;
 prioritize reward discovery/generalization and measured training coverage.
@@ -685,8 +693,9 @@ for stronger behavior.
 For the remaining Atari pilots, avoid a fixed evaluation window too short for
 20 long games. The [episode-budget candidate](experiments/2026-09-09-episode-evaluation.md)
 keeps a fixed per-stream episode target and hard action cap, with every completed
-episode scored. CPU checks pass; GPU validation and a new declaration remain
-required. Existing evaluations and all five task/three-seed criteria are unchanged.
+episode scored. CPU checks pass and its GPU gate is running; adoption and a new
+learning declaration still require the result. Existing evaluations and all five
+task/three-seed criteria are unchanged.
 
 For every experiment retain source/model/encoder hashes, environment and data
 manifests, actual action/reward/boundary logs, all seeds, fixed final evaluations,

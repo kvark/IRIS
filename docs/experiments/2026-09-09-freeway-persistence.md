@@ -1,4 +1,4 @@
-# Freeway exploration: both trained arms pass; untrained control pending
+# Freeway exploration: completed paired pilot
 
 Predeclared 2026-09-09 in `runs/freeway-persistence-learning-20260909.C0GoqT`.
 The 82-pin manifest SHA is
@@ -14,7 +14,9 @@ The matched hold1 arm also completed 200,004 actions / 49,651 updates, at
 21:07:19 UTC. Its unassisted evaluation finished at 21:46:39 UTC and also passes:
 36/36 qualifying natural rounds, mean 29.0278, no cutoffs or updates. Replay and
 scoring completed at 21:47:18 UTC. The separately restored untrained evaluation
-started at 21:48:27 UTC; its result and the whole-pilot GPU checks remain pending.
+finished at 22:27:45 UTC with zero rewards in all 36 rounds. Its replay and all
+six GPU-phase checks pass. The launcher exited normally at 22:28:24 UTC.
+Preserve this completed queue; do not restart it.
 
 ## Question and fixed comparison
 
@@ -93,8 +95,8 @@ activity. Coverage and the free-memory gate pass. This is evaluation-only
 throughput, not playing-plus-training speed or a matched runtime gain.
 
 This establishes one trained policy's unassisted task pass. The completed hold1
-comparison below also passes, so persistence is not necessary for success on
-this seed. The untrained result remains required before selecting a recipe.
+comparison below also passes, so held exploration is not necessary for success
+on this seed. Both outperform the separately restored untrained control.
 Fresh seeds 1009/2017/3019 remain required for reliability; no replication or
 five-game completion is claimed.
 
@@ -108,6 +110,7 @@ uses exploration overrides.
 | --- | ---: | ---: | ---: | ---: |
 | Hold64, probability .5 | 96 | 14.1146 | 31.0556 | 36 |
 | Hold1, probability .5 | 67 | 6.6771 | 29.0278 | 36 |
+| Untrained | Not trained | Not trained | 0 | 0 |
 
 Hold1's frozen returns range from 27 to 32 crossings. All rounds terminate
 naturally, with zero learner updates and fresh recurrent state. Its
@@ -130,14 +133,52 @@ action ledger, not selected highlights.
 Hold1 trains at 8.6126 actions/s (0.57416× aggregate real time); its frozen
 evaluation reaches 32.7557 actions/s (2.18367× aggregate, 0.36394× per stream).
 These fixed-order measurements are not a runtime counterbalance or speedup.
-Whole-pilot GPU coverage and memory validation await the untrained control.
+Whole-pilot GPU coverage and memory validation now pass, as detailed below.
 
 Hold64 has a 2.0278-crossing mean advantage in this paired seed, but both arms
 meet the task gate. Do not turn that difference into a seed-reliability claim
 or claim held actions are required for learning. The earlier plain-policy
 failure and random-discovery controls are context, not extra matched training
-arms. Finish the untrained control before recipe selection; keep all fresh
-replication gates and seeds unchanged.
+arms. For fresh Freeway confirmation, provisionally select hold64 for its larger
+frozen score margin and broader rewarded training coverage, retaining hold1 as
+the simpler successful control. This is an explicit post-pilot choice, not
+automatic adoption by the launcher or proof of reliability. Do not apply held
+exploration to other games without evidence; keep all fresh replication gates
+and seeds unchanged.
+
+## Completed control and whole-pilot validation
+
+The independently restored untrained model receives zero rewards in every one
+of its 36 natural rounds and all partial tails, with zero cutoffs or updates.
+Its [score](../../runs/freeway-persistence-learning-20260909.C0GoqT/untrained-evaluation.score.json),
+[full CPU replay](../../runs/freeway-persistence-learning-20260909.C0GoqT/untrained-evaluation.replay.json)
+and [whole stream-0 video](../../runs/freeway-persistence-learning-20260909.C0GoqT/untrained-evaluation.mp4)
+are preserved. All 49,999 video frames decode, at 160×210 and 60 fps. Its initial
+checkpoint was saved after six frozen actions and zero updates, then restored
+with fresh recurrent state; it is not an already-trained baseline.
+
+The [completed pilot](../../runs/freeway-persistence-learning-20260909.C0GoqT/completed.json)
+has SHA-256 `9e9827102f01544ea17ef359ba45d137a3c121e7ab5f25974d5b5153682f1de9`.
+A separate CPU recheck confirms the terminal launcher, all 11 successful command
+exits in order and their output hashes, both complete training/exploration ledgers,
+all frozen ledgers and task scores, the 241 complete finite saved entries per
+model, native optimizer state, full replay bindings, video identities, and all
+82 unchanged pins. Recomputing every GPU window from the closed raw CSV exactly
+reproduces the launcher's six coverage/memory results:
+
+| Phase | Samples | Minimum directly free MiB | Mean GPU activity |
+| --- | ---: | ---: | ---: |
+| Hold64 training | 93,013 | 3,302 | 68.63% |
+| Hold64 frozen | 9,407 | 3,413 | 87.42% |
+| Hold1 training | 93,020 | 3,303 | 68.65% |
+| Hold1 frozen | 9,418 | 3,413 | 87.20% |
+| Untrained initial save | 271 | 3,415 | 0.38% |
+| Untrained frozen | 9,414 | 3,413 | 87.19% |
+
+Every phase passes the 2 GiB reserve and coverage rules; maximum sample gap is
+0.269 seconds. These windows include construction. Activity is not SM occupancy,
+and frozen speed is not training throughput. Both training arms remain near
+0.574× aggregate real time. No fresh replication has started.
 
 ## Action ordering versus a simple UP bias
 
@@ -203,70 +244,26 @@ at least 3,302 MiB directly free, and 68.63% mean activity. This includes the
 training process's construction/warmup; it is not a matched speedup, SM occupancy
 measurement or the completed pilot's all-phase memory gate.
 
-The completed frozen result above uses only this final model. Hold1 has also
-finished its declared training and frozen budgets; the untrained control
-continues. No recipe is adopted and no fresh-seed replication is started.
+The completed frozen result above uses only this final model. Both matched
+arms and the untrained control have now finished without any budget extension
+or checkpoint selection.
 
-## First training signal, not competence
+## Preserved early diagnostics
 
-A post-hoc fixed prefix through the 5,010-action progress record contains
-11 crossing rewards, distributed 2/1/3/2/1/2 across streams. The first arrives
-at action 978 on stream 5 under an explicit override. There are no completed
-rounds yet. Of 902 learner updates, 900 report nonzero absolute advantage and
-nonzero imagined mean reward; the inspected learner scalars are finite.
-The original plain-policy pilot found no rewards in its entire 200,004 actions;
-the matched hold1 result was still pending at this early inspection.
+Hold64 first discovers a crossing at action 978 under an explicit override.
+Its first six training rounds score 7/3/5/5/4/7, still assisted and below the
+task threshold. Those early signals did not change the declared final budgets
+or establish held-out reward calibration. The complete training log retains
+all prefix observations; the final evaluations above determine competence.
 
-This establishes reward discovery and a nonzero learning signal, not useful
-reward discrimination or unassisted behavior. At the prefix endpoint the
-imagined policy entropy is 2.89012 nats, near log(18), and positive/zero replay
-reward prediction means are almost identical (0.00107050/0.00107025).
-The final frozen evaluation remains mandatory; neither arm's budget changes.
+The [first scheduled checkpoint inspection and archive](../../runs/freeway-first-checkpoint-20260909.mK2sXv/result.json)
+at 20,004 actions / 4,651 updates preserves all 241 entries and its log prefix.
+Its SHA-256 is `4e30662962f0f65b5661742ffe0fff8e5bc6eee05ec974051f9db95ee7b8cf4b`.
+This is saved-state health evidence, not atomic live-state recovery or a
+selected winning checkpoint. Keep the artifacts without repeating every
+periodic-save inspection absent a new anomaly or decision.
 
-The source is `hold64-train.jsonl` in the declared run directory. Its first
-1,838,307 bytes end at that settled progress record and hash to
-`c8d8d9ea81f0bf99d36a8132a7a345adba593d2f1c9f6410e5727dd3f259c474`.
-A second read reproduces the prefix hash. This small CPU inspection checks
-recorded action/update counters, reward-channel agreement and progress totals;
-it is not a full exploration-ledger, checkpoint or independent ALE replay audit.
-
-The 13,026-action prefix includes the first six natural rounds, ending together
-at action 12,288: returns 7/3/5/5/4/7, each 2,048 decisions, with no cutoffs.
-Their mean is 5.17 crossings, all below 25 and still assisted. Including later
-partial tails, 34 rewards have been recorded. Of 2,906 updates, 2,904 have
-nonzero reported absolute advantage; inspected learner scalars remain finite.
-At this endpoint imagined-policy entropy has fallen to 1.581 nats, while the
-single inspected replay batch's positive/zero prediction means are still only
-0.002910/0.002822 (three positive targets). This is not held-out calibration,
-live conditional-policy entropy, evidence of collapse, or an unassisted win.
-Keep the world-model and behavior checks separate as learning continues.
-
-This later fixed prefix is 5,698,571 bytes with SHA-256
-`5be012232a7f8cc9ecf0ddadbef65597acdba600e601371da12812bd3d4591f8`,
-again reproduced by a second read. It retains all six rounds and partial tails;
-no final score, checkpoint selection or experiment setting changes.
-
-## First periodic checkpoint health
-
-The scheduled save at 20,004 actions / 4,651 updates completed at 08:09 UTC.
-A CPU-only [inspection and archive](../../runs/freeway-first-checkpoint-20260909.mK2sXv/result.json)
-checks all 241 tensor entries against the declared schema: complete names,
-shapes and dtypes, finite values, nonnegative optimizer second moments, valid
-return normalizers and correct world/behavior/slow-value counters (4651/4651/0).
-Metadata, backend/perception identity and the saved action/update counters match
-the training record. All 82 experiment pins remain unchanged.
-
-The archived checkpoint and 9,062,133-byte log prefix match their source hashes
-before and after capture. A fresh CPU process independently reproduces the
-saved-state, archive and prefix checks. Result SHA-256 is
-`4e30662962f0f65b5661742ffe0fff8e5bc6eee05ec974051f9db95ee7b8cf4b`.
-No agent was constructed or evaluated. This is not complete-run accounting,
-proof against other learning failures, or atomic live-state recovery. Keep this
-first-save diagnostic; do not repeat it for every periodic checkpoint without
-a new anomaly or decision it can inform. Only the declared final checkpoint is
-eligible for the fixed frozen evaluation.
-
-## Verified handoff; fixed arms in progress
+## Verified prerequisites and preserved queue
 
 The original Freeway pilot, common-recording world diagnostic and
 [candidate GPU gate](2026-09-08-persistent-exploration.md) have all completed.
@@ -280,9 +277,8 @@ candidate/control throughput 0.999197 and 0.999774, 13 covered GPU phases and
 at least 3,303 MiB directly free. The saved
 [runtime proof](../../runs/freeway-persistence-learning-20260909.C0GoqT/runtime-proof.json)
 has SHA-256 `ff18757852d52840c5654febad3a63c533d5edb9431ca36d6019e5988914628e`.
-A fresh independent CPU recheck reproduces it exactly. Both trained arms have
-completed training, frozen evaluation and replay. The restored untrained
-control is running without changing any budget.
+A fresh independent CPU recheck reproduces it exactly. Both trained arms and
+the restored untrained control have completed all declared phases.
 
 The 47 CPU launcher/proof tests pass. They include real old v2 ledger parsing
 through the candidate package and explicitly fabricated gate fixtures. They

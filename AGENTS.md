@@ -191,7 +191,7 @@ reliable learning.
   Whole stream-0 videos are `evaluation.mp4` and `untrained-evaluation.mp4`, not
   successes. Preserve all 34 pins and artifacts; do not restart this completed
   pilot or call it reliable learning. Its follower has completed common-world and
-  exploration validation; the separately declared learning pilot is now running.
+  exploration validation; the separately declared learning pilot has now completed.
   The completed CPU-only Freeway discovery check in
   `runs/freeway-discovery-20260908.Zig71a` compares hold lengths 1/16/64 at
   200,004 actions each on three seeds. Independent random actions find no
@@ -203,7 +203,8 @@ reliable learning.
   ablation over simply extending it. The isolated `exp/persistent-exploration`
   candidate adds explicit native action overrides and versioned per-stream random
   holds, with 95 Rust and 547 Python CPU tests passing. Its full runtime gate
-  now passes; matched learning results remain incomplete and the recipe is not adopted.
+  and the matched seed-0 Freeway learning comparison now pass; the provisional
+  Freeway choice below still needs independent fresh-seed confirmation.
   Preserve actual executed actions in RSSM/replay,
   independent RNG, default-path parity and strictly unassisted frozen evaluation.
   See `docs/experiments/2026-09-08-persistent-exploration.md` for the required gates;
@@ -238,8 +239,14 @@ reliable learning.
   qualifying natural rounds, mean 29.0278, no cutoffs or updates, with complete
   state/replay/video checks. Both arms pass on this seed; hold64's 2.0278-crossing
   mean advantage does not establish that persistence is necessary or reliable.
-  The restored untrained control is running at its fixed budget; whole-pilot
-  GPU validation remains pending. No recipe adoption or fresh replication yet.
+  The restored untrained control returns zero in all 36 natural rounds and tails.
+  The full pilot is complete: all 11 command exits, complete state/replays and
+  six GPU phases reverify, with at least 3,302 MiB directly free overall.
+  Provisionally use hold64 for fresh Freeway confirmation for its larger score
+  margin and rewarded training coverage; retain the successful hold1 control.
+  This is a post-pilot choice, not reliability or automatic launcher adoption.
+  Do not assume held exploration benefits other games. No fresh replication yet;
+  preserve all 82 pins and do not restart the completed learning queue.
   See `docs/experiments/2026-09-09-freeway-persistence.md`.
   The original plain-policy Freeway training log at 200,004 actions extends the preserved 72k
   diagnostic: all 49,651 updates have zero reported absolute advantage, despite
@@ -258,11 +265,12 @@ reliable learning.
   adoption. See `docs/experiments/2026-09-09-episode-evaluation.md`; preserve all
   current fixed-action queues, game criteria and fresh-seed gates. Require GPU
   prefix/state checks and a new declaration before using this stopping rule.
-  Its frozen-only GPU check is now declared, not running, in
+  Its frozen-only GPU check started at 22:30 UTC on September 9 in
   `runs/episode-evaluation-gate-20260909.8f1yKj`: 55 pins, 30 passing CPU tests,
-  bound to the actual persistence-learning launcher. It refuses live-parent
-  execution and starts no follower. Preserve candidate inputs; run only after
-  the entire existing queue completes, checking full frozen state and prefixes.
+  bound to the actual persistence-learning launcher, which has completed normally.
+  It refuses live-parent execution and starts no follower. Preserve candidate
+  inputs and this active gate, checking full frozen state and prefixes; no GPU
+  result or adoption is claimed yet. The world-sync comparison follows this gate.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted
