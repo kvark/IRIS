@@ -1,12 +1,15 @@
-# Freeway persistence: learning pilot running
+# Freeway persistence: hold64 trained; frozen evaluation running
 
 Predeclared 2026-09-09 in `runs/freeway-persistence-learning-20260909.C0GoqT`.
 The 82-pin manifest SHA is
 `465c5fedcab95c859dddcd57b63de065532dd8df2034d973b9c057b381cb10ac`.
 The launcher started at 00:32 UTC, PID 2120848 at the last check. It waited for
 the actual validation follower to finish, reverified the completed runtime gate,
-and started hold64 training at 07:31:02 UTC. The training child is PID 2164617,
-process start ticks 101121662. No final learning or frozen-policy result exists yet.
+and ran hold64 training from 07:31:02 to 13:59:12 UTC, completing its fixed
+200,004 actions and 49,651 updates. The final checkpoint passes complete-state
+checks and matches the frozen restore exactly. Unassisted evaluation started
+at 13:59:14 UTC, PID 2202144, process start ticks 103450856. Its result, the
+matched hold1 arm and the restored untrained control remain pending.
 
 ## Question and fixed comparison
 
@@ -56,6 +59,40 @@ video, not a highlights reel. Original run pixels are not archived.
 This is one paired pilot seed, not reliability. All five game criteria and the
 fresh replication roots 1009/2017/3019 remain required. No success here would
 repair the old failed three-seed Pong result or establish cross-game transfer.
+
+## Completed hold64 training and frozen handoff
+
+All 96 natural training rounds receive rewards, with mean 14.1146 crossings
+and no cutoffs. The completed rounds total 1,355 rewards; ungraded partial
+tails add 36. These are assisted training results, not unassisted competence.
+Of 49,651 updates, only two report zero absolute advantage. All reported
+world/behavior learner scalars are finite; this does not establish held-out
+reward calibration or that the policy learned to cross unaided.
+
+A CPU-only [completed-training verification](../../runs/freeway-hold64-training-20260909.BK74w3/result.json)
+reproduces the full action/reward/frame/update and exploration ledger, checks
+the successful process exit and output identities, and verifies all 241 final
+saved tensor entries. Names, shapes and dtypes are complete, values are finite,
+Adam second moments are nonnegative, return normalizers are valid, and optimizer
+counters are 49651/49651/0. The final save, disk checkpoint and frozen restore
+identities agree exactly. All 82 experiment pins are unchanged. A fresh CPU
+recheck reproduces the saved state and source/header/prefix identities.
+Result SHA-256 is
+`f1a84fe9e894334eebbb4fdb9956149dd28869fb9f0063e0376437de9886a1ce`.
+This is not atomic live-state recovery or an independent ALE training replay.
+
+The training loop takes 23,221.04 seconds: 8.613 actions/s, 0.5742× aggregate
+real time and 0.09570× per stream, counting actual emulator-frame increments.
+Full-training GPU coverage passes with 93,013 samples, maximum gap 0.268 seconds,
+at least 3,302 MiB directly free, and 68.63% mean activity. This includes the
+training process's construction/warmup; it is not a matched speedup, SM occupancy
+measurement or the completed pilot's all-phase memory gate.
+
+The fixed 75,000-action evaluation restores the final model with fresh recurrent
+state, zero updates and no exploration overrides. Its complete task score,
+independent CPU replay and whole-stream video remain pending. Hold1 and the
+untrained control still follow at their declared budgets regardless of this
+arm's task score. No recipe is adopted and no fresh-seed replication is started.
 
 ## First training signal, not competence
 
@@ -130,8 +167,9 @@ candidate/control throughput 0.999197 and 0.999774, 13 covered GPU phases and
 at least 3,303 MiB directly free. The saved
 [runtime proof](../../runs/freeway-persistence-learning-20260909.C0GoqT/runtime-proof.json)
 has SHA-256 `ff18757852d52840c5654febad3a63c533d5edb9431ca36d6019e5988914628e`.
-A fresh independent CPU recheck reproduces it exactly. Hold64 is now training;
-hold1 and the restored untrained control follow without changing their budgets.
+A fresh independent CPU recheck reproduces it exactly. Hold64 has completed
+training and entered frozen evaluation; hold1 and the restored untrained
+control follow without changing their budgets.
 
 The 47 CPU launcher/proof tests pass. They include real old v2 ledger parsing
 through the candidate package and explicitly fabricated gate fixtures. They

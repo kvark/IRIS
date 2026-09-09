@@ -194,12 +194,16 @@ Warmed candidate throughput is 8.57–8.59 actions/s, 99.92%/99.98% of paired
 controls: no regression, but no speedup. Preserve the completed gate and queue.
 Their 31 CPU checks are handoff/binding evidence, not gameplay results.
 A separate [conditional learning pilot](experiments/2026-09-09-freeway-persistence.md)
-rechecked the actual runtime evidence and started hold64 at 07:31 UTC on
-September 9. It compares hold64 and hold1 at the same .5 exploration probability,
-seed 0, 200,004 actions per arm and 75,000 unassisted frozen actions, plus a separately
-restored untrained control. The launcher/proof checks pass 47 CPU tests; no
-final learning or frozen-policy result exists yet. A paired pilot is distinct from
-the required fresh three-seed, five-game replication, and cannot select a recipe automatically.
+compares hold64 and hold1 at the same .5 exploration probability, seed 0,
+200,004 actions per arm and 75,000 unassisted frozen actions, plus a separately
+restored untrained control. Hold64 completed training at 13:59 UTC on September 9:
+49,651 updates, 96 rewarded natural rounds, mean 14.1146 crossings, still assisted.
+Complete final state, exploration accounting and the frozen restore match;
+full-training GPU coverage passes with at least 3,302 MiB free. Its unassisted
+evaluation is running; hold1 and the untrained control remain pending. The
+47 CPU launcher/proof tests are not gameplay evidence. This paired pilot is
+distinct from the required fresh three-seed, five-game replication, and cannot
+select a recipe automatically.
 The [completed-training control diagnostic](experiments/2026-09-09-freeway-zero-signal.md)
 finds zero rewards across 96 natural rounds and zero reported absolute advantage
 in all 49,651 updates through 200,004 actions. All 241 saved tensor entries are
