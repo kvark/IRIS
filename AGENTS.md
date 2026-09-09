@@ -309,8 +309,11 @@ reliable learning.
   errors exceed the zero baseline. Preserve per-recording and pooled event
   counts, visual-cache strata and the three-terminal limitation. This is limited cross-trajectory
   generalization, not proof of the policy failure's cause. Keep current learning
-  arms fixed; declare training-side reward-coverage checks, own-policy frozen
-  results and a new multi-match forecast set before selecting a changed recipe.
+  arms fixed. Measure reward-event coverage and replay batches lacking each
+  reward class; repeated samples are not distinct experience, and posterior
+  training estimates are not held-out prior forecasts. Declare fixed all-seed
+  budgets, own-policy frozen results and a new multi-match forecast set before
+  selecting a changed recipe.
   The report builder's 13 fabricated-fixture tests are implementation evidence.
 - Distinguish video-encoder initialization, action-conditioned world pretraining
   and policy-skill transfer. Missing action/reward labels are not NOOP/zero.

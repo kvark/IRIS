@@ -137,6 +137,12 @@ grid or more temporal input. Training first wins arrive at 160,344 / 193,232 /
 86,352 aggregate actions for seeds 0 / 1 / 2. Seed 1 earns only 12 positive
 points in its first 80k actions, versus 87 / 76 for seeds 0 / 2. This points to
 uneven discovery and learning speed, not an established numerical collapse.
+The [complete training-coverage summary](experiments/2026-09-08-world-evaluation.md#completed-training-coverage-not-a-causal-explanation)
+finds 86.5% of seed 1's first-80k replay batches have no positive target, versus
+63.9% / 65.9% for seeds 0 / 2. All three have nonzero reported absolute advantage
+after their first two updates. Count repeated replay samples separately from
+unique rewards. Coverage alone does not explain the ranking: seed 0 has more
+early positive points than seed 2 but wins much later.
 The [separate world-model evaluation](experiments/2026-09-08-world-evaluation.md)
 now reproduces each recorded first game exactly, with zero updates. All three
 models predict features better with actual controls than with unrelated controls.
@@ -165,7 +171,8 @@ cross-model all-frame prior reward errors are worse than always predicting zero.
 Errors remain large even after consuming the target frame. This points toward limited
 reward generalization and experience coverage, not a globally broken seed-1
 world model or a demonstrated need for more perception. It does not establish
-the cause of policy failures. Next require training-side reward-coverage measures,
+the cause of policy failures. The historical training-coverage summary above
+supplies a baseline, not an intervention. Require fixed all-seed budgets,
 own-policy frozen gameplay and a new multi-match forecast set before selecting
 changed exploration/replay/loss settings. Keep the active Freeway comparison
 unchanged. Preserve the 35 pins and all nine rows. Forced controls are diagnostics,

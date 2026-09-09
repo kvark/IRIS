@@ -218,6 +218,47 @@ versus always-continue 0.994: none provides evidence of reliable terminal predic
 Common-pool policy entropy and value are descriptive only. Logged-action
 agreement is not action quality, and another policy's return is not a critic target.
 
+### Completed training coverage, not a causal explanation
+
+The CPU-only [full training summary](../../runs/pong-training-coverage-20260909.LEJXHN/summary.json)
+reads all three closed 200k-action logs, rather than selected trailing windows.
+Their SHA-256 identities match the original final-training verifications.
+It reconciles every reward with the final per-stream totals, all completed returns
+and partial tails, 200,000 actions and 49,619 consecutive updates per seed.
+All ten 20k-action windows remain in the result. No agent was constructed.
+
+| Seed | Positive / negative points, first 80k | First-80k replay batches without positive targets | Positive / negative points, full 200k | Positive replay samples, full 200k |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 87 / 1,380 | 12,540 / 19,619 (63.9%) | 596 / 1,907 | 87,013 |
+| 1 | 12 / 1,961 | 16,972 / 19,619 (86.5%) | 296 / 2,703 | 37,440 |
+| 2 | 76 / 1,494 | 12,923 / 19,619 (65.9%) | 1,406 / 1,642 | 217,920 |
+
+Replay sample counts include repeated use of the same event; they are not new
+or independent experience. All three seeds have exactly two initial updates
+with zero reported absolute advantage, then nonzero values in every remaining
+update. Sparse *positive* coverage in Pong is different from the original
+Freeway control's absence of any reward-driven signal.
+
+The final 180k–200k windows have sample-weighted posterior positive-reward
+estimates 0.959 / 0.821 / 0.994 for the actual +1 targets. These training-side
+estimates are not held-out prior forecasts. Imagined-policy entropy is likewise
+not live conditional entropy or an independent quality measure.
+The unchanged historical `compare_early_learning.py` independently agrees on
+each final window's updates, points, games, wins, replay counts/means and entropy.
+Two fabricated arithmetic tests check weighted aggregation, not learning.
+
+This confirms a prolonged positive-experience deficit in seed 1, but does not
+identify its cause. Seed 0 has *more* positive points than seed 2 through 80k,
+yet wins much later. Policy and coverage co-evolve; neither total event count
+nor training reward fitting explains the complete ranking. Do not infer a
+broken sampler, adopt reward-balanced replay, or change the live Freeway arms
+from these correlations. The old adjacent live-RNG overlap still applies.
+
+The summary hash is
+`b7912afaa450d2db29523b6f865d2a59721d1218a5a6f49ed4b517dcb1e206e1`;
+it records the script and all three source-log hashes. The script refuses to
+overwrite its result. Preserve the original logs and completed frozen failures.
+
 ### Next bounded decision
 
 Keep the live Freeway hold64/hold1 comparison unchanged: it tests reward discovery
