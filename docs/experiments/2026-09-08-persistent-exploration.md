@@ -99,8 +99,8 @@ Freeway integration uses probability .25 and hold 64; these are integration
 settings, not an adopted long-training recipe. Its three Rust hardware tests
 use an archived test executable, not a mutable root build output.
 
-The 31 CPU gate/handoff checks pass. They bind a real completed old N6 control
-and reject changed identities, learner reports and checkpoints; candidate rows
+The 31 CPU gate/handoff checks pass. They bind a real completed old N6 control,
+validate its complete checkpoint and reject changed identities and learner reports; candidate rows
 and completed queue children in the unit fixtures are explicitly fabricated.
 These tests do not establish candidate GPU parity or learned competence.
 
