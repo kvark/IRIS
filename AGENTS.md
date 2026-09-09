@@ -188,8 +188,8 @@ reliable learning.
   coverage/memory checks pass; directly free memory stays at least 3,303 MiB.
   Whole stream-0 videos are `evaluation.mp4` and `untrained-evaluation.mp4`, not
   successes. Preserve all 34 pins and artifacts; do not restart this completed
-  pilot or call it reliable learning. Its bound follower has started common-world,
-  with exploration validation and the conditional learning pilot still to follow.
+  pilot or call it reliable learning. Its bound follower has completed common-world
+  and started exploration validation; the conditional learning pilot waits on it.
   The completed CPU-only Freeway discovery check in
   `runs/freeway-discovery-20260908.Zig71a` compares hold lengths 1/16/64 at
   200,004 actions each on three seeds. Independent random actions find no
@@ -200,18 +200,21 @@ reliable learning.
   reward-starved, prioritize a separately declared persistent-exploration
   ablation over simply extending it. The isolated `exp/persistent-exploration`
   candidate adds explicit native action overrides and versioned per-stream random
-  holds, with 95 Rust and 547 Python CPU tests passing. It is not adopted and has
-  no GPU or learning result. Preserve actual executed actions in RSSM/replay,
+  holds, with 95 Rust and 547 Python CPU tests passing. Its three focused GPU
+  tests now pass; full runtime and learning results remain pending. It is not
+  adopted. Preserve actual executed actions in RSSM/replay,
   independent RNG, default-path parity and strictly unassisted frozen evaluation.
   See `docs/experiments/2026-09-08-persistent-exploration.md` for the required gates;
   run only after Freeway and the declared common-world diagnostic release the GPU.
   Existing campaign declarations reject the changed exploration protocol. A new
   package requires its own matching runtime/memory evidence before long training.
-  That gate is declared in `runs/persistent-exploration-gate-20260908.OVSB5q`
-  with 66 pins and 31 passing CPU gate/handoff tests. Its 107-pin follower is
-  bound to the actual Freeway launcher; it waits for full pilot completion, then
-  runs common-world and the candidate gate once, stopping on failure. Preserve
-  these inputs. It starts no long learning run and does not adopt exploration.
+  That gate is running in `runs/persistent-exploration-gate-20260908.OVSB5q`,
+  with 66 pins and 31 passing CPU gate/handoff tests. Its 107-pin follower
+  completed Freeway/common-world prerequisites and launched the gate at 06:47 UTC
+  on September 9. The three focused native GPU tests pass; the matched trials
+  and whole-gate decision remain pending. Preserve all inputs; stop on failure,
+  without restarting completed jobs. This gate starts no long learning run and
+  does not adopt exploration.
   A separate conditional learning declaration now waits on that actual follower:
   `runs/freeway-persistence-learning-20260909.C0GoqT`, 82 pins and 47 passing
   CPU launcher/proof tests. It reverifies raw runtime evidence before any GPU
@@ -286,10 +289,11 @@ reliable learning.
   explicitly conditions every old model on the same three recordings, preserving
   strict unforced replay separately. Require three exact same-model H1 diagonals
   before the six cross-model runs, with common initial/target RGB and feature
-  hashes. GPU execution started at 06:07 UTC after the complete Freeway pilot;
-  the first 2,816-transition diagonal matches exactly. The remaining comparisons
-  and whole-diagnostic memory audit are pending. Use historical native f663dd93,
-  not the new package, and preserve the active queue and source/declaration pins.
+  hashes. All nine GPU runs completed at 06:47 UTC on September 9: three exact
+  diagonals, six common-input checks, zero updates and passing memory/coverage
+  checks with at least 7,469 MiB directly free. Preserve the 35 pins, historical
+  native f663dd93 and completed data; do not restart the diagnostic. Its report
+  and interpretation wait until the following runtime gate finishes.
   Forced controls are offline diagnostics, not that model's policy rollout;
   another policy's logged return
   is not unbiased ground truth for the evaluated critic.

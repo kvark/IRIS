@@ -152,29 +152,28 @@ These correlations do not establish causation. A longer-budget replication
 must be declared for all seeds as a new experiment, not an extension that
 relabels the failed 200k-action gate.
 
-The common-recording follow-up in `runs/common-world-20260908.7gWHsJ` started
-GPU execution after the complete Freeway pilot. Its first same-model diagonal
-reproduces all 2,816 original one-step forecasts exactly; the full comparison
-and memory audit remain pending.
-It scores all three models on the same recorded first matches, with exact
-same-model forecast checks and common RGB/feature hashes. Forced recorded
+The common-recording follow-up in `runs/common-world-20260908.7gWHsJ` completed
+all nine GPU runs: all three same-model diagonals reproduce the original forecasts
+exactly and all six cross-model runs pass common-input checks. Each model sees
+the same 11,388 transitions, with zero updates; all memory/coverage checks pass.
+The full report and interpretation wait for the following matched runtime gate
+to finish. Preserve this completed data and its 35 pins. Forced recorded
 controls are model diagnostics, not new gameplay successes; off-policy logged
 returns are not unbiased targets for the evaluated critic.
 
 The [Freeway CPU discovery check](experiments/2026-09-08-freeway-discovery.md)
 finds no rewards under independent random actions in three 200,004-action arms,
 but hundreds when random actions persist for 16 or 64 decisions. These are
-exploration controls, not learned competence. If the native pilot remains
-reward-starved, test a bounded persistent-exploration component with explicit
+exploration controls, not learned competence. The completed native pilot is
+reward-starved; test a bounded persistent-exploration component with explicit
 executed-action provenance and unassisted frozen evaluation before simply
 spending more GPU time on a longer unchanged run. The isolated
 [persistent-exploration candidate](experiments/2026-09-08-persistent-exploration.md)
 now passes 95 Rust and 547 Python CPU tests, including actual-action provenance
-and unassisted-evaluation guards. It is not adopted: native GPU causality,
-default-path parity, matching memory/runtime evidence and a fixed-budget learning
-comparison remain required after the active common-world diagnostic.
-The process-bound follower has advanced from the complete Freeway pilot into
-common-world; candidate validation follows in the declared order. These jobs
+and unassisted-evaluation guards. Its three focused GPU tests now pass too;
+full matched state/trace, memory/runtime and learning evidence remain required
+before adoption. The process-bound follower has advanced from the complete
+Freeway and common-world runs into the declared runtime gate. These jobs
 cannot restart the pilot or launch a long learning arm. Their 31 CPU checks are
 handoff/binding evidence, not new world-model, speed or gameplay results.
 A separate [conditional learning pilot](experiments/2026-09-09-freeway-persistence.md)
@@ -631,9 +630,10 @@ contamination before any larger swarm or shared-optimizer design.
 
 ## Immediate work and invariants
 
-Current work is the common-distribution world/reward diagnostic, followed by the
-declared persistent-exploration comparison after its runtime gate. The completed
-plain-policy Freeway pilot fails without finding any reward. Keep Pong's
+Current work is the persistent-exploration runtime gate, followed by its declared
+learning comparison. Common-distribution world/reward data are complete; analyze
+them after the gate's timing runs. The completed plain-policy Freeway pilot fails
+without finding any reward. Keep Pong's
 failed all-seeds gate visible; broader Atari learning and fresh three-seed
 reliability remain unfinished. Stage runtime candidates separately from the
 live experiment. Add world-only pretraining and the current-Dreamer mind-games

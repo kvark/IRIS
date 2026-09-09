@@ -1,16 +1,17 @@
-# Persistent exploration candidate: CPU-ready, not adopted
+# Persistent exploration candidate: runtime validation underway
 
-Staged 2026-09-08 in `exp/persistent-exploration`, isolated from the live
-Freeway source and package. There is no GPU correctness, speed, learned-score
-or five-game reliability result for this candidate.
+Staged 2026-09-08 in `exp/persistent-exploration`, isolated from the original
+Freeway source and package. Three focused GPU tests now pass; full runtime
+validation and the learning comparison remain pending. Not adopted.
 
 ## Why this experiment
 
 The [CPU Freeway discovery study](2026-09-08-freeway-discovery.md) found no
 crossing rewards from independent random actions in three 200,004-action arms.
 Holding uniformly sampled actions for 16 or 64 decisions found hundreds in
-every seed, still far below the task gate. The unchanged native Freeway pilot
-continues to its fixed budget. These results motivate a bounded exploration
+every seed, still far below the task gate. The completed native Freeway pilot
+finds no training rewards, and its frozen policy and untrained control both score
+zero across 36 natural rounds. These results motivate a bounded exploration
 ablation, not a longer unchanged reward-starved run or a claim of learned skill.
 
 ## Small implementation
@@ -112,10 +113,18 @@ The follower itself is PID 2119271 at the last check. It polls every 30 seconds,
 has a bounded wait, and neither restarts nor stops the Freeway parent. Failed
 prerequisites or child failures stop the follow-on without automatic retry.
 
-At declaration, neither follow-on GPU job has started. Even a successful gate
-will not launch a long learning run or select the exploration recipe; a fixed
-learning comparison still needs its own declaration. Keep the original
-Freeway, common-world, CPU-candidate and gate inputs unchanged.
+The complete Freeway and common-world runs have now released the device. The
+follower started this gate at 06:47:48 UTC on September 9. All three focused
+hardware tests pass, each executing exactly one test with zero failures or skips.
+The paired default-path trials are running; full checkpoint/trace equality,
+timing, memory and override-integration results are still pending. These focused
+passes do not certify the actual 12M pixel-learning configuration or select a
+recipe. Preserve all active inputs and archived test binaries.
+
+The separate [conditional learning declaration](2026-09-09-freeway-persistence.md)
+waits on this actual follower and must reverify its raw evidence before starting
+either fixed-budget learning arm. The gate itself launches no long learning run
+and cannot adopt exploration. Keep all original artifacts and failed results.
 
 Do not run root binaries by accident: cached build outputs may belong to another
 isolated candidate. Select the explicitly identified package/test executable.

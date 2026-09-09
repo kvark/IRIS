@@ -126,7 +126,7 @@ policy quality and model quality as distinct gates. Longer all-seed training or
 changed loss/replay settings remain new experiments, not repairs to the failed
 200k-action mastery result. No swarm or actor/learner separation is required.
 
-## Common-recording follow-up running
+## Common-recording data complete; analysis pending
 
 The isolated `exp/common-world-probe` candidate at `a425b29` adds explicit
 recorded-action conditioning while retaining strict own-policy replay as a
@@ -145,13 +145,21 @@ diagnostic dataset, not untouched confirmation.
 
 The CPU result-binding tests also pass using explicitly fabricated new outputs
 against the real source prefixes and original traces. They do not validate GPU
-predictions. The bound follower started the nine serialized GPU combinations at
-06:07 UTC on September 9, after the entire Freeway pilot completed and its parent
-exited. The first diagonal, model 0 / recording 0, completed at 06:10:51 UTC:
-all 2,816 one-step forecasts match the original exactly and common-input checks
-pass. Model 1 / recording 1 started next. No cross-model quality ranking or
-whole-diagnostic memory result is established yet. Preserve the original
-executable, active pins and all historical results; do not start a second copy.
+predictions. The bound follower ran all nine serialized GPU combinations from
+06:07 through 06:47 UTC on September 9, after the entire Freeway pilot completed
+and its parent exited. All three same-model diagonals reproduce their original
+one-step forecasts exactly; all six cross-model runs pass common RGB/feature
+input checks. Each model sees the same 11,388 transitions, for 34,164 forecasts
+in total, with zero learner updates. All nine GPU phases pass coverage and
+memory checks, with at least 7,469 MiB directly free and a maximum 0.268-second
+sample gap. These are diagnostic trajectories, not new policy rollouts or wins.
+
+The [completed data manifest](../../runs/common-world-20260908.7gWHsJ/completed.json)
+records every result/trace hash and memory window. Its SHA-256 is
+`8a3f25ad6c92be9bb563e1bcc741ceaa21aa73d1a6500e15784acd2078eca48a`.
+The controller exited successfully, and the bound follower started the declared
+exploration runtime gate at 06:47:48 UTC. Preserve the original executable,
+35 input pins and all results; do not restart this completed diagnostic.
 
 A CPU-only [common-input report builder](../../runs/common-world-report-20260909.O7nqqe/summarize.py)
 is ready, with 13 passing tests using explicitly fabricated report fixtures.
@@ -161,9 +169,9 @@ positive/negative/zero-reward groups, visual-cache strata and terminal counts.
 Every point links to its existing recording. Policy likelihood and value remain
 descriptive, not imitation scores or off-policy critic targets.
 
-No common-input report or new model-quality result exists yet. After the
-diagnostic **and the following matched runtime benchmark** finish, generate it
-without competing with that benchmark's CPU work:
+The common-input report and cross-model interpretation are pending. The following
+matched runtime gate is now running; wait for it to finish before generating
+the report, without competing with its timing runs:
 
 ```sh
 PYTHONPATH=/x/Code/kindle/python python/.venv/bin/python runs/common-world-report-20260909.O7nqqe/summarize.py
