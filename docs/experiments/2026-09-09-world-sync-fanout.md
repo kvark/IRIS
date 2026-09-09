@@ -30,12 +30,30 @@ make R256 training faster than real time.
 ## Validation status
 
 The workspace has 96 passing CPU tests; 24 hardware tests remain ignored.
-Workspace and Python-binding Clippy checks and formatting pass. No new Python
-extension has been built or substituted. Existing Python files are unchanged.
+Workspace and Python-binding Clippy checks and formatting pass. Python source
+is unchanged. A separate release extension is now built, but no existing package
+or active input has been substituted.
 CPU logs are in `runs/world-sync-fanout-20260909.zxMPa9/`.
 The archived `kindle-tests` binary has SHA-256
 `84d13e8a2539ef4b51da7f03b25c601b818cbd202fd85cc8dde3ffb319ce3be8`.
 Shared debug build outputs now contain this candidate; they are not controls.
+
+The isolated package is `runs/world-sync-fanout-20260909.zxMPa9/package`, built
+from the same `63d3df7` source with CPython 3.14.4, Rust 1.98.0, locked/offline
+dependencies, one low-priority CPU job and a fresh Cargo target directory.
+All 547 Python CPU tests pass with this native module imported in the test
+process and its identity/hash checked again after the suite. All six packaged
+Python files match source. The compiled library, wheel payload and imported
+extension are byte-identical, with native SHA-256
+`c2f5f3d8e87907e8da8071e7e65aad5becbe612e9f64f67a7ca75630762d44f3`.
+The historical `f663dd93`, active `9cd176c1` and queued `9cf1316b` packages retain
+their original hashes. `cpu-evidence.json` records the build and evidence hashes;
+`package-identity.json` and `python-tests-bound.xml` retain the checks.
+
+This CPU build overlapped Freeway training, not a matched timing window. It
+constructed no GPU agent and provides no new timing or learning result. The
+source branch remains pinned to its pre-build commit; these are later local
+artifacts. Do not use the new package in any existing queue.
 
 Two new ignored GPU tests compare fan-out with the independent serial helper:
 
