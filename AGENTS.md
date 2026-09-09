@@ -199,6 +199,11 @@ reliable learning.
   run only after Freeway and the declared common-world diagnostic release the GPU.
   Existing campaign declarations reject the changed exploration protocol. A new
   package requires its own matching runtime/memory evidence before long training.
+  That gate is declared in `runs/persistent-exploration-gate-20260908.OVSB5q`
+  with 66 pins and 31 passing CPU gate/handoff tests. Its 107-pin follower is
+  bound to the actual Freeway launcher; it waits for full pilot completion, then
+  runs common-world and the candidate gate once, stopping on failure. Preserve
+  these inputs. It starts no long learning run and does not adopt exploration.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

@@ -1,6 +1,6 @@
 # Kindle: one actor learning to play
 
-Updated 2026-09-08. This is the single project roadmap. Detailed measurements
+Updated 2026-09-09. This is the single project roadmap. Detailed measurements
 and commands live in the [kickoff report](experiments/2026-09-05-kickoff.md) and
 [self-learning report](experiments/2026-09-05-self-learning.md), not a second plan.
 Working rules are in [AGENTS.md](../AGENTS.md).
@@ -171,6 +171,10 @@ now passes 95 Rust and 547 Python CPU tests, including actual-action provenance
 and unassisted-evaluation guards. It is not adopted: native GPU causality,
 default-path parity, matching memory/runtime evidence and a fixed-budget learning
 comparison remain required after the active Freeway and common-world queues.
+The declared GPU gate and process-bound follower now wait for the complete
+Freeway pilot, then run common-world and candidate validation in order. They
+cannot restart the pilot or launch a long learning arm. Their 31 CPU checks are
+handoff/binding evidence, not new world-model, speed or gameplay results.
 
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction

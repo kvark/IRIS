@@ -89,6 +89,33 @@ common-recording world diagnostic. Preserve their pinned inputs.
    fresh-seed replication declaration. Keep all five game gates and seeds
    1009, 2017 and 3019. No result here changes the failed Pong all-seeds decision.
 
-The detailed GPU manifest and launcher are not yet declared. Do not run root
-binaries by accident: cached build outputs may belong to another isolated
-candidate. Select or rebuild the explicitly identified package/test executable.
+## Serialized handoff declared
+
+The gate is now declared in
+`runs/persistent-exploration-gate-20260908.OVSB5q/manifest.json`, with 66 input
+pins. It adds an explicit default-path throughput non-regression bar: candidate
+throughput must be at least 95% of its paired control in both orders. The short
+Freeway integration uses probability .25 and hold 64; these are integration
+settings, not an adopted long-training recipe. Its three Rust hardware tests
+use an archived test executable, not a mutable root build output.
+
+The 31 CPU gate/handoff checks pass. They bind a real completed old N6 control
+and reject changed identities, learner reports and checkpoints; candidate rows
+and completed queue children in the unit fixtures are explicitly fabricated.
+These tests do not establish candidate GPU parity or learned competence.
+
+`follow_queue.py` started at 23:58 UTC on September 8, bound to the actual live
+Freeway launcher PID 2105757 and its process start identity. Its 107-pin
+declaration waits for the entire pilot to complete and the process to finish,
+then runs the common-world diagnostic and this gate in separate processes.
+The follower itself is PID 2119271 at the last check. It polls every 30 seconds,
+has a bounded wait, and neither restarts nor stops the Freeway parent. Failed
+prerequisites or child failures stop the follow-on without automatic retry.
+
+At declaration, neither follow-on GPU job has started. Even a successful gate
+will not launch a long learning run or select the exploration recipe; a fixed
+learning comparison still needs its own declaration. Keep the original
+Freeway, common-world, CPU-candidate and gate inputs unchanged.
+
+Do not run root binaries by accident: cached build outputs may belong to another
+isolated candidate. Select the explicitly identified package/test executable.
