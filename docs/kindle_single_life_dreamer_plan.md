@@ -182,9 +182,11 @@ it compares hold64 and hold1 at the same .5 exploration probability, seed 0,
 restored untrained control. The launcher/proof checks pass 47 CPU tests; no
 new learning arm has started. A paired pilot remains distinct from the required
 fresh three-seed, five-game replication, and cannot select a recipe automatically.
-The [fixed-prefix control diagnostic](experiments/2026-09-09-freeway-zero-signal.md)
-finds zero rewards and zero reported absolute advantage in all 17,650 updates
-through 72k actions, despite a large reduction in predictive training loss.
+The [completed-training control diagnostic](experiments/2026-09-09-freeway-zero-signal.md)
+finds zero rewards across 96 natural rounds and zero reported absolute advantage
+in all 49,651 updates through 200,004 actions. All 241 saved tensor entries are
+complete and finite, despite no reward-driven policy signal; predictive training
+loss falls substantially.
 Imagined-policy entropy remains near its maximum. This supplies a concrete
 reason to prioritize reward discovery; good fitting of unrewarded experience
 does not establish useful policy learning or a cause for the Pong seed failures.
@@ -242,8 +244,9 @@ at roughly four times the updates, not a held-out forecast or final-policy win.
 A one-seed pilot is not reliability. The completed memory/runtime comparison
 selects N6 for the unchanged repaired package, without changing the learner.
 The declared sparse Freeway pilot in `runs/freeway-pilot-20260908.WWxHEM`
-started at 22:19 UTC: 200,004 fresh seed-0 actions, then 75,000 sampled frozen
-actions and a separately restored untrained control. Its gate remains ≥25
+completed 200,004 fresh seed-0 training actions at 04:45 UTC on September 9,
+with no rewarded rounds. Its 75,000-action sampled frozen evaluation is running;
+the separately restored untrained comparison remains pending. Its gate remains ≥25
 crossings in ≥90% of ≥20 natural rounds, with mean ≥25 and no cutoffs.
 This is a pilot, not a fresh replication or a Freeway competence result.
 Declare remaining budgets and fresh three-seed replication before those runs;
@@ -622,8 +625,9 @@ contamination before any larger swarm or shared-optimizer design.
 
 ## Immediate work and invariants
 
-Current work is the fixed-budget Freeway pilot, followed by common-distribution
-world/reward diagnostics and a declared response to the results. Keep Pong's
+Current work is the final evaluation/control phase of the fixed-budget Freeway
+pilot, followed by common-distribution world/reward diagnostics and the declared
+persistent-exploration comparison after its runtime gate. Keep Pong's
 failed all-seeds gate visible; broader Atari learning and fresh three-seed
 reliability remain unfinished. Stage runtime candidates separately from the
 live experiment. Add world-only pretraining and the current-Dreamer mind-games

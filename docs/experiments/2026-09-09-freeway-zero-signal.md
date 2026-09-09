@@ -1,16 +1,18 @@
-# Freeway prefix: predictive training without reward-driven policy signal
+# Freeway: predictive training without reward-driven policy signal
 
-Measured 2026-09-09 from the fixed first 72,000 actions of the still-running
-plain-policy Freeway pilot. This is a post-hoc training diagnostic, not a
-complete-run audit, frozen evaluation, candidate result or five-game success.
-The original run and its full budget remain unchanged.
+Measured 2026-09-09, first from a fixed 72,000-action prefix and then from the
+completed 200,004-action plain-policy Freeway training run. These are post-hoc
+training diagnostics, not frozen evaluations, candidate results or five-game
+success. The original experiment and its full budget remain unchanged.
+
+## Original fixed-prefix diagnostic
 
 Artifacts: `runs/freeway-prefix-diagnostic-20260909.kRl6ho/`. The script reads
 only the already-complete prefix, checks it again byte-for-byte, and constructs
 no agent or GPU context. Its 32,383,130-byte source-prefix SHA is
 `bc783d358ab1316dd1706e22c75d68e18283bb868bc98999471c73cc0615619c`;
 result SHA is `c6957676a5b3a082773356e8f592caf7c9eb3011100f1a34b59439c5bd59568d`.
-The source log can continue growing without changing this prefix.
+The later training records do not change this prefix.
 
 ## Observations
 
@@ -53,3 +55,52 @@ test whether new rewarded experience becomes unassisted learned skill. Do not
 change the live control, its learning rate, clipping, architecture or budget
 based on this prefix. No claim here establishes the cause of the separate Pong
 seed variation; its common-recording world diagnostic remains pending.
+
+## Completed training and saved-state check
+
+Training exited successfully at 04:45:50 UTC after 200,004 actions and 49,651
+updates. The original launcher accepted its declared accounting and started
+the 75,000-action frozen evaluation. That evaluation and the separately restored
+untrained comparison are still pending; the whole pilot is not complete.
+
+The separate CPU-only [completed-training result](../../runs/freeway-training-complete-20260909.MnYwlJ/result.json)
+checks the closed log, all 34 declaration pins and the exact final checkpoint.
+It does not construct an agent or replay ALE. Its
+[saved-state evidence](../../runs/freeway-training-complete-20260909.MnYwlJ/saved-state.json)
+requires every schema tensor name, shape and dtype, including all optimizer
+moments, rather than accepting a finite but incomplete checkpoint.
+
+- All 96 completed rounds are natural, with zero return and no cutoffs. Every
+  stream's total reward is zero, including its unfinished tail.
+- Every one of the 49,651 learner reports is finite. Sampled positive/negative
+  reward counts, replay reward MAE, imagined batch-mean reward, return mean and
+  mean absolute/weighted absolute advantage remain exactly zero throughout.
+- All 241 saved tensor entries are present and finite, and every saved second
+  moment is nonnegative. World and behavior optimizer counters both equal
+  49,651; the slow-value copy has no optimizer steps. Metadata and recorded
+  final-checkpoint hashes agree.
+- Future-prediction training loss averages 31.68 over the final 12,000 actions,
+  versus 11,750.62 over the first 12,000. This remains training fit, not
+  held-out predictive quality or useful behavior.
+
+The completed run reinforces reward starvation as the actionable failure:
+there was no reported reward-driven policy advantage at any update. Finite
+saved state does not rule out other learning pathologies or establish stability
+across seeds. Preserve the queued matched hold64/hold1 discovery experiment and
+its strictly unassisted frozen evaluations; do not silently extend this control.
+
+The training loop took 6.41 hours at 8.663 actions/s, 0.5775× aggregate real time
+and 0.09625× per stream. Learning consumed 74.0% of loop time, observation 25.4%
+and emulator stepping 0.5%. The full training command has 92,481 GPU samples,
+a maximum 0.272-second gap, 69.15% mean activity and at least 3,303 MiB directly
+free; this phase passes the declared coverage and memory gates. These are
+whole-pilot observations, not matched optimization timings: CPU preparation
+overlapped parts of training. Activity is not occupancy or measured idle time;
+the whole pilot's GPU audit must still cover its remaining phases.
+
+Closed training-log SHA-256:
+`d18454bda31630d859401d047ba078c16d61fac5df3ded83ea841793ee803302`.
+Result SHA-256:
+`5e4928c496da2d7e36370e1d71296c9b0789bff1137732b8117ce30499856d42`.
+The result also records its script/helper hashes and the final checkpoint's
+metadata and three tensor-file hashes. The original prefix evidence is retained.

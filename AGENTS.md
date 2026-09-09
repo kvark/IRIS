@@ -187,6 +187,10 @@ reliable learning.
   videos follow both. Keep its 34 pins unchanged and GPU phases serialized;
   do not run large CPU graph builds alongside it. This is a pilot, not fresh
   replication, a Freeway success claim or five-game completion.
+  Its training completed at 04:45 UTC on September 9: 200,004 actions, 49,651
+  updates and 96 natural rounds, all unrewarded. The final 241 saved tensor
+  entries are complete and finite, with valid moments/counters. Frozen
+  evaluation is running; the final comparison and whole-pilot audit are pending.
   The completed CPU-only Freeway discovery check in
   `runs/freeway-discovery-20260908.Zig71a` compares hold lengths 1/16/64 at
   200,004 actions each on three seeds. Independent random actions find no
@@ -218,11 +222,13 @@ reliable learning.
   the old plain-policy pilot is context, not the matched hold1 arm. Keep its
   inputs fixed; it has no learning result and cannot adopt a recipe or launch
   replication. See `docs/experiments/2026-09-09-freeway-persistence.md`.
-  The fixed 72k-action Freeway prefix has zero rewards across 30 natural rounds
-  and zero reported absolute advantage in all 17,650 updates, despite declining
-  prediction training loss and finite learner scalars. Imagined-policy entropy
-  is near its maximum. Prioritize rewarded discovery, not an unsupported claim
-  of numerical collapse; this is not frozen competence or a Pong diagnosis.
+  The complete 200,004-action Freeway training log extends the preserved 72k
+  diagnostic: all 49,651 updates have zero reported absolute advantage, despite
+  declining prediction training loss and finite learner scalars/saved state.
+  Imagined-policy entropy is near its maximum. Prioritize rewarded discovery,
+  not an unsupported claim of numerical collapse; this is not frozen competence
+  or a Pong diagnosis. Full-training GPU coverage passes with 3,303 MiB minimum
+  directly free and 69.15% mean activity, not a matched speedup or whole-pilot gate.
   Details: `docs/experiments/2026-09-09-freeway-zero-signal.md`.
   The CPU episode-budget check freshly replays Breakout/Qbert random rewards
   and verifies the 25,000-decision wrapper cap. Their rewards are discoverable

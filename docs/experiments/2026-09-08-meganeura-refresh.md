@@ -26,8 +26,9 @@ are identical, as is the dependency lock. Changes are package version 0.3.0,
 package exclusions, release documentation and CI packaging verification; there
 are no additional runtime fixes. The reviewed objects and tree identities are
 in `runs/meganeura-release-review-20260908.2YmT2Y/`. Keep the validated `a7e2efd9`
-runtime pin unchanged. A fresh remote check later that evening still resolves main
-to `970da8e3`. It includes all reviewed upstream runtime
+runtime pin unchanged. A fresh remote check at 05:06 UTC on September 9 still
+resolves main to `970da8e3`; the source/test/lockfile comparison remains empty.
+The adopted pin includes all reviewed upstream runtime
 fixes plus the two required cache patches, but is not the latest upstream
 release-metadata commit.
 
