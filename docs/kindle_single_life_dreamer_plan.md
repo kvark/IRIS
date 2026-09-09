@@ -625,6 +625,12 @@ adapter as their gates are reached. Do not start actor/learner separation,
 independent learner swarms or another arbitrary 100-hour run as a substitute
 for stronger behavior.
 
+For the remaining Atari pilots, avoid a fixed evaluation window too short for
+20 long games. The [episode-budget candidate](experiments/2026-09-09-episode-evaluation.md)
+keeps a fixed per-stream episode target and hard action cap, with every completed
+episode scored. CPU checks pass; GPU validation and a new declaration remain
+required. Existing evaluations and all five task/three-seed criteria are unchanged.
+
 For every experiment retain source/model/encoder hashes, environment and data
 manifests, actual action/reward/boundary logs, all seeds, fixed final evaluations,
 videos and wall/game/update counts. Report frozen versus learning mode and

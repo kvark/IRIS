@@ -219,6 +219,15 @@ reliable learning.
   is near its maximum. Prioritize rewarded discovery, not an unsupported claim
   of numerical collapse; this is not frozen competence or a Pong diagnosis.
   Details: `docs/experiments/2026-09-09-freeway-zero-signal.md`.
+  The CPU episode-budget check freshly replays Breakout/Qbert random rewards
+  and verifies the 25,000-decision wrapper cap. Their rewards are discoverable
+  without Freeway's random holds. The separate `exp/episode-budget-evaluation`
+  candidate at `4281242` adds frozen-only v4 stopping when every stream reaches
+  a predeclared episode count, retaining every completed episode and a hard cap.
+  Its 580 CPU tests and exact old-ledger accounting are not GPU validation or
+  adoption. See `docs/experiments/2026-09-09-episode-evaluation.md`; preserve all
+  current fixed-action queues, game criteria and fresh-seed gates. Require GPU
+  prefix/state checks and a new declaration before using this stopping rule.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

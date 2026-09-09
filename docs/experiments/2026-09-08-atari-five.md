@@ -47,6 +47,14 @@ fixed evaluation budgets and the common three-seed training budget before their
 campaign; passing a wiring fixture or only the Qbert first-pyramid milestone
 does not meet the five-game goal.
 
+The [CPU evaluation-budget check and staged stopping rule](2026-09-09-episode-evaluation.md)
+address the longer-game sample count. Six streams may need up to 600,000 actions
+to guarantee at least 24 completed episodes under the unchanged frame cap,
+including cutoffs. Candidate v4 can stop earlier when every stream completes
+four episodes, retaining all completed outcomes rather than a selected subset.
+Its 580 CPU tests pass, but GPU prefix/state checks and a new declaration are
+still required; no live evaluation or acceptance criterion has changed.
+
 ## Bounded first comparison
 
 Boxing provides frequent signed feedback, making it a useful next test of
