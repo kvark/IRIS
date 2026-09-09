@@ -676,8 +676,9 @@ pass their unassisted frozen gates; the restored untrained control scores zero.
 All budgets, checkpoints, replays and GPU phases validate. Carry hold64
 provisionally into fresh Freeway confirmation, retaining the successful hold1
 control; neither result proves reliability. Do not restart the completed queue.
-Current GPU work is the already-declared episode-count evaluation gate, followed
-by the bounded world-sync runtime comparison. Then declare remaining game pilots
+Current GPU work completes the two remaining episode-count evaluation checks
+after an interruption, preserving and reusing the two completed original phases.
+The bounded world-sync runtime comparison follows. Then declare remaining game pilots
 and fresh three-seed replication against the selected validated package.
 The common-distribution world report finds
 strong recording-dependent reward errors, including in the best Pong player;

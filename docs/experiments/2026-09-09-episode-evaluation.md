@@ -104,7 +104,7 @@ The cap-check manifest SHA-256 is
 its result SHA-256 is
 `f4669872d97524ea2e409762c78ca99cb81e3e993c5704a871ab3b964dd787cb`.
 
-## GPU check running
+## GPU check interrupted; continuation running
 
 The frozen-only check is now declared in
 `runs/episode-evaluation-gate-20260909.8f1yKj`, with 55 input pins and manifest
@@ -118,8 +118,16 @@ The Freeway learning pilot completed normally at 22:28:24 UTC on September 9.
 An independent CPU recheck verifies all trained/control results, complete saved
 state, replay bindings, 82 pins and all six raw GPU windows. Only then was this
 gate launched manually, with its first control starting at 22:30:32 UTC.
-The launcher is PID 2257970/start tick 106518451 at this check. Results are still
-pending; preserve this active gate rather than launching another copy.
+Its first two phases complete with full native-state and ledger checks: the
+fixed control executes 18,000 actions; the episode-budget candidate stops at
+3,618, with one natural episode per stream and zero updates. The latter also
+matches the original fixed-control prefix in the continuation's CPU recheck.
+
+The launcher records an interruption signal (`SystemExit(130)`) at 22:50:10 UTC.
+The third phase stops at 9,150/18,000 actions with `reason=interrupted`; the
+controller and native worker are terminal. No numerical failure is reported,
+but the four-phase gate is incomplete. Preserve every original artifact,
+including this interrupted trajectory. Do not restart the original queue.
 
 Using the completed Boxing R256 model, the fixed order is control v2 for
 18,000 actions; candidate v4 until every stream completes one episode, capped
@@ -141,7 +149,7 @@ claim from these timings.
 All 30 CPU gate tests pass. They include reading the real completed checkpoint's
 241 saved tensors and explicitly fabricated binding/capture/stopping fixtures,
 not execution of this GPU comparison. Preserve the pinned candidate inputs.
-The command already launched after the predecessor released the GPU is:
+The original command, already interrupted and not to be rerun in place, was:
 
 ```sh
 python/.venv/bin/python runs/episode-evaluation-gate-20260909.8f1yKj/run_gate.py
@@ -149,3 +157,24 @@ python/.venv/bin/python runs/episode-evaluation-gate-20260909.8f1yKj/run_gate.py
 
 Failures preserve artifacts and stop only this check's child. A pass still
 does not adopt an evaluation protocol, launch training or establish mastery.
+
+### Separately declared continuation
+
+`runs/episode-evaluation-continuation-20260909.6YKbjp` pins 100 inputs and
+original artifacts; manifest SHA-256 is
+`ed640b77b2d3769bcf121f39bece604afa4ca283986c0d03b1ec6cda9478f8fe`.
+Its 51 CPU checks include the existing 30 gate tests and 21 new continuation
+binding fixtures, not new GPU results. Before declaration and launch, a fresh
+CPU audit rechecks the two completed original ledgers, complete saved state,
+exact shorter prefix and both original GPU memory/coverage windows.
+
+Only the unfinished phases run again: all 18,000 candidate fixed actions from
+a fresh restore of the original Boxing checkpoint, then the six-action negative
+cap case. It never appends to the partial trajectory or restores its checkpoint.
+The unchanged original capture implementation writes to fresh continuation
+paths. All settings, full-state/trace requirements and memory gates are retained.
+
+The new fixed phase started at 22:58:58 UTC. Its controller is PID 2262413/start
+tick 106688868 at this check. Final four-way comparison and new GPU coverage
+remain pending. No automatic retry, adoption, speed claim or training run is
+introduced. The world-sync comparison still follows completion of this gate.

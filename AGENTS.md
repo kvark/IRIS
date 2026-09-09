@@ -268,9 +268,16 @@ reliable learning.
   Its frozen-only GPU check started at 22:30 UTC on September 9 in
   `runs/episode-evaluation-gate-20260909.8f1yKj`: 55 pins, 30 passing CPU tests,
   bound to the actual persistence-learning launcher, which has completed normally.
-  It refuses live-parent execution and starts no follower. Preserve candidate
-  inputs and this active gate, checking full frozen state and prefixes; no GPU
-  result or adoption is claimed yet. The world-sync comparison follows this gate.
+  It refuses live-parent execution and starts no follower. The first two phases
+  pass state/ledger checks, but an interruption signal stops the third at
+  9,150/18,000 actions at 22:50 UTC. Preserve that incomplete original queue;
+  no numerical failure or complete gate result is claimed. The separately
+  declared continuation `runs/episode-evaluation-continuation-20260909.6YKbjp`
+  rechecks and reuses the two completed phases, with 100 pins and 51 CPU tests.
+  It started a fresh 18,000-action candidate restore at 22:58 UTC, followed by
+  the six-action negative cap case. Do not append to the interrupted trajectory,
+  alter settings or overwrite original inputs. Full combined state/prefix and
+  memory checks remain required. The world-sync comparison follows this gate.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted
