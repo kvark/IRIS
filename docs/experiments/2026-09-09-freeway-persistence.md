@@ -96,6 +96,26 @@ This later fixed prefix is 5,698,571 bytes with SHA-256
 again reproduced by a second read. It retains all six rounds and partial tails;
 no final score, checkpoint selection or experiment setting changes.
 
+## First periodic checkpoint health
+
+The scheduled save at 20,004 actions / 4,651 updates completed at 08:09 UTC.
+A CPU-only [inspection and archive](../../runs/freeway-first-checkpoint-20260909.mK2sXv/result.json)
+checks all 241 tensor entries against the declared schema: complete names,
+shapes and dtypes, finite values, nonnegative optimizer second moments, valid
+return normalizers and correct world/behavior/slow-value counters (4651/4651/0).
+Metadata, backend/perception identity and the saved action/update counters match
+the training record. All 82 experiment pins remain unchanged.
+
+The archived checkpoint and 9,062,133-byte log prefix match their source hashes
+before and after capture. A fresh CPU process independently reproduces the
+saved-state, archive and prefix checks. Result SHA-256 is
+`4e30662962f0f65b5661742ffe0fff8e5bc6eee05ec974051f9db95ee7b8cf4b`.
+No agent was constructed or evaluated. This is not complete-run accounting,
+proof against other learning failures, or atomic live-state recovery. Keep this
+first-save diagnostic; do not repeat it for every periodic checkpoint without
+a new anomaly or decision it can inform. Only the declared final checkpoint is
+eligible for the fixed frozen evaluation.
+
 ## Verified handoff; fixed arms in progress
 
 The original Freeway pilot, common-recording world diagnostic and
