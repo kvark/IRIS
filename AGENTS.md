@@ -213,6 +213,12 @@ reliable learning.
   the old plain-policy pilot is context, not the matched hold1 arm. Keep its
   inputs fixed; it has no learning result and cannot adopt a recipe or launch
   replication. See `docs/experiments/2026-09-09-freeway-persistence.md`.
+  The fixed 72k-action Freeway prefix has zero rewards across 30 natural rounds
+  and zero reported absolute advantage in all 17,650 updates, despite declining
+  prediction training loss and finite learner scalars. Imagined-policy entropy
+  is near its maximum. Prioritize rewarded discovery, not an unsupported claim
+  of numerical collapse; this is not frozen competence or a Pong diagnosis.
+  Details: `docs/experiments/2026-09-09-freeway-zero-signal.md`.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

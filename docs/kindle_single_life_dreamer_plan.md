@@ -182,6 +182,12 @@ it compares hold64 and hold1 at the same .5 exploration probability, seed 0,
 restored untrained control. The launcher/proof checks pass 47 CPU tests; no
 new learning arm has started. A paired pilot remains distinct from the required
 fresh three-seed, five-game replication, and cannot select a recipe automatically.
+The [fixed-prefix control diagnostic](experiments/2026-09-09-freeway-zero-signal.md)
+finds zero rewards and zero reported absolute advantage in all 17,650 updates
+through 72k actions, despite a large reduction in predictive training loss.
+Imagined-policy entropy remains near its maximum. This supplies a concrete
+reason to prioritize reward discovery; good fitting of unrewarded experience
+does not establish useful policy learning or a cause for the Pong seed failures.
 
 Persistent native GridWorld also passes on three independent causal seeds:
 2,495/2,498/2,373 food in 10k frozen greedy actions. The matched reconstruction
