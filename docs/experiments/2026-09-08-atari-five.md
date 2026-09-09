@@ -1,9 +1,11 @@
 # Five-game learning campaign
 
-Declared and completed 2026-09-08. **Both R64 and R256 seed 0 pass their frozen
+Boxing pilot declared and completed 2026-09-08. **Both R64 and R256 seed 0 pass their frozen
 Boxing gates. The pilot is complete; three-seed reliability is unproven.**
-The fixed-ratio vector memory/runtime comparison is also complete. The next
-declared pilot is sparse Freeway with six streams, started at 22:19 UTC.
+The fixed-ratio vector memory/runtime comparison is also complete. The first
+plain-policy Freeway pilot failed. The subsequent
+[persistence comparison](2026-09-09-freeway-persistence.md) now has a passing
+hold64 frozen arm; hold1 is training and the untrained control follows.
 The active objective is reliable learning and wins/task completion on five
 Atari games. The completed backend refresh and world-model diagnostics are
 enabling work, not satisfaction of that objective.
@@ -24,7 +26,7 @@ independent replication. Preserve the failed original three-seed Pong gate.
 | --- | --- | --- |
 | Pong | Win the match; mean return ≥15 and ≥90% natural wins over ≥20 games | Existing 200k-action recipe fails two of three seeds; new recipe must be separately declared |
 | Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | R64: 40/40 wins, mean +51.55; R256: 162/162, +92.4877; untrained: +0.125. Fresh replication pending |
-| Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | N6/R256 seed-0 pilot running; observer fixture holding UP scores 21, not a Kindle result |
+| Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | Hold64 N6/R256 seed 0: 36/36 qualifying frozen rounds, mean 31.0556. Matched controls and fresh replication pending; plain-policy pilot failed |
 | Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Positive and negative actual-ROM fixtures verified; declare its training/evaluation budgets next |
 | Qbert | Sustained progression: first-pyramid completion in ≥90% of ≥20 complete episodes, plus mean final score ≥15,000 | First-pyramid observer verified; one cleared pyramid alone is not mastery |
 
@@ -170,16 +172,23 @@ recorder. Preserve them throughout the serialized queue.
   retry, budget extension, task-bar change or recipe selection follows a failure.
 
 Outputs are `train.jsonl`, `evaluation.{jsonl,score.json,replay.json,mp4}` and
-the corresponding `untrained-evaluation.*` files. These paths are declared
-destinations, not completed results. `completed.json` is written only after
-all phases and audits finish. No Freeway pass or fresh-seed reliability is
-claimed while the pilot runs.
+the corresponding `untrained-evaluation.*` files. This pilot completed at
+06:06 UTC on September 9: no rewards during 200,004 training actions, and
+zero crossings in all 36 natural rounds of both frozen evaluations. Complete
+checkpoint/replay checks and all four GPU-phase coverage/memory gates pass,
+but the task gate fails. Preserve this control and its complete videos; see
+the [zero-signal diagnosis](2026-09-09-freeway-zero-signal.md).
 
 A separate [CPU discovery diagnostic](2026-09-08-freeway-discovery.md) now
 completes three random seeds for hold lengths 1/16/64. Independent random
 actions produce no rewards; persistent random actions discover hundreds but
 remain far below the task bar. This is a candidate exploration lead, not a
-change to the live pilot or a native learning result.
+change to that pilot or a native learning result. A subsequently declared
+[hold64/hold1 learning comparison](2026-09-09-freeway-persistence.md#completed-unassisted-hold64-result)
+has now completed its hold64 frozen arm: 36/36 qualifying natural rounds, mean
+31.0556, zero updates or overrides and complete final-checkpoint/replay/video
+checks. Its matched hold1 and untrained results are still pending. This is one
+pilot seed, not fresh-seed reliability or five-game completion.
 
 ## Implementation and artifacts
 

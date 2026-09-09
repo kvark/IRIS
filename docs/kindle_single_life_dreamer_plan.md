@@ -181,7 +181,7 @@ not new gameplay successes; off-policy logged returns are not critic targets.
 The [Freeway CPU discovery check](experiments/2026-09-08-freeway-discovery.md)
 finds no rewards under independent random actions in three 200,004-action arms,
 but hundreds when random actions persist for 16 or 64 decisions. These are
-exploration controls, not learned competence. The completed native pilot is
+exploration controls, not learned competence. The completed plain-policy pilot is
 reward-starved; test a bounded persistent-exploration component with explicit
 executed-action provenance and unassisted frozen evaluation before simply
 spending more GPU time on a longer unchanged run. The isolated
@@ -199,8 +199,10 @@ compares hold64 and hold1 at the same .5 exploration probability, seed 0,
 restored untrained control. Hold64 completed training at 13:59 UTC on September 9:
 49,651 updates, 96 rewarded natural rounds, mean 14.1146 crossings, still assisted.
 Complete final state, exploration accounting and the frozen restore match;
-full-training GPU coverage passes with at least 3,302 MiB free. Its unassisted
-evaluation is running; hold1 and the untrained control remain pending. The
+full-training GPU coverage passes with at least 3,302 MiB free. Its completed
+unassisted evaluation passes: 36/36 natural rounds reach 25 crossings, mean
+31.0556, with no cutoffs or updates and complete checkpoint/replay/video checks.
+Hold1 is now training; its result and the untrained control remain pending. The
 47 CPU launcher/proof tests are not gameplay evidence. This paired pilot is
 distinct from the required fresh three-seed, five-game replication, and cannot
 select a recipe automatically.
@@ -275,6 +277,10 @@ control also returns zero in all 36 rounds. Both complete replays/checkpoints an
 all four GPU-phase coverage/memory checks pass; the pilot is complete. The
 [complete failure video and evidence](experiments/2026-09-09-freeway-zero-signal.md#final-frozen-policy-no-learned-crossing-skill)
 are available. This pilot is not fresh replication or Freeway competence.
+The subsequent [persistent-exploration pilot](experiments/2026-09-09-freeway-persistence.md#completed-unassisted-hold64-result)
+does pass the frozen Freeway gate on seed 0: 36/36 qualifying rounds, mean 31.0556,
+with complete final-checkpoint and replay checks. Its matched controls are still
+running; it does not yet establish persistence's benefit or fresh-seed reliability.
 Declare remaining budgets and fresh three-seed replication before those runs;
 do not call a positive score a win or let tooling substitute for learning.
 The [task observers](experiments/2026-09-08-atari-task-observers.md) now distinguish
@@ -651,8 +657,10 @@ contamination before any larger swarm or shared-optimizer design.
 
 ## Immediate work and invariants
 
-Current work is the fixed Freeway hold64/hold1 learning comparison, now running
-after its complete runtime gate. The common-distribution world report finds
+Current work is the fixed Freeway hold64/hold1 learning comparison. Hold64
+passes its unassisted frozen gate; hold1 is training and the untrained control
+follows. Keep these budgets fixed before recipe selection or fresh replication.
+The common-distribution world report finds
 strong recording-dependent reward errors, including in the best Pong player;
 prioritize reward discovery/generalization and measured training coverage.
 The completed plain-policy Freeway pilot fails without finding any reward.

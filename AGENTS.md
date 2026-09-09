@@ -201,7 +201,7 @@ reliable learning.
   ablation over simply extending it. The isolated `exp/persistent-exploration`
   candidate adds explicit native action overrides and versioned per-stream random
   holds, with 95 Rust and 547 Python CPU tests passing. Its full runtime gate
-  now passes; unassisted results remain pending and the recipe is not adopted.
+  now passes; matched learning results remain incomplete and the recipe is not adopted.
   Preserve actual executed actions in RSSM/replay,
   independent RNG, default-path parity and strictly unassisted frozen evaluation.
   See `docs/experiments/2026-09-08-persistent-exploration.md` for the required gates;
@@ -228,9 +228,12 @@ reliable learning.
   inputs fixed. Hold64 completed 200,004 actions / 49,651 updates at 13:59 UTC:
   96 rewarded natural rounds, mean 14.1146, still assisted. Complete final state,
   exploration accounting and frozen restore checks pass; full-training GPU
-  coverage retains at least 3,302 MiB directly free. Unassisted evaluation is
-  running; hold1 and the untrained control remain pending at their fixed budgets.
-  A sound training handoff is not competence, recipe adoption or replication.
+  coverage retains at least 3,302 MiB directly free. Its completed 75k unassisted
+  frozen evaluation passes: 36/36 natural rounds reach 25 crossings, mean 31.0556,
+  no cutoffs or updates, with complete checkpoint/replay/video checks. Frozen
+  GPU coverage retains at least 3,413 MiB free. Hold1 started at 14:39 UTC;
+  its result and the untrained control remain pending at their fixed budgets.
+  One pilot pass is not persistence's matched benefit, recipe adoption or replication.
   See `docs/experiments/2026-09-09-freeway-persistence.md`.
   The original plain-policy Freeway training log at 200,004 actions extends the preserved 72k
   diagnostic: all 49,651 updates have zero reported absolute advantage, despite
