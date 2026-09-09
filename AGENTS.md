@@ -267,6 +267,10 @@ reliable learning.
   package. Keep source and declaration pins intact. Forced controls are offline
   diagnostics, not that model's policy rollout; another policy's logged return
   is not unbiased ground truth for the evaluated critic.
+  The CPU common-input report builder in `runs/common-world-report-20260909.O7nqqe`
+  has 13 passing fabricated-fixture tests, not new GPU results. Generate its
+  report only after all nine comparisons and the following matched runtime
+  benchmark finish, preserving both per-recording and pooled event-class errors.
 - Distinguish video-encoder initialization, action-conditioned world pretraining
   and policy-skill transfer. Missing action/reward labels are not NOOP/zero.
   The isolated `exp/world-pretraining` candidate includes world-only updates and

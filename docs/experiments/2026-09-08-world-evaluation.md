@@ -148,3 +148,23 @@ against the real source prefixes and original traces. They do not validate GPU
 predictions. The diagnostic is not running and has no new model-quality result;
 its nine serialized GPU combinations wait for the entire Freeway pilot queue.
 The original executable and all historical results remain unchanged.
+
+A CPU-only [common-input report builder](../../runs/common-world-report-20260909.O7nqqe/summarize.py)
+is ready, with 13 passing tests using explicitly fabricated report fixtures.
+It refuses incomplete data and reuses the declared nine-comparison validator
+before reporting all model/match pairs, transition-weighted pooled errors,
+positive/negative/zero-reward groups, visual-cache strata and terminal counts.
+Every point links to its existing recording. Policy likelihood and value remain
+descriptive, not imitation scores or off-policy critic targets.
+
+No common-input report or new model-quality result exists yet. After the
+diagnostic **and the following matched runtime benchmark** finish, generate it
+without competing with that benchmark's CPU work:
+
+```sh
+PYTHONPATH=/x/Code/kindle/python python/.venv/bin/python runs/common-world-report-20260909.O7nqqe/summarize.py
+```
+
+The builder is CPU-only and constructs no agent. Its SHA-256 is
+`ec71dad0ea9fac89ff716e19bd153323cd5953839a1f5fb2a8621b5dbd93ec2c`;
+test source and JUnit evidence are adjacent in the same run directory.
