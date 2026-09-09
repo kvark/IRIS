@@ -10,7 +10,9 @@ Prediction-only has passed initial own-action learning gates on native GridWorld
 and Pong with DINOv3. The native LeVJEPA video frontend is now implemented;
 [three vectorized Pong seeds](docs/experiments/2026-09-06-vector-pong.md) have
 completed frozen evaluation: one passes the stronger mastery gate, two fail.
-This demonstrates learned play, not a consistently reliable recipe.
+LeVJEPA also passes the one-seed Boxing pilot; Freeway's plain-policy pilot
+fails its frozen gate. This demonstrates learned play, not a consistently
+reliable five-game recipe.
 Reconstruction remains the measured control. Next comes
 broader single-actor gameplay, accelerated playing plus training, pretraining and
 cross-game transfer. Vectorized environments now share batched inference and one
@@ -33,8 +35,20 @@ or selected best games. Videos are local, git-ignored artifacts. See the
 [footage record](docs/experiments/2026-09-06-vector-pong.md#reconstructed-gameplay-footage)
 for provenance; the full frozen evaluation, not one video, determines mastery.
 
+Boxing: [trained full-stream video](runs/atari-five-continue-20260908.JrdVto/boxing-r256-seed0-eval.mp4)
+and [trained/untrained comparison](runs/atari-five-continue-20260908.JrdVto/report.html).
+The R256 seed-0 frozen evaluation wins 162/162 natural matches across eight
+streams, mean +92.49. This passes the pilot's task gate, not fresh-seed reliability.
+
+Freeway: [failed full-stream video](runs/freeway-pilot-20260908.WWxHEM/evaluation.mp4)
+and [evidence](docs/experiments/2026-09-09-freeway-zero-signal.md#final-frozen-policy-no-learned-crossing-skill).
+After 200k training actions, all 36 frozen rounds return zero. Both games' videos
+are complete CPU reconstructions of stream 0, including its unfinished tail;
+their full multi-stream evaluations determine the scores.
+
 The local [forecast-versus-match report](runs/world-evaluation-20260908.Xzx3pN/report.html)
-compares each frozen world model with those same games. It includes feature and
+compares the three final Pong world models with their first recorded matches.
+It includes feature and
 reward baselines, full prediction traces and clickable point times in the videos.
 
 ## Architecture
@@ -241,17 +255,26 @@ the exact protocol.
 LeVJEPA's dense layers and Dreamer's live posterior/policy are GPU-batched;
 visual caches, beliefs, RNGs and replay sequences remain separate. CPU emulator
 steps are synchronous: measured environment work is below 1% of wall time.
-With GPU-resident imagination and the refreshed backend, the N=8,
-12M/B16/T64/R256 recipe runs at 8.64–8.70 aggregate actions/s on the RTX 5080:
-0.576–0.580× the game clock in aggregate and 0.0720–0.0725× per stream.
-Both pixel pairs have exact actions/reports/checkpoint tensor values. GPU
-activity is 66–70%, with 14,212 MiB peak use and the 2 GiB reserve intact.
-Super-real-time playing **with training** is not yet achieved. The backend
-refresh adds only 0.65–1.24% observed throughput over the prior device-resident
-control. See the [runtime optimization](docs/experiments/2026-09-08-device-imagination.md)
-and [backend refresh](docs/experiments/2026-09-08-meganeura-refresh.md) for stage
-costs and the tested package; the default local editable extension deliberately
-remains the pinned historical control.
+The selected fresh-run configuration is **N6/12M/B16/T64/R256**, full BPTT64,
+row microbatch 16 and F32. Its paired RTX 5080 measurements reach 8.55–8.57
+aggregate actions/s: 0.570–0.572× the game clock in aggregate and about 0.095×
+per stream. All same-N checkpoint tensors and action/episode/reset traces repeat
+exactly. GPU activity averages about 69%; learning takes roughly 74% of loop time
+and observation 25%. Activity is not occupancy or measured idle time.
+
+The [memory/runtime comparison](docs/experiments/2026-09-08-atari-five.md#completed-vector-memory-and-runtime-comparison)
+measures at least 3,302 MiB directly free for N6. N8 retains only 1,630 MiB and
+fails the 2 GiB safety gate. The earlier total-minus-used reserve claim omitted
+driver reservations and is withdrawn. Require directly sampled free memory and
+matching runtime evidence for a changed package or configuration.
+
+R256 playing **with training** remains below real time. The lower-ratio R64
+Boxing pilot reaches about 1.31× in aggregate and passes its one-seed task gate;
+it is a separate learning-compute ablation, not an identical-recipe speedup.
+See the [runtime analysis](docs/kindle_single_life_dreamer_plan.md#what-actually-costs-time)
+and [adopted package](docs/experiments/2026-09-08-meganeura-refresh.md#use-the-adopted-package).
+The default local editable extension deliberately remains the historical control;
+do not overwrite pinned executables or mix them with newer checkpoint identities.
 
 ```bash
 python python/examples/profile_atari_vector.py /models/levjepa/model.safetensors \
