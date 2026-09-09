@@ -126,7 +126,7 @@ policy quality and model quality as distinct gates. Longer all-seed training or
 changed loss/replay settings remain new experiments, not repairs to the failed
 200k-action mastery result. No swarm or actor/learner separation is required.
 
-## Common-recording data complete; analysis pending
+## Common-recording diagnostic: complete
 
 The isolated `exp/common-world-probe` candidate at `a425b29` adds explicit
 recorded-action conditioning while retaining strict own-policy replay as a
@@ -134,11 +134,11 @@ separate mode. All 282 Python CPU tests pass. The declaration in
 `runs/common-world-20260908.7gWHsJ/manifest.json` pins 35 inputs; CPU reconstruction
 verifies all 11,388 transitions, including 62 positive and 29 negative points.
 
-All three final models will see the same three first matches. Score every
-one-step target, require exact reproduction of the original three H1 diagonals
-before cross-model comparison, and verify identical initial/target RGB and
-feature hashes. Record unmasked action probabilities/value before forcing
-controls, without calling the forced trajectory the evaluated model's own play.
+All three final models see the same three first matches. Every one-step target
+is scored, with exact reproduction of the original three H1 diagonals before
+cross-model comparison and identical initial/target RGB and feature hashes.
+Unmasked action probabilities/value are recorded before forcing controls,
+without calling the forced trajectory the evaluated model's own play.
 Cross-policy logged returns are not unbiased critic targets. These recordings
 were held out from training, but have already been inspected; this is a
 diagnostic dataset, not untouched confirmation.
@@ -161,22 +161,77 @@ The controller exited successfully, and the bound follower started the declared
 exploration runtime gate at 06:47:48 UTC. Preserve the original executable,
 35 input pins and all results; do not restart this completed diagnostic.
 
-A CPU-only [common-input report builder](../../runs/common-world-report-20260909.O7nqqe/summarize.py)
-is ready, with 13 passing tests using explicitly fabricated report fixtures.
-It refuses incomplete data and reuses the declared nine-comparison validator
-before reporting all model/match pairs, transition-weighted pooled errors,
-positive/negative/zero-reward groups, visual-cache strata and terminal counts.
-Every point links to its existing recording. Policy likelihood and value remain
-descriptive, not imitation scores or off-policy critic targets.
+The [common-input video report](../../runs/common-world-report-20260909.O7nqqe/report.html)
+and [complete metrics/provenance](../../runs/common-world-report-20260909.O7nqqe/summary.json)
+are now generated, after the following runtime gate completed at 07:30 UTC.
+The CPU-only builder revalidated all nine comparisons, original pins and video
+identities in a fresh process using the historical native package; it constructed
+no agent. Its 13 fabricated-fixture tests remain separate implementation evidence.
+Every scored/conceded point links to its existing recording.
 
-The common-input report and cross-model interpretation are pending. The following
-matched runtime gate is now running; wait for it to finish before generating
-the report, without competing with its timing runs:
+### Shared outcomes change the diagnosis
 
-```sh
-PYTHONPATH=/x/Code/kindle/python python/.venv/bin/python runs/common-world-report-20260909.O7nqqe/summarize.py
-```
+All models retain an action-conditioned feature advantage, including within
+visual chunks. Lower ratios are better. Pooling weights all 11,388 transitions
+equally; recording 1 supplies about 60% of them, so inspect the per-match rows too.
 
-The builder is CPU-only and constructs no agent. Its SHA-256 is
+| Model | Feature MSE | / unrelated controls | Within-chunk / persistence |
+| --- | ---: | ---: | ---: |
+| 0 | 0.02426 | 0.841 | 0.141 |
+| 1 | 0.02519 | 0.838 | 0.145 |
+| 2 | 0.03055 | 0.865 | 0.174 |
+
+The strongest player, model 2, does not have the lowest common-pool feature or
+reward error. Every model has its lowest feature error on its own recording.
+Positive-point forecasts show the same strong dependence on the recording:
+
+| Recording / positive events | Model 0 MAE | Model 1 MAE | Model 2 MAE |
+| --- | ---: | ---: | ---: |
+| 0 / 21 | 0.068 | 0.877 | 0.956 |
+| 1 / 20 | 0.758 | 0.388 | 0.877 |
+| 2 / 21 | 0.618 | 0.981 | 0.051 |
+
+The pooled reward errors below use the same 62 positive and 29 negative events
+for every model. These are magnitude errors in reward units, not probabilities.
+
+| Model | Prior positive / negative MAE | After-frame positive / negative MAE | All-frame prior MAE |
+| --- | ---: | ---: | ---: |
+| 0 | 0.477 / 0.499 | 0.474 / 0.429 | 0.00558 |
+| 1 | 0.755 / 0.453 | 0.703 / 0.382 | 0.00752 |
+| 2 | 0.624 / 0.788 | 0.612 / 0.707 | 0.00657 |
+
+Always-zero reward has event MAE 1 and pooled MAE 0.00799. Model 1 is worst on
+positive magnitude, but best on pooled negative magnitude; a blanket claim that
+its whole world model is worst is unsupported. Model 2's one negative point in
+its own match concealed poor negative prediction on the other recordings.
+Seeing the target frame does not remove the large cross-recording reward errors.
+Four of six cross-model pairs have all-frame prior reward error worse than zero.
+
+This is evidence of limited generalization across these recorded trajectories,
+not proof of a particular failure mechanism or an unbiased estimate over Pong.
+It strengthens the case for examining rewarded experience coverage and robust
+reward learning before enlarging perception. It does not establish that changing
+coverage will fix policy reliability. Preserve all three models and all nine rows.
+
+Only three terminal targets are available. Their MSE is 0.993 / 0.985 / 0.971,
+versus always-continue 0.994: none provides evidence of reliable terminal prediction.
+Common-pool policy entropy and value are descriptive only. Logged-action
+agreement is not action quality, and another policy's return is not a critic target.
+
+### Next bounded decision
+
+Keep the live Freeway hold64/hold1 comparison unchanged: it tests reward discovery
+and subsequent unassisted learning, not this Pong diagnosis. For a Pong follow-up,
+declare training-side reward-coverage measurements and fixed all-seed learning
+budgets before changing exploration, replay or reward losses. Require own-policy
+frozen gameplay and a newly held-out multi-match forecast set; do not select a
+recipe using these already inspected three recordings. A longer budget is a new
+experiment, never an extension that relabels the failed 200k-action mastery gate.
+No result here warrants actor/learner separation or a larger video encoder.
+
+The report builder's SHA-256 is
 `ec71dad0ea9fac89ff716e19bd153323cd5953839a1f5fb2a8621b5dbd93ec2c`;
-test source and JUnit evidence are adjacent in the same run directory.
+report SHA-256 is `fe84e0c66f9eb5a2f9333fa39e2781eb47c93120e4fbb65f95e96eaf74d67595`;
+summary SHA-256 is `0b156990a2c7725d828aad365edf917154fe9408030a30f37ddaa1ef0ed0eb78`.
+The builder refuses existing outputs. Preserve the completed report and data;
+do not rerun GPU forecasts or overwrite these artifacts.

@@ -188,8 +188,8 @@ reliable learning.
   coverage/memory checks pass; directly free memory stays at least 3,303 MiB.
   Whole stream-0 videos are `evaluation.mp4` and `untrained-evaluation.mp4`, not
   successes. Preserve all 34 pins and artifacts; do not restart this completed
-  pilot or call it reliable learning. Its bound follower has completed common-world
-  and started exploration validation; the conditional learning pilot waits on it.
+  pilot or call it reliable learning. Its follower has completed common-world and
+  exploration validation; the separately declared learning pilot is now running.
   The completed CPU-only Freeway discovery check in
   `runs/freeway-discovery-20260908.Zig71a` compares hold lengths 1/16/64 at
   200,004 actions each on three seeds. Independent random actions find no
@@ -200,29 +200,32 @@ reliable learning.
   reward-starved, prioritize a separately declared persistent-exploration
   ablation over simply extending it. The isolated `exp/persistent-exploration`
   candidate adds explicit native action overrides and versioned per-stream random
-  holds, with 95 Rust and 547 Python CPU tests passing. Its three focused GPU
-  tests now pass; full runtime and learning results remain pending. It is not
-  adopted. Preserve actual executed actions in RSSM/replay,
+  holds, with 95 Rust and 547 Python CPU tests passing. Its full runtime gate
+  now passes; learning results remain pending and the recipe is not adopted.
+  Preserve actual executed actions in RSSM/replay,
   independent RNG, default-path parity and strictly unassisted frozen evaluation.
   See `docs/experiments/2026-09-08-persistent-exploration.md` for the required gates;
   run only after Freeway and the declared common-world diagnostic release the GPU.
   Existing campaign declarations reject the changed exploration protocol. A new
   package requires its own matching runtime/memory evidence before long training.
-  That gate is running in `runs/persistent-exploration-gate-20260908.OVSB5q`,
+  That gate completed in `runs/persistent-exploration-gate-20260908.OVSB5q`,
   with 66 pins and 31 passing CPU gate/handoff tests. Its 107-pin follower
   completed Freeway/common-world prerequisites and launched the gate at 06:47 UTC
-  on September 9. The three focused native GPU tests pass; the matched trials
-  and whole-gate decision remain pending. Preserve all inputs; stop on failure,
-  without restarting completed jobs. This gate starts no long learning run and
-  does not adopt exploration.
-  A separate conditional learning declaration now waits on that actual follower:
+  on September 9, finishing at 07:30 UTC. Three native tests, exact default
+  state/report/trace parity, the pixel override integration and all 13 GPU
+  memory/coverage phases pass. Minimum directly free memory is 3,303 MiB;
+  warmed candidate/control throughput ratios are 0.999197 and 0.999774, not
+  a speedup. Preserve inputs and results; do not restart this completed queue.
+  This gate starts no long learning run and does not adopt exploration.
+  A separate conditional learning declaration reverified the actual raw evidence:
   `runs/freeway-persistence-learning-20260909.C0GoqT`, 82 pins and 47 passing
-  CPU launcher/proof tests. It reverifies raw runtime evidence before any GPU
-  use, then compares .5 exploration probability with hold64 versus hold1, each
-  fresh seed 0, 200,004 training and 75,000 unassisted frozen actions, followed
+  CPU launcher/proof tests. Hold64 started at 07:31 UTC on September 9, after
+  raw runtime verification; the worker compares .5 exploration probability
+  with hold64 versus hold1, each fresh seed 0, 200,004 training and 75,000
+  unassisted frozen actions, followed
   by a separately restored untrained control. Both arms use the same new package;
   the old plain-policy pilot is context, not the matched hold1 arm. Keep its
-  inputs fixed; it has no learning result and cannot adopt a recipe or launch
+  inputs fixed; it has no final learning result and cannot adopt a recipe or launch
   replication. See `docs/experiments/2026-09-09-freeway-persistence.md`.
   The complete 200,004-action Freeway training log extends the preserved 72k
   diagnostic: all 49,651 updates have zero reported absolute advantage, despite
@@ -272,10 +275,10 @@ reliable learning.
 - Evaluate the world model separately from its policy. The completed frozen
   first-match replays in `docs/experiments/2026-09-08-world-evaluation.md` match
   every recorded action and transition without learning. All three use action
-  information in feature prediction; seed 1 has weaker point-reward magnitude
-  estimates even after seeing the frame. Prioritize reward/value reliability
-  and policy action use on a common held-out distribution, not speculative
-  perception expansion. These own-policy trajectories do not establish causation.
+  information in feature prediction. Own-policy reward errors motivated the
+  completed common-recording comparison below; they do not establish causation
+  or a global ranking of world-model quality. Prioritize reward generalization
+  and experience coverage before speculative perception expansion.
   Forecast before consuming the target; separate prior from posterior reward
   estimates, include persistence/unrelated-action/zero-reward baselines, and
   report positive/negative/terminal counts. LeVJEPA cache resets can inflate
@@ -292,15 +295,23 @@ reliable learning.
   hashes. All nine GPU runs completed at 06:47 UTC on September 9: three exact
   diagonals, six common-input checks, zero updates and passing memory/coverage
   checks with at least 7,469 MiB directly free. Preserve the 35 pins, historical
-  native f663dd93 and completed data; do not restart the diagnostic. Its report
-  and interpretation wait until the following runtime gate finishes.
+  native f663dd93 and completed data; do not restart the diagnostic.
   Forced controls are offline diagnostics, not that model's policy rollout;
   another policy's logged return
   is not unbiased ground truth for the evaluated critic.
-  The CPU common-input report builder in `runs/common-world-report-20260909.O7nqqe`
-  has 13 passing fabricated-fixture tests, not new GPU results. Generate its
-  report only after all nine comparisons and the following matched runtime
-  benchmark finish, preserving both per-recording and pooled event-class errors.
+  The report in `runs/common-world-report-20260909.O7nqqe/report.html` is now
+  generated after runtime validation, rechecking all nine results and video
+  identities in a fresh historical-native CPU process. All models predict
+  features and positive rewards best on their own recording; even the strongest
+  player predicts other recordings' rewards poorly. Model 1 has the worst
+  common-pool positive error but the best negative error; do not call its whole
+  world model uniformly worst. Four of six cross-model all-frame prior reward
+  errors exceed the zero baseline. Preserve per-recording and pooled event
+  counts, visual-cache strata and the three-terminal limitation. This is limited cross-trajectory
+  generalization, not proof of the policy failure's cause. Keep current learning
+  arms fixed; declare training-side reward-coverage checks, own-policy frozen
+  results and a new multi-match forecast set before selecting a changed recipe.
+  The report builder's 13 fabricated-fixture tests are implementation evidence.
 - Distinguish video-encoder initialization, action-conditioned world pretraining
   and policy-skill transfer. Missing action/reward labels are not NOOP/zero.
   The isolated `exp/world-pretraining` candidate includes world-only updates and

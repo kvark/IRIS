@@ -1,11 +1,12 @@
-# Freeway persistence: conditional learning pilot
+# Freeway persistence: learning pilot running
 
 Predeclared 2026-09-09 in `runs/freeway-persistence-learning-20260909.C0GoqT`.
 The 82-pin manifest SHA is
 `465c5fedcab95c859dddcd57b63de065532dd8df2034d973b9c057b381cb10ac`.
-The launcher started at 00:32 UTC, PID 2120848 at the last check, and is waiting
-on the actual validation follower's PID/start identity. No new training or
-evaluation has started, and there is no candidate learning result yet.
+The launcher started at 00:32 UTC, PID 2120848 at the last check. It waited for
+the actual validation follower to finish, reverified the completed runtime gate,
+and started hold64 training at 07:31:02 UTC. The training child is PID 2164617,
+process start ticks 101121662. No final learning or frozen-policy result exists yet.
 
 ## Question and fixed comparison
 
@@ -56,21 +57,27 @@ This is one paired pilot seed, not reliability. All five game criteria and the
 fresh replication roots 1009/2017/3019 remain required. No success here would
 repair the old failed three-seed Pong result or establish cross-game transfer.
 
-## Conditional handoff
+## Verified handoff; fixed arms in progress
 
-The existing Freeway pilot finishes first, followed by the common-recording
-world diagnostic and the [candidate GPU gate](2026-09-08-persistent-exploration.md).
-This separate learning worker cannot bypass them. It requires the completed
-queue, then rechecks actual native test outputs, four default-path trials,
+The original Freeway pilot, common-recording world diagnostic and
+[candidate GPU gate](2026-09-08-persistent-exploration.md) have all completed.
+This separate learning worker verified the completed queue and terminal parent,
+then rechecked actual native test outputs, four default-path trials,
 complete checkpoints and non-timing learner reports, the override integration,
 and raw GPU samples. All 13 gate phases need adequate coverage and at least
 2,048 MiB directly free; both timing orders must pass the 95% non-regression bar.
-Only then can the conditional learning declaration become executable.
+All checks pass for the actual 9cf1316b bytes: exact default-path parity,
+candidate/control throughput 0.999197 and 0.999774, 13 covered GPU phases and
+at least 3,303 MiB directly free. The saved
+[runtime proof](../../runs/freeway-persistence-learning-20260909.C0GoqT/runtime-proof.json)
+has SHA-256 `ff18757852d52840c5654febad3a63c533d5edb9431ca36d6019e5988914628e`.
+A fresh independent CPU recheck reproduces it exactly. Hold64 is now training;
+hold1 and the restored untrained control follow without changing their budgets.
 
 The 47 CPU launcher/proof tests pass. They include real old v2 ledger parsing
 through the candidate package and explicitly fabricated gate fixtures. They
-do not validate the pending GPU outputs or count as learning results. The
-actual prospective child package resolves to native 9cf1316b; orchestration's
+are distinct from the now-verified GPU outputs and do not count as learning
+results. The actual child package resolves to native 9cf1316b; orchestration's
 old-package measurement helpers never execute the new agent or audit v3 data.
 
 Keep all pinned source, package, declaration and test artifacts unchanged.

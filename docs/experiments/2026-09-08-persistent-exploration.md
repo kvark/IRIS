@@ -1,8 +1,8 @@
-# Persistent exploration candidate: runtime validation underway
+# Persistent exploration candidate: runtime gate passed
 
 Staged 2026-09-08 in `exp/persistent-exploration`, isolated from the original
-Freeway source and package. Three focused GPU tests now pass; full runtime
-validation and the learning comparison remain pending. Not adopted.
+Freeway source and package. Full runtime validation passed on September 9;
+the fixed learning comparison is now running. The recipe is not adopted.
 
 ## Why this experiment
 
@@ -66,7 +66,7 @@ Artifacts: `runs/persistent-exploration-20260908.KpQGgs/`.
 
 Tests and logs are implementation evidence, not learning evidence.
 
-## Required next gates
+## Validation protocol
 
 Keep GPU work serialized after the entire Freeway pilot queue and the declared
 common-recording world diagnostic. Preserve their pinned inputs.
@@ -90,9 +90,9 @@ common-recording world diagnostic. Preserve their pinned inputs.
    fresh-seed replication declaration. Keep all five game gates and seeds
    1009, 2017 and 3019. No result here changes the failed Pong all-seeds decision.
 
-## Serialized handoff declared
+## Completed serialized runtime gate
 
-The gate is now declared in
+The gate declaration is
 `runs/persistent-exploration-gate-20260908.OVSB5q/manifest.json`, with 66 input
 pins. It adds an explicit default-path throughput non-regression bar: candidate
 throughput must be at least 95% of its paired control in both orders. The short
@@ -109,22 +109,49 @@ These tests do not establish candidate GPU parity or learned competence.
 Freeway launcher PID 2105757 and its process start identity. Its 107-pin
 declaration waits for the entire pilot to complete and the process to finish,
 then runs the common-world diagnostic and this gate in separate processes.
-The follower itself is PID 2119271 at the last check. It polls every 30 seconds,
-has a bounded wait, and neither restarts nor stops the Freeway parent. Failed
+The follower was PID 2119271. It polled every 30 seconds,
+had a bounded wait, and neither restarted nor stopped the Freeway parent. Failed
 prerequisites or child failures stop the follow-on without automatic retry.
 
-The complete Freeway and common-world runs have now released the device. The
-follower started this gate at 06:47:48 UTC on September 9. All three focused
-hardware tests pass, each executing exactly one test with zero failures or skips.
-The paired default-path trials are running; full checkpoint/trace equality,
-timing, memory and override-integration results are still pending. These focused
-passes do not certify the actual 12M pixel-learning configuration or select a
-recipe. Preserve all active inputs and archived test binaries.
+The follower ran this gate from 06:47:48 through 07:30:36 UTC on September 9,
+after Freeway and common-world completed. All three focused hardware tests pass,
+each executing exactly one test with zero failures or skips. All four default
+12M pixel-learning trials match exactly: all 241 saved tensor entries, optimizer
+state, normalizers, comparable metadata, non-timing learner reports, training
+actions and restored frozen action/reset/episode traces.
+
+| Order / role | Warmed actions/s | Candidate / paired control |
+| --- | ---: | ---: |
+| 0 / control | 8.57559 | — |
+| 1 / candidate | 8.56870 | 0.999197 |
+| 2 / candidate | 8.58989 | 0.999774 |
+| 3 / control | 8.59184 | — |
+
+Both predeclared non-regression gates pass; this is unchanged throughput, not a
+speedup. The candidate reaches 0.5712–0.5727× aggregate real time, about 0.095×
+per stream. Learning takes about 132.5 seconds and observation 45–46 seconds of
+each approximately 179-second warmed window. Neither vector collection nor
+these action overrides removes the dominant learner/perception costs.
+
+The Freeway integration completes 3,840 training actions, 610 updates and
+768 restored unassisted frozen actions. Its mixed override ledger validates;
+there are no completed rounds in this short integration, hence no competence
+claim. All 13 GPU phases pass coverage and memory checks, with a maximum
+0.279-second sample gap and at least 3,303 MiB directly free. Train/restore
+minimum free memory is 3,303/3,413 MiB. Short whole-process activity includes
+construction and warmup; do not compare it directly with warmed/long-run activity.
+
+The [completed gate](../../runs/persistent-exploration-gate-20260908.OVSB5q/completed.json)
+has SHA-256 `529caf0f16696867f62c8f592897984cacf125800f052c945315db0db3ce0f44`.
+The queue completed and its controller exited. Preserve all 66 gate pins,
+107 queue pins, archived test binaries and raw outputs; do not restart it.
 
 The separate [conditional learning declaration](2026-09-09-freeway-persistence.md)
-waits on this actual follower and must reverify its raw evidence before starting
-either fixed-budget learning arm. The gate itself launches no long learning run
-and cannot adopt exploration. Keep all original artifacts and failed results.
+reverified the actual raw tests, complete state/trace/report comparisons and
+GPU windows before starting hold64 training at 07:31:02 UTC. A separate fresh
+CPU recheck reproduces its runtime proof exactly. The gate itself launches no
+long learning run and cannot adopt exploration. Learning quality and fresh-seed
+reliability remain pending; keep all original artifacts and failed results.
 
 Do not run root binaries by accident: cached build outputs may belong to another
 isolated candidate. Select the explicitly identified package/test executable.

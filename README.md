@@ -48,10 +48,12 @@ their full multi-stream evaluations determine the scores.
 The [untrained Freeway control](runs/freeway-pilot-20260908.WWxHEM/untrained-evaluation.mp4)
 also returns zero in all 36 rounds under the same frozen protocol.
 
-The local [forecast-versus-match report](runs/world-evaluation-20260908.Xzx3pN/report.html)
-compares the three final Pong world models with their first recorded matches.
-It includes feature and reward baselines, full prediction traces and clickable
-point times in the videos.
+The local [common-match forecast report](runs/common-world-report-20260909.O7nqqe/report.html)
+compares all three final Pong world models on the same three recordings, with
+reward/feature baselines and clickable video point times. Each predicts rewards
+best on its own match; the strongest player is not the best common-pool predictor.
+The original [own-policy forecast report](runs/world-evaluation-20260908.Xzx3pN/report.html)
+retains longer-horizon traces. Neither report is a new gameplay evaluation.
 
 ## Architecture
 

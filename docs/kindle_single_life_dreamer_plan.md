@@ -143,9 +143,9 @@ models predict features better with actual controls than with unrelated controls
 Seed 1 has weaker point-reward estimates even after seeing the frame: positive /
 negative event MAE is 0.351 / 0.430, versus 0.043 / 0.281 for seed 0. This is a
 more concrete diagnostic lead than speculative visual expansion, not proof of
-the cause. Reward/value reliability and policy action use on a common held-out
-distribution are next. Preserve event counts, distinguish prior forecasts from
-posterior inference, and compare feature persistence and zero rewards. Good
+the cause. The common-recording comparison below tests that lead. Preserve
+event counts, distinguish prior forecasts from posterior inference, and compare
+feature persistence and zero rewards. Good
 feature prediction or event ranking alone is not a good policy. Fixed-stride
 long forecasts can miss entire sparse classes; terminal accuracy is unestablished.
 These correlations do not establish causation. A longer-budget replication
@@ -156,10 +156,20 @@ The common-recording follow-up in `runs/common-world-20260908.7gWHsJ` completed
 all nine GPU runs: all three same-model diagonals reproduce the original forecasts
 exactly and all six cross-model runs pass common-input checks. Each model sees
 the same 11,388 transitions, with zero updates; all memory/coverage checks pass.
-The full report and interpretation wait for the following matched runtime gate
-to finish. Preserve this completed data and its 35 pins. Forced recorded
-controls are model diagnostics, not new gameplay successes; off-policy logged
-returns are not unbiased targets for the evaluated critic.
+The [common-input report](../runs/common-world-report-20260909.O7nqqe/report.html)
+is complete and changes the diagnosis: each model predicts scored points and
+features best on its own recording. Model 2, the strongest player, has the worst
+pooled feature and negative-reward magnitude errors; model 1 has the worst
+positive magnitude error but the best negative magnitude error. Four of six
+cross-model all-frame prior reward errors are worse than always predicting zero.
+Errors remain large even after consuming the target frame. This points toward limited
+reward generalization and experience coverage, not a globally broken seed-1
+world model or a demonstrated need for more perception. It does not establish
+the cause of policy failures. Next require training-side reward-coverage measures,
+own-policy frozen gameplay and a new multi-match forecast set before selecting
+changed exploration/replay/loss settings. Keep the active Freeway comparison
+unchanged. Preserve the 35 pins and all nine rows. Forced controls are diagnostics,
+not new gameplay successes; off-policy logged returns are not critic targets.
 
 The [Freeway CPU discovery check](experiments/2026-09-08-freeway-discovery.md)
 finds no rewards under independent random actions in three 200,004-action arms,
@@ -170,19 +180,19 @@ executed-action provenance and unassisted frozen evaluation before simply
 spending more GPU time on a longer unchanged run. The isolated
 [persistent-exploration candidate](experiments/2026-09-08-persistent-exploration.md)
 now passes 95 Rust and 547 Python CPU tests, including actual-action provenance
-and unassisted-evaluation guards. Its three focused GPU tests now pass too;
-full matched state/trace, memory/runtime and learning evidence remain required
-before adoption. The process-bound follower has advanced from the complete
-Freeway and common-world runs into the declared runtime gate. These jobs
-cannot restart the pilot or launch a long learning arm. Their 31 CPU checks are
-handoff/binding evidence, not new world-model, speed or gameplay results.
+and unassisted-evaluation guards. The full GPU gate now passes: three native
+tests, exact default learning/state/trace parity in both orders, the pixel
+override integration, and at least 3,303 MiB directly free across all 13 phases.
+Warmed candidate throughput is 8.57–8.59 actions/s, 99.92%/99.98% of paired
+controls: no regression, but no speedup. Preserve the completed gate and queue.
+Their 31 CPU checks are handoff/binding evidence, not gameplay results.
 A separate [conditional learning pilot](experiments/2026-09-09-freeway-persistence.md)
-now waits on that validation queue. After rechecking the actual runtime evidence,
-it compares hold64 and hold1 at the same .5 exploration probability, seed 0,
-200,004 actions per arm and 75,000 unassisted frozen actions, plus a separately
+rechecked the actual runtime evidence and started hold64 at 07:31 UTC on
+September 9. It compares hold64 and hold1 at the same .5 exploration probability,
+seed 0, 200,004 actions per arm and 75,000 unassisted frozen actions, plus a separately
 restored untrained control. The launcher/proof checks pass 47 CPU tests; no
-new learning arm has started. A paired pilot remains distinct from the required
-fresh three-seed, five-game replication, and cannot select a recipe automatically.
+final learning or frozen-policy result exists yet. A paired pilot is distinct from
+the required fresh three-seed, five-game replication, and cannot select a recipe automatically.
 The [completed-training control diagnostic](experiments/2026-09-09-freeway-zero-signal.md)
 finds zero rewards across 96 natural rounds and zero reported absolute advantage
 in all 49,651 updates through 200,004 actions. All 241 saved tensor entries are
@@ -630,11 +640,12 @@ contamination before any larger swarm or shared-optimizer design.
 
 ## Immediate work and invariants
 
-Current work is the persistent-exploration runtime gate, followed by its declared
-learning comparison. Common-distribution world/reward data are complete; analyze
-them after the gate's timing runs. The completed plain-policy Freeway pilot fails
-without finding any reward. Keep Pong's
-failed all-seeds gate visible; broader Atari learning and fresh three-seed
+Current work is the fixed Freeway hold64/hold1 learning comparison, now running
+after its complete runtime gate. The common-distribution world report finds
+strong recording-dependent reward errors, including in the best Pong player;
+prioritize reward discovery/generalization and measured training coverage.
+The completed plain-policy Freeway pilot fails without finding any reward.
+Keep Pong's failed all-seeds gate visible; broader Atari learning and fresh three-seed
 reliability remain unfinished. Stage runtime candidates separately from the
 live experiment. Add world-only pretraining and the current-Dreamer mind-games
 adapter as their gates are reached. Do not start actor/learner separation,
