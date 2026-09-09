@@ -228,6 +228,11 @@ reliable learning.
   adoption. See `docs/experiments/2026-09-09-episode-evaluation.md`; preserve all
   current fixed-action queues, game criteria and fresh-seed gates. Require GPU
   prefix/state checks and a new declaration before using this stopping rule.
+  Its frozen-only GPU check is now declared, not running, in
+  `runs/episode-evaluation-gate-20260909.8f1yKj`: 55 pins, 30 passing CPU tests,
+  bound to the actual persistence-learning launcher. It refuses live-parent
+  execution and starts no follower. Preserve candidate inputs; run only after
+  the entire existing queue completes, checking full frozen state and prefixes.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

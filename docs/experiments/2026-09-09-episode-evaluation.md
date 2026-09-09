@@ -102,3 +102,42 @@ The cap-check manifest SHA-256 is
 `7107388290448246c77e46db85fcc133e472d80ec31a628cd195b2ce207d657f`;
 its result SHA-256 is
 `f4669872d97524ea2e409762c78ca99cb81e3e993c5704a871ab3b964dd787cb`.
+
+## GPU check declared, not running
+
+The frozen-only check is now declared in
+`runs/episode-evaluation-gate-20260909.8f1yKj`, with 55 input pins and manifest
+SHA-256 `84e82739d5ddcdc38e7bd06c0d0dbcf3dbb95caf1d32b8b964fedff2edce5c9b`.
+It binds the actual persistence-learning launcher, PID 2120848/start tick
+98610096. There is no new follower or automatic launch. The real readiness
+check refuses execution while that predecessor is live, before GPU queries
+or creation of run-event outputs.
+
+Using the completed Boxing R256 model, the fixed order is control v2 for
+18,000 actions; candidate v4 until every stream completes one episode, capped
+at 18,000; candidate default v2 for 18,000; then candidate v4 with only six
+allowed actions, which must remain incomplete. Both roles use the same archived
+9cf1316b extension, N6, sampled controls and evaluation seed 100000. This tests
+the stopping implementation, not the future four-per-stream competence sample.
+
+The diagnostic driver passes the actual native agent to the runner and captures
+fresh before/after state outside its interaction loop. Require exact full
+parameters, optimizer moments/counters and normalizers against the source,
+plus exact complete/default and shorter-prefix action/reward/reset traces.
+Only verified environment counters and collection stream count may change in
+state metadata. Every phase receives an independent fresh-process CPU audit.
+Keep direct free memory at least 2 GiB with 4 Hz coverage checks; each native
+phase is bounded at 30 minutes. Captures and source hashing preclude a speed
+claim from these timings.
+
+All 30 CPU gate tests pass. They include reading the real completed checkpoint's
+241 saved tensors and explicitly fabricated binding/capture/stopping fixtures,
+not execution of this GPU comparison. Preserve the pinned candidate inputs.
+After the entire existing queue completes and releases the GPU, run:
+
+```sh
+python/.venv/bin/python runs/episode-evaluation-gate-20260909.8f1yKj/run_gate.py
+```
+
+Failures preserve artifacts and stop only this check's child. A pass still
+does not adopt an evaluation protocol, launch training or establish mastery.
