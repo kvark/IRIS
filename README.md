@@ -45,11 +45,13 @@ and [evidence](docs/experiments/2026-09-09-freeway-zero-signal.md#final-frozen-p
 After 200k training actions, all 36 frozen rounds return zero. Both games' videos
 are complete CPU reconstructions of stream 0, including its unfinished tail;
 their full multi-stream evaluations determine the scores.
+The [untrained Freeway control](runs/freeway-pilot-20260908.WWxHEM/untrained-evaluation.mp4)
+also returns zero in all 36 rounds under the same frozen protocol.
 
 The local [forecast-versus-match report](runs/world-evaluation-20260908.Xzx3pN/report.html)
 compares the three final Pong world models with their first recorded matches.
-It includes feature and
-reward baselines, full prediction traces and clickable point times in the videos.
+It includes feature and reward baselines, full prediction traces and clickable
+point times in the videos.
 
 ## Architecture
 

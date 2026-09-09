@@ -6,6 +6,10 @@ training diagnostics; the subsequent frozen evaluation is recorded separately
 below. Neither establishes a candidate result or five-game success. The original
 experiment and its full budget remain unchanged.
 
+The complete pilot finished at 06:06:48 UTC. Trained and untrained frozen
+policies both return zero in all 36 natural rounds. Complete checkpoint, replay
+and all-phase GPU memory checks pass; the declared competence gate fails.
+
 ## Original fixed-prefix diagnostic
 
 Artifacts: `runs/freeway-prefix-diagnostic-20260909.kRl6ho/`. The script reads
@@ -63,7 +67,7 @@ Training exited successfully at 04:45:50 UTC after 200,004 actions and 49,651
 updates. The original launcher accepted its declared accounting and started
 the 75,000-action frozen evaluation, now complete as recorded below. The CPU
 training-result artifact retains its original 04:59 UTC scope and pending flags;
-it is not rewritten to include later phases. The whole pilot is not complete.
+it is not rewritten to include later phases. Whole-pilot results follow below.
 
 The separate CPU-only [completed-training result](../../runs/freeway-training-complete-20260909.MnYwlJ/result.json)
 checks the closed log, all 34 declaration pins and the exact final checkpoint.
@@ -98,7 +102,7 @@ a maximum 0.272-second gap, 69.15% mean activity and at least 3,303 MiB directly
 free; this phase passes the declared coverage and memory gates. These are
 whole-pilot observations, not matched optimization timings: CPU preparation
 overlapped parts of training. Activity is not occupancy or measured idle time;
-the whole pilot's GPU audit must still cover its remaining phases.
+the completed all-phase audit is recorded below.
 
 Closed training-log SHA-256:
 `d18454bda31630d859401d047ba078c16d61fac5df3ded83ea841793ee803302`.
@@ -135,8 +139,39 @@ Score SHA-256:
 
 Frozen collection runs at 32.788 actions/s, 2.186× aggregate and 0.3643×
 per-stream real time. These are evaluation rates, not accelerated learning.
-The fresh zero-update checkpoint was saved successfully; its separately restored
-75,000-action evaluation started at 05:26:54 UTC. The untrained comparison and
-whole-pilot memory audit remain pending. Preserve the serialized common-world,
-runtime-validation and persistent-exploration follow-ups; no recipe is adopted
-and no fresh reliability replication has started.
+
+## Completed untrained comparison and handoff
+
+The fresh zero-update model saves and restores successfully. Its complete
+75,000-action frozen evaluation also returns zero in all 36 natural rounds,
+with no cutoffs or updates. Its [score](../../runs/freeway-pilot-20260908.WWxHEM/untrained-evaluation.score.json)
+and [full replay](../../runs/freeway-pilot-20260908.WWxHEM/untrained-evaluation.replay.json)
+pass independent read-only revalidation against the raw log, complete initial
+checkpoint and unchanged declaration. The
+[untrained full-stream video](../../runs/freeway-pilot-20260908.WWxHEM/untrained-evaluation.mp4)
+also contains 49,999 frames over 833.317 seconds, including every stream-0 round
+and its unfinished tail. Neither policy demonstrates any crossing skill.
+
+A CPU comparison of the trained and fresh same-seed behavior files finds all
+11 actor parameter tensors differ (792,594 parameters). This is not itself
+skill: entropy regularization can change the actor even when reward-driven
+advantages remain zero. The evidence supports missing rewarded discovery, not
+an inference that no parameters were updated.
+
+The [whole-pilot result](../../runs/freeway-pilot-20260908.WWxHEM/completed.json)
+was written at 06:06:48 UTC. A separate CPU rerun reproduces the baseline audit,
+all four memory windows and command exit/output hashes, with all 34 pins intact.
+Minimum directly free memory is 3,303 / 3,413 / 3,415 / 3,413 MiB for training,
+trained evaluation, initial save and untrained evaluation. Every phase passes
+the sample-density and coverage checks; the largest sample gap is 0.272 seconds.
+This completes the pilot data, not Freeway competence or training-seed reliability.
+
+Result SHA-256:
+`797d53f1cd02874685f3e3b670cd62d5d3e8f6df31f378e2a0a11583d5e5902c`.
+Untrained video SHA-256:
+`6388d2511ff843af2ff13c64f8c0a75d09fb94c26bd6a70408c0a88ec3257ac8`.
+
+The original parent exited, and its bound follower started common-world GPU
+diagnostics at 06:07 UTC. Keep the declared runtime-validation and matched
+persistent-exploration comparison next; do not restart the plain control.
+No recipe is adopted and no fresh reliability replication has started.

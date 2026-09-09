@@ -152,8 +152,10 @@ These correlations do not establish causation. A longer-budget replication
 must be declared for all seeds as a new experiment, not an extension that
 relabels the failed 200k-action gate.
 
-The common-recording follow-up is now CPU-tested and declared in
-`runs/common-world-20260908.7gWHsJ`, with GPU checks pending after Freeway.
+The common-recording follow-up in `runs/common-world-20260908.7gWHsJ` started
+GPU execution after the complete Freeway pilot. Its first same-model diagonal
+reproduces all 2,816 original one-step forecasts exactly; the full comparison
+and memory audit remain pending.
 It scores all three models on the same recorded first matches, with exact
 same-model forecast checks and common RGB/feature hashes. Forced recorded
 controls are model diagnostics, not new gameplay successes; off-policy logged
@@ -170,9 +172,9 @@ spending more GPU time on a longer unchanged run. The isolated
 now passes 95 Rust and 547 Python CPU tests, including actual-action provenance
 and unassisted-evaluation guards. It is not adopted: native GPU causality,
 default-path parity, matching memory/runtime evidence and a fixed-budget learning
-comparison remain required after the active Freeway and common-world queues.
-The declared GPU gate and process-bound follower now wait for the complete
-Freeway pilot, then run common-world and candidate validation in order. They
+comparison remain required after the active common-world diagnostic.
+The process-bound follower has advanced from the complete Freeway pilot into
+common-world; candidate validation follows in the declared order. These jobs
 cannot restart the pilot or launch a long learning arm. Their 31 CPU checks are
 handoff/binding evidence, not new world-model, speed or gameplay results.
 A separate [conditional learning pilot](experiments/2026-09-09-freeway-persistence.md)
@@ -249,7 +251,8 @@ with no rewarded rounds. Its completed 75,000-action sampled frozen evaluation
 also returns zero in all 36 natural rounds, with no cutoffs or updates and full
 checkpoint/replay checks. It fails the unchanged gate of ≥25 crossings in ≥90%
 of ≥20 natural rounds, mean ≥25 and no cutoffs. The separately restored untrained
-control is running; the whole-pilot audit remains pending. The
+control also returns zero in all 36 rounds. Both complete replays/checkpoints and
+all four GPU-phase coverage/memory checks pass; the pilot is complete. The
 [complete failure video and evidence](experiments/2026-09-09-freeway-zero-signal.md#final-frozen-policy-no-learned-crossing-skill)
 are available. This pilot is not fresh replication or Freeway competence.
 Declare remaining budgets and fresh three-seed replication before those runs;
@@ -628,9 +631,9 @@ contamination before any larger swarm or shared-optimizer design.
 
 ## Immediate work and invariants
 
-Current work is the final evaluation/control phase of the fixed-budget Freeway
-pilot, followed by common-distribution world/reward diagnostics and the declared
-persistent-exploration comparison after its runtime gate. Keep Pong's
+Current work is the common-distribution world/reward diagnostic, followed by the
+declared persistent-exploration comparison after its runtime gate. The completed
+plain-policy Freeway pilot fails without finding any reward. Keep Pong's
 failed all-seeds gate visible; broader Atari learning and fresh three-seed
 reliability remain unfinished. Stage runtime candidates separately from the
 live experiment. Add world-only pretraining and the current-Dreamer mind-games

@@ -179,22 +179,17 @@ reliable learning.
   budgets/config, fresh models, final checkpoints and replays. Its CPU checks
   are complete, not a replication result. Keep untrained controls and the
   broader goal-completion audit; do not infer them from `replication_passed`.
-  The declared N6 sparse Freeway pilot started at 22:19 UTC in
-  `runs/freeway-pilot-20260908.WWxHEM`, with the unchanged repaired native package,
-  R256 and 200,004 fresh seed-0 training actions. It evaluates only the final
-  model for 75,000 sampled actions, then runs a separately restored zero-update
-  control under that evaluation protocol. Full CPU replay and complete-stream
-  videos follow both. Keep its 34 pins unchanged and GPU phases serialized;
-  do not run large CPU graph builds alongside it. This is a pilot, not fresh
-  replication, a Freeway success claim or five-game completion.
-  Its training completed at 04:45 UTC on September 9: 200,004 actions, 49,651
-  updates and 96 natural rounds, all unrewarded. The final 241 saved tensor
-  entries are complete and finite, with valid moments/counters. Its completed
-  75k frozen evaluation fails: 36 natural rounds, all zero reward, with zero
-  updates, full replay and checkpoint checks. The complete stream-0 video is
-  `evaluation.mp4` in the pilot directory, not a successful rollout. The fresh
-  zero-update save passes and its restored evaluation is running; the baseline
-  result and whole-pilot audit remain pending. Preserve the queued follow-ups.
+  The N6 sparse Freeway pilot in `runs/freeway-pilot-20260908.WWxHEM` completed
+  at 06:06 UTC on September 9. The unchanged repaired package trained R256 for
+  200,004 fresh seed-0 actions and 49,651 updates; all 96 natural rounds were
+  unrewarded. Trained and separately restored zero-update policies each return
+  zero in all 36 natural rounds of their 75k frozen evaluations, with no cutoffs
+  or updates. Both complete checkpoints, full CPU replays and all four GPU-phase
+  coverage/memory checks pass; directly free memory stays at least 3,303 MiB.
+  Whole stream-0 videos are `evaluation.mp4` and `untrained-evaluation.mp4`, not
+  successes. Preserve all 34 pins and artifacts; do not restart this completed
+  pilot or call it reliable learning. Its bound follower has started common-world,
+  with exploration validation and the conditional learning pilot still to follow.
   The completed CPU-only Freeway discovery check in
   `runs/freeway-discovery-20260908.Zig71a` compares hold lengths 1/16/64 at
   200,004 actions each on three seeds. Independent random actions find no
@@ -291,10 +286,12 @@ reliable learning.
   explicitly conditions every old model on the same three recordings, preserving
   strict unforced replay separately. Require three exact same-model H1 diagonals
   before the six cross-model runs, with common initial/target RGB and feature
-  hashes. GPU work has not started; run only after the entire Freeway queue
-  completes and releases the device. Use historical native f663dd93, not the new
-  package. Keep source and declaration pins intact. Forced controls are offline
-  diagnostics, not that model's policy rollout; another policy's logged return
+  hashes. GPU execution started at 06:07 UTC after the complete Freeway pilot;
+  the first 2,816-transition diagonal matches exactly. The remaining comparisons
+  and whole-diagnostic memory audit are pending. Use historical native f663dd93,
+  not the new package, and preserve the active queue and source/declaration pins.
+  Forced controls are offline diagnostics, not that model's policy rollout;
+  another policy's logged return
   is not unbiased ground truth for the evaluated critic.
   The CPU common-input report builder in `runs/common-world-report-20260909.O7nqqe`
   has 13 passing fabricated-fixture tests, not new GPU results. Generate its

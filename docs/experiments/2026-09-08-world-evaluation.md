@@ -126,7 +126,7 @@ policy quality and model quality as distinct gates. Longer all-seed training or
 changed loss/replay settings remain new experiments, not repairs to the failed
 200k-action mastery result. No swarm or actor/learner separation is required.
 
-## Common-recording follow-up declared, GPU checks pending
+## Common-recording follow-up running
 
 The isolated `exp/common-world-probe` candidate at `a425b29` adds explicit
 recorded-action conditioning while retaining strict own-policy replay as a
@@ -145,9 +145,13 @@ diagnostic dataset, not untouched confirmation.
 
 The CPU result-binding tests also pass using explicitly fabricated new outputs
 against the real source prefixes and original traces. They do not validate GPU
-predictions. The diagnostic is not running and has no new model-quality result;
-its nine serialized GPU combinations wait for the entire Freeway pilot queue.
-The original executable and all historical results remain unchanged.
+predictions. The bound follower started the nine serialized GPU combinations at
+06:07 UTC on September 9, after the entire Freeway pilot completed and its parent
+exited. The first diagonal, model 0 / recording 0, completed at 06:10:51 UTC:
+all 2,816 one-step forecasts match the original exactly and common-input checks
+pass. Model 1 / recording 1 started next. No cross-model quality ranking or
+whole-diagnostic memory result is established yet. Preserve the original
+executable, active pins and all historical results; do not start a second copy.
 
 A CPU-only [common-input report builder](../../runs/common-world-report-20260909.O7nqqe/summarize.py)
 is ready, with 13 passing tests using explicitly fabricated report fixtures.
