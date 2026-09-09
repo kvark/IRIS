@@ -97,6 +97,11 @@ reliable learning.
   world estimates. Preserve those failures; CPU-only does not mean low impact.
   Track remaining world-training/recurrent/perception costs and profiler
   coverage in `docs/experiments/2026-09-08-device-imagination.md`.
+  The isolated `exp/world-sync-fanout` candidate reads shared world weights
+  once for the six core inference sessions, retaining backend cache refresh.
+  Its CPU checks are not GPU parity or a speedup; require full state/trace
+  equality, memory headroom and an AB/BA timing gain before adoption. Preserve
+  all existing queues. See `docs/experiments/2026-09-09-world-sync-fanout.md`.
   The current profiler's alternate mode recovers queue-submission coverage,
   not per-dispatch kernel detail or verified idle gaps. Completed captures are
   diagnostic artifacts, not another pending queue or traced speed benchmark.

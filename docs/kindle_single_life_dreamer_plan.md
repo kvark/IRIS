@@ -380,6 +380,12 @@ already improved exact paired pixel throughput by 12.9–13.3%; the subsequent
 focused output/gradient tests but failed exact full-learning parity from
 update 3. It remains experimental; its short timing is not an adopted speedup.
 
+A small [world-sync fan-out candidate](experiments/2026-09-09-world-sync-fanout.md)
+removes repeated reads of overlapping weights while retaining backend cache
+refresh. It is CPU-tested only; require GPU state/trace equality, memory headroom
+and paired timing before adoption. It does not displace the current learning
+queue or the larger world-training bottleneck.
+
 Prioritize measured world-training kernels/layout and recurrent handoffs, then
 perception. Preserve F32 gradient safeguards and full recurrence. Readback waits
 include unfinished producer compute and transfers, not just GPU idle time.
