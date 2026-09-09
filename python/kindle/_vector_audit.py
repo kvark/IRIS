@@ -11,6 +11,7 @@ from ._exploration import EXPLORATION_PROTOCOL, PersistentExploration
 
 
 VECTOR_PROTOCOL = "kindle-vector-v2"
+EPISODE_EVALUATION_PROTOCOL = "kindle-vector-v4"
 
 
 def episode_summary(episodes):
@@ -52,12 +53,21 @@ def audit(path):
 
     with Path(path).open() as source:
         header = json.loads(next(source))
-        check(header["event"] == "run_start" and header["protocol"] in ("kindle-vector-v1", VECTOR_PROTOCOL, EXPLORATION_PROTOCOL), "unknown vector protocol")
+        check(header["event"] == "run_start" and header["protocol"] in (
+            "kindle-vector-v1", VECTOR_PROTOCOL, EXPLORATION_PROTOCOL, EPISODE_EVALUATION_PROTOCOL), "unknown vector protocol")
         count, config = header["num_envs"], header["config"]
         check(type(count) is int and count > 0, "invalid stream count")
-        check(header["steps"] > 0 and header["steps"] % count == 0, "invalid action budget")
+        check(type(header["steps"]) is int and header["steps"] > 0 and header["steps"] % count == 0, "invalid action budget")
         check(len(header["environment_seeds"]) == count and len(set(header["environment_seeds"])) == count, "environment seeds must be independent")
         check(header["mode"] in ("train", "evaluate_sample", "evaluate_greedy"), "unknown action mode")
+        episode_target = None
+        if header["protocol"] == EPISODE_EVALUATION_PROTOCOL:
+            episode_target = header["evaluation_episodes_per_stream"]
+            check(type(episode_target) is int and episode_target > 0, "invalid episode budget")
+            check(header["mode"] != "train" and header.get("restored_checkpoint") is not None,
+                  "episode budget requires frozen restore")
+        else:
+            check("evaluation_episodes_per_stream" not in header, "undeclared episode budget")
         for field in ("batch_size", "batch_length", "replay_context", "replay_capacity", "action_count"):
             check(type(config[field]) is int and config[field] > 0, f"invalid {field}")
         require_numbers(config["train_ratio"])
@@ -108,6 +118,8 @@ def audit(path):
             kind = event["event"]
             if kind == "transition":
                 settled()
+                check(episode_target is None or min(episode_counts) < episode_target,
+                      "actions after episode budget was reached")
                 actions += count
                 check(event["run_step"] == actions and event["vector_tick"] == actions // count, "vector/action counter mismatch")
                 for field in ("actions", "rewards", "stored_rewards", "terminated", "truncated", "executed_action_frames"):
@@ -203,11 +215,19 @@ def audit(path):
                 check(event["per_stream_simulated_wall_ratio"] == [frames / 60 / elapsed for frames in last_frames], "invalid per-stream game clocks")
                 if kind == "run_end":
                     final = event
-                    check(final["reason"] in ("budget_complete", "interrupted"), "unknown stop reason")
-                    check(actions <= header["steps"] and (final["reason"] != "budget_complete" or actions == header["steps"]), "incomplete declared budget")
+                    if episode_target is not None:
+                        expected_reason = ("episode_budget_complete" if min(episode_counts) >= episode_target
+                                           else "action_cap_reached")
+                        check(final["reason"] in (expected_reason, "interrupted"), "wrong episode-budget stop reason")
+                        check(actions <= header["steps"] and (final["reason"] != "action_cap_reached"
+                                                             or actions == header["steps"]), "incomplete action cap")
+                    else:
+                        check(final["reason"] in ("budget_complete", "interrupted"), "unknown stop reason")
+                        check(actions <= header["steps"] and (final["reason"] != "budget_complete" or actions == header["steps"]), "incomplete declared budget")
                     check(final["learner_updates"] == updates, "final counts mismatch")
             elif kind == "checkpoint":
                 settled()
+                check(episode_target is None, "episode-budget evaluation wrote a checkpoint")
                 check(event["run_step"] == actions and event["learner_step"] == header["starting_learner_step"] + updates, "checkpoint counters mismatch")
             else:
                 raise ValueError(f"unknown event {kind}")
@@ -231,10 +251,13 @@ def audit(path):
             exploration_sha256=header["exploration_sha256"],
             overridden_actions=exploration.overridden_actions, exploration_ledger_verified=True)
             if exploration else {})
+        evaluation_result = (dict(evaluation_episodes_per_stream=episode_target,
+            episode_budget_complete=final["reason"] == "episode_budget_complete",
+            action_cap_reached=actions == header["steps"]) if episode_target is not None else {})
         return dict(path=str(path), protocol=header["protocol"], actions=actions, updates=updates, num_envs=count,
                     **scores,
-                    budget_complete=final["reason"] == "budget_complete", accounting_valid=True,
-                    **exploration_result)
+                    budget_complete=final["reason"] in ("budget_complete", "episode_budget_complete"), accounting_valid=True,
+                    **exploration_result, **evaluation_result)
 
 
 if __name__ == "__main__":

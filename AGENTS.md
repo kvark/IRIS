@@ -199,6 +199,12 @@ reliable learning.
   run only after Freeway and the declared common-world diagnostic release the GPU.
   Existing campaign declarations reject the changed exploration protocol. A new
   package requires its own matching runtime/memory evidence before long training.
+  Episode-budgeted frozen evaluation is staged separately as vector v4; see
+  `docs/experiments/2026-09-09-episode-evaluation.md`. It stops only after every
+  stream reaches its declared episode count, with a hard action cap and all
+  completed episodes retained. Its 580 CPU tests and exact old-ledger checks
+  are not GPU validation or adoption. Preserve current fixed-action queues and
+  all game/seed gates; require a new declaration before using this stopping rule.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted
