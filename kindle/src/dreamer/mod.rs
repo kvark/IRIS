@@ -29,7 +29,7 @@ pub use replay::{FrameFlags, Reward};
 /// Upstream DreamerV3 revision used as the behavioral contract.
 pub const DREAMERV3_UPSTREAM_REV: &str = "e3f02248693a79dc8b0ebd62c93683888ddaccfe";
 /// Meganeura revision used to compile and optimize the baseline graphs.
-pub const MEGANEURA_REV: &str = "a7e2efd9d2d1c14e654658fa1b736582d96e16cd";
+pub const MEGANEURA_REV: &str = "4d45ba3a1830107769ae07fabcf3b95d0762973c";
 /// Exact published Blade package providing the shared graphics runtime.
 pub const BLADE_REV: &str = "crates.io:blade-graphics@0.9.0#6f50161de1b828487e321d0df36cba06666e624a6a943293485f0dd0e97ef6ea";
 
