@@ -18,7 +18,7 @@ import ale_py
 import gymnasium as gym
 
 import kindle
-from kindle._vector_audit import VECTOR_PROTOCOL, episode_summary
+from kindle._vector_audit import EPISODE_EVALUATION_PROTOCOL, VECTOR_PROTOCOL, episode_summary
 import kindle._exploration as exploration_module
 from kindle._exploration import EXPLORATION_KIND, EXPLORATION_PROTOCOL, PersistentExploration
 from atari import (
@@ -48,6 +48,8 @@ def main():
     parser.add_argument("--restore", type=Path)
     parser.add_argument("--evaluate", action="store_true")
     parser.add_argument("--greedy", action="store_true")
+    parser.add_argument("--episodes-per-env", type=int,
+                        help="frozen restore only: stop when every stream completes this many episodes; steps is a hard action cap")
     parser.add_argument("--exploration-probability", type=float, default=0.0)
     parser.add_argument("--exploration-hold", type=int, default=16)
     args = parser.parse_args()
@@ -59,6 +61,11 @@ def main():
         parser.error("world-microbatch-size must be positive")
     if args.greedy and not args.evaluate:
         parser.error("greedy actions are only supported for frozen evaluation")
+    if args.episodes_per_env is not None:
+        if args.episodes_per_env <= 0:
+            parser.error("episodes-per-env must be positive")
+        if not args.evaluate or not args.restore or args.checkpoint:
+            parser.error("episodes-per-env requires frozen restore without checkpoint writes")
     if not math.isfinite(args.exploration_probability) or not 0 <= args.exploration_probability <= 1:
         parser.error("exploration probability must be in [0, 1]")
     if args.exploration_hold <= 0:
@@ -118,8 +125,11 @@ def main():
         agent.begin_episodes(ids, initial)
         exploration_header = (dict(exploration=exploration.config,
             exploration_sha256=sha256_file(exploration_module.__file__)) if exploration else {})
-        emit(dict(event="run_start", protocol=EXPLORATION_PROTOCOL if exploration else VECTOR_PROTOCOL, environment=args.environment,
+        vector_protocol = (EPISODE_EVALUATION_PROTOCOL if args.episodes_per_env else
+                           EXPLORATION_PROTOCOL if exploration else VECTOR_PROTOCOL)
+        emit(dict(event="run_start", protocol=vector_protocol, environment=args.environment,
                   num_envs=args.num_envs, steps=args.steps, seed=args.seed, environment_seeds=env_seeds,
+                  **(dict(evaluation_episodes_per_stream=args.episodes_per_env) if args.episodes_per_env else {}),
                   policy_seed_rule="config.seed + stream (wrapping u64)",
                   atari_protocol=args.atari_protocol, action_repeat=ATARI_ACTION_REPEAT,
                   noop_max=protocol.noop_max, max_episode_frames=protocol.max_episode_frames,
@@ -238,10 +248,15 @@ def main():
                     print(f"{run_actions}/{args.steps} actions; {event['actions_per_second']:.2f} actions/s; "
                           f"{agent.learner_step - starting_updates} updates; debt={agent.training_debt:.3f}", flush=True)
                     last_report = run_actions
+                if args.episodes_per_env and min(episode_counts) >= args.episodes_per_env:
+                    break
             if args.checkpoint and run_actions != last_checkpoint:
                 save()
             event = progress("run_end")
-            event.update(reason="interrupted" if stop else "budget_complete",
+            reason = "budget_complete"
+            if args.episodes_per_env:
+                reason = "episode_budget_complete" if min(episode_counts) >= args.episodes_per_env else "action_cap_reached"
+            event.update(reason="interrupted" if stop else reason,
                          **episode_summary(completed),
                          learner_updates=agent.learner_step - starting_updates)
             emit(event)
