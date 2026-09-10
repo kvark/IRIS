@@ -180,6 +180,22 @@ reliable learning.
   the completed queue, repair evidence, packages and shared auditors. One pilot seed does not establish
   reliability: require a separately declared fresh three-seed replication
   using 1009, 2017 and 3019.
+  The fresh Boxing confirmation started at 01:10 UTC on September 10 in
+  `runs/boxing-confirmation-20260910.hTEDcu`, with 429 pins and 61 passing CPU
+  checks. It reverified all raw current-backend runtime evidence before launching
+  seed 1009. Use qualified native f6a2b6ad and matching source 90b4763, N6/R256;
+  each root 1009/2017/3019 receives 200,004 fresh training actions, 75,000 sampled
+  unassisted frozen actions and a separately restored same-seed untrained control.
+  All three fixed Boxing gates and paired controls must pass their declared
+  learning comparison. Continue all seeds after a competence failure; stop on
+  integrity/runtime-safety failure and preserve the artifacts. No frozen result
+  or reliability is claimed yet. Keep all 429 pins and this active queue unchanged;
+  do not restart it or run GPU-heavy work alongside it. This separate confirmation
+  does not bypass the old replication-v2 runtime checker or satisfy all five games.
+  See `docs/experiments/2026-09-10-boxing-confirmation.md`. Prepare current-package
+  episode-count evaluation for Breakout/Qbert with light CPU work. Keep optional
+  world-sync fan-out separate; its ~16 ms/update scope must not indefinitely
+  displace actual learning, and its old-backend CPU checks are not adoption.
   Adjacent roots reuse live policy/posterior RNG streams under `seed + stream`;
   keep the declared live-seed ranges disjoint, without reinterpreting old
   results or rewriting the completed pilot. Verify actual child

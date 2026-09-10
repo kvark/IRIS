@@ -295,8 +295,12 @@ with complete final-checkpoint and replay checks. The matched hold1 arm also
 passes: 36/36 qualifying rounds, mean 29.0278. The completed untrained control
 scores zero, and all pilot validation passes. Neither the score difference nor
 these two trained passes establishes fresh-seed reliability.
-Declare remaining budgets and fresh three-seed replication before those runs;
-do not call a positive score a win or let tooling substitute for learning.
+The [fresh Boxing confirmation](experiments/2026-09-10-boxing-confirmation.md)
+has started on the qualified current backend: roots 1009/2017/3019 each receive
+200,004 training and 75,000 frozen actions, plus a paired untrained control.
+The first root is training; there is no confirmation result yet. Declare the
+other games' fresh budgets before launch; do not call a positive score a win
+or let tooling substitute for learning.
 The [task observers](experiments/2026-09-08-atari-task-observers.md) now distinguish
 match wins, complete Freeway rounds, both Breakout walls and Qbert pyramid
 completion. Qbert's first pyramid is only a progress milestone: sustained
@@ -312,7 +316,7 @@ completed learning. The candidate campaign checker additionally requires all
 checks are not actual replication results. The isolated replication-v2 checker
 also binds declared vector counts to completed, matching runtime/memory gates;
 N4/N6 pass the real evidence and N8 is rejected. Untrained controls remain separate.
-The fresh replication will use seeds 1009/2017/3019: their live RNG
+Fresh confirmation uses seeds 1009/2017/3019: their live RNG
 inputs do not overlap for N≤8 under the existing `seed + stream` rule. Adjacent roots
 would share most live RNG streams. This does not explain the old Pong variation
 or replace the need for independent model runs and a fixed declared budget.
@@ -693,9 +697,13 @@ continuation after interruption: full frozen-state/default-trace/prefix parity
 and direct-memory checks pass. Preserve the interrupted original and completed
 continuation; this is tooling validation, not a new learned result. The requested
 latest Meganeura refresh is qualified and adopted, with no measured speedup.
-Keep the staged world-sync comparison separate and rebase/redeclare it against
-the current backend before testing. Then declare remaining game pilots
-and fresh three-seed replication against the selected validated package.
+Fresh three-seed Boxing confirmation is now running on that qualified package.
+Keep its seeds, 200,004-action budgets, frozen evaluations and controls fixed.
+Prepare the remaining Breakout/Qbert pilots and current-package episode-count
+evaluation with light CPU work while training runs. Keep the optional world-sync
+comparison separate: its ~16 ms/update scope does not justify postponing learning
+again. Rebase/redeclare it against the current backend before any GPU test,
+without displacing the live confirmation queue.
 The common-distribution world report finds
 strong recording-dependent reward errors, including in the best Pong player;
 prioritize reward discovery/generalization and measured training coverage.
@@ -710,8 +718,9 @@ for stronger behavior.
 For the remaining Atari pilots, avoid a fixed evaluation window too short for
 20 long games. The [episode-budget candidate](experiments/2026-09-09-episode-evaluation.md)
 keeps a fixed per-stream episode target and hard action cap, with every completed
-episode scored. Its CPU and complete frozen-state/prefix/memory GPU checks pass;
-adoption still requires a new learning declaration. Existing evaluations and all five
+episode scored. Its CPU and complete frozen-state/prefix/memory GPU checks pass
+on the previous backend; latest-package qualification and a new learning
+declaration are still required. Existing evaluations and all five
 task/three-seed criteria are unchanged.
 
 For every experiment retain source/model/encoder hashes, environment and data
