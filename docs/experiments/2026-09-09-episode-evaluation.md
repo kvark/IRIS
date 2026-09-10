@@ -194,3 +194,25 @@ package. It does not adopt a campaign protocol, establish learning reliability
 or provide a speed benchmark. Preserve both artifact roots; neither queue
 should restart. The newly requested backend refresh now precedes the unrun
 world-sync comparison, without altering that candidate's pinned inputs.
+
+## Current-backend carry: CPU-qualified, GPU work not started
+
+The isolated `exp/current-episode-evaluation` candidate at **24b2968** carries
+exactly the four Python implementation/test files from `4281242` onto the
+qualified current source `90b4763`. All Rust/backend/build inputs remain
+unchanged, and the fresh import bundle uses the actual qualified **f6a2b6ad**
+native binary, without rebuilding or overwriting any historical package.
+
+All **580 Python CPU tests** pass with that native and the six source-matched
+Python modules. `runs/current-episode-package-20260910.etyDN4/cpu-evidence.json`
+records 61 pins, the clean source commit, exact earlier Python-file identities,
+unchanged native inputs/bytes, actual test exits and the complete test XML.
+Its SHA-256 is `9ee5b4eac750fa802016bc5a2a25db9c0641e2c82d99e17d00f7f237739132cb`.
+
+No new GPU gate or follower has started, and this bundle is not runtime-qualified.
+After the active Boxing confirmation releases the device, require a separately
+declared current-package default-training state/report/trace check against the
+retained pixel control, frozen default/v4 prefix checks, a negative cap case,
+complete frozen state and direct-memory coverage. Keep all current queues fixed.
+Breakout/Qbert still need their own declared learning budgets and fixed stopping
+targets; none of these implementation checks counts as a learned task result.

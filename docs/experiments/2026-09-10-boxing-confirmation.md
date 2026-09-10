@@ -54,6 +54,17 @@ weak seed, new assistance or changed thresholds after seeing results.
 | 2017 | Queued | Pending | Pending |
 | 3019 | Queued | Pending | Pending |
 
+The early learning-enabled 2,004→4,008-action window executes 501 updates with
+no training debt at either endpoint: 8.569 actions/s, 0.5713× aggregate real
+time and 0.09521× per stream. It spends 73.97% of wall time in learning and
+25.49% in observation. The corresponding 934 GPU samples average 69.26%
+activity, with a 0.267 s maximum gap and at least 3,303 MiB directly free.
+This agrees with the qualified runtime scale; it is neither a matched speedup
+comparison nor a complete-run safety or learning-quality result. The readout
+reverifies all 429 declaration pins and records a hash of the exact log prefix
+in `initial-runtime-readout.json`. The earlier warmup's 32.9 actions/s has zero
+updates and must not be reported as learning throughput.
+
 The worker reuses the unchanged match scorer, strict complete-checkpoint auditor
 and campaign checker’s match-replay binding. It does **not** invoke or bypass
 the old replication-v2 runtime checker: that checker deliberately binds an older

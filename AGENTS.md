@@ -196,6 +196,12 @@ reliable learning.
   episode-count evaluation for Breakout/Qbert with light CPU work. Keep optional
   world-sync fan-out separate; its ~16 ms/update scope must not indefinitely
   displace actual learning, and its old-backend CPU checks are not adoption.
+  The Python-only episode-count carry is now staged at `exp/current-episode-evaluation`
+  (`24b2968`), with all 580 CPU tests passing on the unchanged f6a2b6ad native.
+  `runs/current-episode-package-20260910.etyDN4` binds the source-matched bundle
+  and evidence with 61 pins. It has no current-package GPU gate, follower or
+  runtime adoption. Preserve its candidate inputs and finish the active Boxing
+  queue before any serialized default-training/frozen-prefix/memory check.
   Adjacent roots reuse live policy/posterior RNG streams under `seed + stream`;
   keep the declared live-seed ranges disjoint, without reinterpreting old
   results or rewriting the completed pilot. Verify actual child

@@ -699,8 +699,10 @@ continuation; this is tooling validation, not a new learned result. The requeste
 latest Meganeura refresh is qualified and adopted, with no measured speedup.
 Fresh three-seed Boxing confirmation is now running on that qualified package.
 Keep its seeds, 200,004-action budgets, frozen evaluations and controls fixed.
-Prepare the remaining Breakout/Qbert pilots and current-package episode-count
-evaluation with light CPU work while training runs. Keep the optional world-sync
+Prepare the remaining Breakout/Qbert pilots while training runs. The current-package
+episode-count candidate is CPU-qualified at `24b2968`, with 580 tests and unchanged
+native bytes; it still needs its own serialized GPU/runtime gate after this queue.
+Keep the optional world-sync
 comparison separate: its ~16 ms/update scope does not justify postponing learning
 again. Rebase/redeclare it against the current backend before any GPU test,
 without displacing the live confirmation queue.
