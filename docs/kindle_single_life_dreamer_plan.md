@@ -154,9 +154,15 @@ event counts, distinguish prior forecasts from posterior inference, and compare
 feature persistence and zero rewards. Good
 feature prediction or event ranking alone is not a good policy. Fixed-stride
 long forecasts can miss entire sparse classes; terminal accuracy is unestablished.
-These correlations do not establish causation. A longer-budget replication
-must be declared for all seeds as a new experiment, not an extension that
-relabels the failed 200k-action gate.
+These correlations do not establish causation. The separately declared
+[Pong confirmation](experiments/2026-09-10-pong-confirmation.md) gives fresh roots
+1009/2017/3019 exactly 400,008 actions each, with no exploration overrides.
+All three must pass the unchanged mastery thresholds under final-checkpoint
+unassisted evaluation and beat separately restored untrained controls. Its
+four-completed-episodes-per-stream target retains every outcome and has a
+600,000-action hard cap. This tests the current N6/backend recipe at a larger
+exposure budget, not the isolated effect of doubling the historical budget.
+The failed 200k gate remains failed. The new campaign is declared, not running.
 
 The common-recording follow-up in `runs/common-world-20260908.7gWHsJ` completed
 all nine GPU runs: all three same-model diagonals reproduce the original forecasts
@@ -183,8 +189,10 @@ now reads a fixed first-N stream-zero subset from complete vector evaluations,
 preserving full source identity and episode boundaries. Its 633 CPU tests and
 25,136 independently replayed actions validate extraction, not native forecasts.
 Require serial/vector strict replay, same-model forecast parity and GPU safety
-before its proposed first-four-match-per-final-model Pong comparison. Keep the
-existing queues fixed; a longer all-seed training budget is still undeclared.
+before the first-four-match-per-final-model Pong comparison. The new confirmation
+predeclares that recording subset without score selection; its CPU extractor
+does not launch native forecasts. Keep the existing queues fixed and verify
+their complete results before this follow-up starts.
 
 The [Freeway CPU discovery check](experiments/2026-09-08-freeway-discovery.md)
 finds no rewards under independent random actions in three 200,004-action arms,
@@ -734,6 +742,13 @@ Early episode resets can advance replay warmup without adding action credit;
 derive each game's exact update count from its complete ledger and bind restored
 state to that count. The CPU Breakout counterexample verifies this audit repair,
 not a change to learning arithmetic or evidence of task success.
+The fresh larger-budget Pong confirmation is declared after corrected Freeway,
+with 735 pins, 95 CPU checks and actual live-parent refusal. Give all three
+fresh roots 400,008 actions, preserve the unchanged mastery thresholds and
+separately restored controls, and reserve their first four stream-zero final
+matches for world-model diagnostics. No Pong worker, follower or native world
+forecast is active. This declaration does not repair the historical failed gate
+or establish any new wins.
 Keep the optional world-sync
 comparison separate: its ~16 ms/update scope does not justify postponing learning
 again. Rebase/redeclare it against the current backend before any GPU test,

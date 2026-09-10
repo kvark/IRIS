@@ -72,10 +72,12 @@ at least 2,048 MiB directly free. Compare the same model's strict and forced
 one-step forecasts, including every initial/reset/target identity, before using
 cross-model forecasts. Keep an untouched historical first-match control.
 
-For the next Pong reliability experiment, predeclare the same first four complete
-stream-zero evaluation matches from every final model, not whichever recordings
-look informative afterward. Run all three same-model checks before the six
-cross-model combinations. Keep own-policy competence, event coverage and common
-forecast error as separate results. Longer all-seed training still needs its own
-fixed-budget declaration; no longer campaign or automatic follower starts here,
-and the failed 200k-action mastery decision is unchanged.
+The separately declared [Pong confirmation](2026-09-10-pong-confirmation.md)
+now reserves the first four complete stream-zero evaluation matches from every
+final model, not whichever recordings look informative afterward. Its fresh
+roots 1009/2017/3019 each receive 400,008 training actions; it is not running.
+Run all three same-model checks before the six cross-model combinations after
+native diagnostic qualification. Keep own-policy competence, event coverage
+and common forecast error separate. Neither this candidate nor the new learning
+worker launches native world forecasts or an automatic follower. The failed
+200k-action mastery decision is unchanged.

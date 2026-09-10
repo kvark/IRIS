@@ -446,6 +446,23 @@ reliable learning.
   serial/vector and same-model forecast parity before cross-model use. Preserve
   current queues; no longer Pong budget or follower is declared by this candidate.
   See `docs/experiments/2026-09-10-multimatch-world-probe.md`.
+  A separate fresh Pong exposure confirmation is now declared in
+  `runs/pong-confirmation-20260910.zFks3A`, with 735 pins and 95 passing CPU tests.
+  Its actual CLI refuses the bound live Boxing controller before GPU queries or
+  outputs. No worker or follower is active. Preserve Boxing -> current episode
+  runtime -> corrected Breakout/Qbert -> corrected Freeway -> Pong order.
+  Use unchanged 24b2968/f6a2b6ad, N6/R256 and fresh roots 1009/2017/3019, each
+  400,008 training actions without overrides. Bind update counters to the complete
+  reset-dependent ledger. Require all three unchanged Pong gates and separately
+  restored untrained controls, using final v4 four-episode-per-stream evaluation
+  with cap 600,000 and every outcome retained. This is a new larger-exposure
+  confirmation, not an isolated budget ablation or repair of the failed 200k gate.
+  Its first four complete stream-zero final matches per root are preselected
+  without score filtering for the common H1 world set. CPU selection is not native
+  forecasts; require the separate serial/vector/strict/forced GPU gate before use.
+  No world GPU work or automatic follow-up starts here. Preserve all inputs and
+  require complete predecessor evidence. See
+  `docs/experiments/2026-09-10-pong-confirmation.md`.
 - Distinguish video-encoder initialization, action-conditioned world pretraining
   and policy-skill transfer. Missing action/reward labels are not NOOP/zero.
   The isolated `exp/world-pretraining` candidate includes world-only updates and
