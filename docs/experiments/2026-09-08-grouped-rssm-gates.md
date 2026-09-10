@@ -69,3 +69,28 @@ the archived branch/binary retain the tested bytes. Existing root release
 binaries still contain the rejected candidate. Rebuild current source before
 using them, or explicitly use the unchanged validated `9cd176c1…` Python
 package. The Freeway pilot uses that validated package, not this candidate.
+
+## September 10 CPU postmortem
+
+The read-only comparison in
+[`runs/grouped-rssm-postmortem-20260910.FiITco/analysis.json`](../../runs/grouped-rssm-postmortem-20260910.FiITco/analysis.json)
+binds twenty closed inputs. The original parent exactly matches the earlier
+`meganeura-canary-20260908.u7tbei` a7e2efd9 candidate: all 241 named tensors,
+native optimizer and logical metadata, file integrity and eight non-timing
+reports. The grouped candidate comparison also reproduces its original saved
+failure exactly. This verifies repeatability for these controls, not arbitrary
+runtime determinism or a new numerical gate.
+
+The source rewrite changes neither parameter shapes nor AGC groups. The first
+reported scalar differences are still at update 3, but that does not locate
+the first differing gradient. Only the final update-8 checkpoints were saved.
+Historical optimizer indexing starts at zero: the first update has zero learning
+rate under the declared 1,000-step warmup, while LaProp still updates moments.
+Matching two aggregate scalar reports cannot substitute for those missing states.
+
+No cause or safe fix is established. A future bounded diagnostic should inspect
+forward/recurrent inputs, raw and clipped gradients, and complete optimizer
+state beginning at update 1, separating world training from posterior/imagination
+inference. Do not jump directly to update 3, relax the comparator or reinterpret
+this as harmless rounding. No GPU job is scheduled by this postmortem; the
+active Atari learning queue and its serial follower retain priority.

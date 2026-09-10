@@ -110,6 +110,11 @@ reliable learning.
   `exp/rssm-gate-batching` and `runs/grouped-rssm-20260908.Vodj6w`. Main source
   is restored, but its old release binaries still contain that candidate;
   use the documented isolated package or rebuild before running root binaries.
+  Its September 10 CPU postmortem reproduces the failure and verifies an exact
+  independent control repeat. First differing report 3 does not locate the first
+  gradient difference: zero-LR update 1 still updates optimizer moments. Capture
+  intermediate state from update 1 in any future diagnostic; no cause, fix or
+  new GPU queue is established. See the grouped-RSSM experiment report.
   Do not repeat large CPU graph
   compilation alongside training: the first memory-plan probe caused host
   pressure, and its two capped follow-ups failed without yielding smaller-row
