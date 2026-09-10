@@ -178,6 +178,14 @@ changed exploration/replay/loss settings. Preserve the completed Freeway
 comparison, the 35 common-world pins and all nine rows. Forced controls are diagnostics,
 not new gameplay successes; off-policy logged returns are not critic targets.
 
+The [multi-match diagnostic candidate](experiments/2026-09-10-multimatch-world-probe.md)
+now reads a fixed first-N stream-zero subset from complete vector evaluations,
+preserving full source identity and episode boundaries. Its 633 CPU tests and
+25,136 independently replayed actions validate extraction, not native forecasts.
+Require serial/vector strict replay, same-model forecast parity and GPU safety
+before its proposed first-four-match-per-final-model Pong comparison. Keep the
+existing queues fixed; a longer all-seed training budget is still undeclared.
+
 The [Freeway CPU discovery check](experiments/2026-09-08-freeway-discovery.md)
 finds no rewards under independent random actions in three 200,004-action arms,
 but hundreds when random actions persist for 16 or 64 decisions. These are
