@@ -1,14 +1,15 @@
 # Kindle working direction
 
-This worktree is the isolated current-backend episode-count candidate. Its four
-Python implementation/test files are identical to `4281242`, on parent `90b4763`;
-native Rust and qualified f6a2b6ad bytes are unchanged. Its 580 Python CPU tests
-pass; it has no current-package GPU result or adoption. Follow the primary
+This worktree is the isolated multi-match world-probe candidate, based on the
+current-backend episode-count source `24b2968`. It carries the common-recording
+probe from `a425b29` and adds explicitly selected complete stream-zero matches
+from fully audited v2/v4 frozen recordings. Native Rust and the qualified
+f6a2b6ad bytes are unchanged. It has no GPU result or adoption. Follow the primary
 checkout's current experiment status: fresh Boxing confirmation is active in
 `runs/boxing-confirmation-20260910.hTEDcu`. Preserve that queue and every pin;
 do not launch GPU work alongside it. Historical status paragraphs below are
 inherited from the parent snapshot, not new pending queues. See
-`docs/experiments/2026-09-10-current-episode-evaluation.md`.
+`docs/experiments/2026-09-10-multimatch-world-probe.md` in the primary checkout.
 
 Kindle is a Rust agent that learns while acting. Each environment contributes
 its own continuing stream of experience; vector collection shares one learner

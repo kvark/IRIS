@@ -1,6 +1,7 @@
 """Measure open-loop Atari dynamics in frozen visual feature space.
 
-Replay a recorded frozen match or follow deterministic forced-random actions.
+Replay a recorded frozen match, condition another model on its recorded actions,
+or follow deterministic forced-random actions.
 Forecasts consume only the origin belief and proposed controls, never the target
 frames. Recorded future controls are retrospective conditioning, not a live plan.
 Features are not RGB reconstructions; prior reward forecasts are distinct from
@@ -83,6 +84,11 @@ def recorded_first_game(path):
                     "executed_action_frames",
                 ):
                     require(len(row[field]) == 1, "recorded stream count differs")
+                action = row["actions"][0]
+                require(
+                    type(action) is int and 0 <= action < header["config"]["action_count"],
+                    "invalid recorded action",
+                )
                 transitions.append(row)
             elif row["event"] == "progress":
                 require(
@@ -141,6 +147,126 @@ def verify_transition(row, action, reward, terminated, truncated, frames):
     )
 
 
+def recorded_matches(path, count):
+    """Select stream 0's first complete matches from a fully audited vector run."""
+    from audit_atari import read_run
+
+    require(type(count) is int and count > 0, "match count must be positive")
+    run = read_run(path)
+    header = run["start"]
+    require(
+        header["protocol"] in ("kindle-vector-v2", "kindle-vector-v4")
+        and header["mode"] == "evaluate_sample"
+        and header["restored_checkpoint"] is not None
+        and run["accounting"]["updates"] == 0,
+        "requires a complete unassisted frozen vector evaluation",
+    )
+    require(
+        header["environment_seeds"][0] == header["seed"]
+        and header["policy_seed_rule"] == "config.seed + stream (wrapping u64)",
+        "changed stream-zero seed rule",
+    )
+    episodes = [row for row in run["episodes"] if row["stream"] == 0][:count]
+    require(len(episodes) == count, "not enough completed stream-zero matches")
+    prefix = hashlib.sha256()
+    byte_count = 0
+    transitions = []
+    with Path(path).open("rb") as source:
+        for line in source:
+            require(line.endswith(b"\n"), "incomplete recorded match prefix")
+            prefix.update(line)
+            byte_count += len(line)
+            row = json.loads(line)
+            if row["event"] == "transition":
+                selected = dict(row)
+                for field in (
+                    "actions", "rewards", "stored_rewards", "terminated",
+                    "truncated", "executed_action_frames",
+                ):
+                    selected[field] = row[field][:1]
+                transitions.append(selected)
+            elif row == episodes[-1]:
+                break
+    require(
+        len(transitions) == episodes[-1]["stream_step"]
+        and transitions[-1]["run_step"] == episodes[-1]["run_step"],
+        "selected match prefix differs",
+    )
+    require(sha256_file(path) == run["sha256"], "recording changed during selection")
+    return header, transitions, dict(
+        protocol="kindle-recorded-matches-v1", path=str(Path(path).resolve()),
+        sha256=run["sha256"], prefix_sha256=prefix.hexdigest(), prefix_bytes=byte_count,
+        stream=0, source_num_envs=header["num_envs"], source_accounting=run["accounting"],
+        selected_actions=len(transitions), episodes=episodes,
+    )
+
+
+def verify_recorded_model(header, agent, native_sha256, checkpoint_hashes, conditioned,
+                          *, vector_recording=False):
+    require(
+        header["native_extension_sha256"] == native_sha256,
+        "use the recorded native executable",
+    )
+    config, recorded_config = agent.config, header["config"]
+    if conditioned:
+        config = {key: value for key, value in config.items() if key != "seed"}
+        recorded_config = {
+            key: value for key, value in recorded_config.items() if key != "seed"
+        }
+    require(
+        config == recorded_config and agent.provenance == header["model_provenance"],
+        "recorded model identity differs",
+    )
+    require(
+        agent.environment_step == header["starting_environment_step"],
+        "restored counters differ",
+    )
+    # Early episode resets can advance replay warmup at the same action budget.
+    # Own-policy replay and the historical first-match contract remain exact.
+    if not (conditioned and vector_recording):
+        require(agent.learner_step == header["starting_learner_step"], "restored counters differ")
+    if not conditioned:
+        restored = header["restored_checkpoint"]
+        require(
+            checkpoint_hashes["metadata.json"] == restored["metadata_sha256"],
+            "checkpoint metadata differs",
+        )
+        for name, expected in restored["tensor_sha256"].items():
+            require(
+                checkpoint_hashes[f"{name}.safetensors"] == expected,
+                "checkpoint tensor differs",
+            )
+
+
+def policy_diagnostic(agent, action, action_count):
+    probabilities = np.asarray(agent.posterior_action_probabilities(), dtype=np.float64)
+    require(
+        probabilities.shape == (action_count,)
+        and np.isfinite(probabilities).all()
+        and (probabilities >= 0).all()
+        and (probabilities <= 1).all()
+        and abs(float(probabilities.sum()) - 1.0) < 1e-5,
+        "invalid unmasked action probabilities",
+    )
+    value = float(agent.posterior_value_prediction())
+    require(np.isfinite(value), "nonfinite posterior value")
+    positive = probabilities[probabilities > 0]
+    return dict(
+        origin_action_probabilities=probabilities.tolist(),
+        origin_logged_action_probability=float(probabilities[action]),
+        origin_policy_entropy=float(-np.sum(positive * np.log(positive))),
+        origin_greedy_action=int(np.argmax(probabilities)),
+        origin_posterior_value=value,
+    )
+
+
+def input_identity(frame, features):
+    return dict(
+        rgb_sha256=hashlib.sha256(np.asarray(frame, dtype=np.uint8).tobytes()).hexdigest(),
+        feature_sha256=hashlib.sha256(np.asarray(features, dtype="<f4").tobytes()).hexdigest(),
+    )
+
+
 def feature_mse(prediction, target):
     prediction = np.asarray(prediction, dtype=np.float64)
     target = np.asarray(target, dtype=np.float64)
@@ -186,7 +312,22 @@ def main() -> None:
     parser.add_argument(
         "--recorded-run", type=Path, help="Replay its first completed frozen N=1 game"
     )
+    parser.add_argument(
+        "--recorded-episodes", type=int,
+        help="Use stream 0's first N complete games from an audited v2/v4 vector evaluation",
+    )
+    parser.add_argument(
+        "--condition-on-recorded-actions",
+        action="store_true",
+        help="Force the recorded controls on a compatible model; not its own policy rollout",
+    )
     args = parser.parse_args()
+    if args.condition_on_recorded_actions and not args.recorded_run:
+        parser.error("--condition-on-recorded-actions requires --recorded-run")
+    if args.recorded_episodes is not None and (
+        not args.recorded_run or args.recorded_episodes <= 0
+    ):
+        parser.error("--recorded-episodes requires --recorded-run and a positive count")
     source_header = source_rows = source_record = None
     if args.recorded_run:
         if (
@@ -198,8 +339,10 @@ def main() -> None:
             parser.error(
                 "--recorded-run supplies the budget, seed, environment and protocol"
             )
-        source_header, source_rows, source_record = recorded_first_game(
-            args.recorded_run
+        source_header, source_rows, source_record = (
+            recorded_matches(args.recorded_run, args.recorded_episodes)
+            if args.recorded_episodes is not None
+            else recorded_first_game(args.recorded_run)
         )
         args.steps, args.seed = len(source_rows), source_header["seed"]
         args.environment, args.atari_protocol = (
@@ -273,6 +416,9 @@ def main() -> None:
     if int(agent.config["action_count"]) != action_count:
         raise ValueError("checkpoint and environment action counts differ")
     agent.begin_episode(frame)
+    capture_inputs = args.condition_on_recorded_actions or args.recorded_episodes is not None
+    initial_input = input_identity(frame, agent.visual_observation) if capture_inputs else None
+    episode_inputs = [dict(episode=0, after_action=0, **initial_input)] if args.recorded_episodes else []
     starting_environment_step = agent.environment_step
     starting_learner_step = agent.learner_step
     import kindle._native as native
@@ -287,30 +433,11 @@ def main() -> None:
         ]
     }
     if source_header:
-        require(
-            source_header["native_extension_sha256"] == native_sha256,
-            "use the recorded native executable",
+        verify_recorded_model(
+            source_header, agent, native_sha256, checkpoint_hashes,
+            args.condition_on_recorded_actions,
+            vector_recording=args.recorded_episodes is not None,
         )
-        require(
-            agent.config == source_header["config"]
-            and agent.provenance == source_header["model_provenance"],
-            "recorded model identity differs",
-        )
-        require(
-            starting_environment_step == source_header["starting_environment_step"]
-            and starting_learner_step == source_header["starting_learner_step"],
-            "restored counters differ",
-        )
-        restored = source_header["restored_checkpoint"]
-        require(
-            checkpoint_hashes["metadata.json"] == restored["metadata_sha256"],
-            "checkpoint metadata differs",
-        )
-        for name, expected in restored["tensor_sha256"].items():
-            require(
-                checkpoint_hashes[f"{name}.safetensors"] == expected,
-                "checkpoint tensor differs",
-            )
         require(
             list(environment.action_meanings) == source_header["action_meanings"],
             "action vocabulary differs",
@@ -357,7 +484,11 @@ def main() -> None:
             else None
         )
         for step, action in enumerate(actions):
-            if source_rows:
+            origin_diagnostic = (
+                policy_diagnostic(agent, action, action_count)
+                if args.condition_on_recorded_actions else {}
+            )
+            if source_rows and not args.condition_on_recorded_actions:
                 require(
                     agent.act() == action,
                     f"sampled policy diverged at action {step + 1}",
@@ -369,6 +500,8 @@ def main() -> None:
                     "forced action was not honored",
                 )
             length = min(horizon, args.steps - step) if step % args.stride == 0 else 1
+            if args.recorded_episodes is not None:
+                length = min(length, source_record["episodes"][episodes]["stream_step"] - step)
             if length:
                 start_observation = np.asarray(
                     agent.visual_observation, dtype=np.float64
@@ -428,6 +561,7 @@ def main() -> None:
                             np.asarray(control_observation, dtype=np.float64),
                             start_observation,
                             float(continuation),
+                            origin_diagnostic,
                         )
                     )
                 rollout_starts += 1
@@ -453,6 +587,17 @@ def main() -> None:
             )
             target_observation = np.asarray(agent.visual_observation, dtype=np.float64)
             posterior_reward = float(agent.posterior_reward_prediction())
+            target_identity = (
+                dict(
+                    target_rgb_sha256=hashlib.sha256(
+                        np.asarray(frame, dtype=np.uint8).tobytes()
+                    ).hexdigest(),
+                    target_feature_sha256=hashlib.sha256(
+                        target_observation.astype("<f4").tobytes()
+                    ).hexdigest(),
+                )
+                if capture_inputs else {}
+            )
             continuation_target = 0.0 if terminated else discount
             for (
                 offset,
@@ -462,6 +607,7 @@ def main() -> None:
                 control_observation,
                 start_observation,
                 predicted_continuation,
+                origin_diagnostic,
             ) in pending.pop(step, []):
                 model_error = feature_mse(predicted_observation, target_observation)
                 control_error = feature_mse(control_observation, target_observation)
@@ -505,6 +651,11 @@ def main() -> None:
                                 feature_mse=model_error,
                                 persistence_mse=persistence_error,
                                 unrelated_action_feature_mse=control_error,
+                                **origin_diagnostic,
+                                **target_identity,
+                                **(dict(episode=episodes, source_stream=0,
+                                        source_run_step=source_rows[step]["run_step"])
+                                   if args.recorded_episodes is not None else {}),
                             ),
                             allow_nan=False,
                         ),
@@ -517,6 +668,9 @@ def main() -> None:
                 if step + 1 < args.steps:
                     frame, _ = environment.reset()
                     agent.begin_episode(frame)
+                    if args.recorded_episodes is not None:
+                        episode_inputs.append(dict(episode=episodes, after_action=step + 1,
+                            **input_identity(frame, agent.visual_observation)))
             is_first = terminated or truncated
     require(
         agent.learner_step == starting_learner_step, "diagnostic performed learning"
@@ -526,6 +680,11 @@ def main() -> None:
         "interaction count differs",
     )
     require(not pending, "unresolved forecast targets")
+    if args.recorded_episodes is not None:
+        require(episodes == len(episode_inputs) == args.recorded_episodes,
+                "replayed match/reset count differs")
+        require(sha256_file(args.recorded_run) == source_record["sha256"],
+                "recording changed during replay")
 
     model_mse = [
         checked_mean(total, count) for total, count in zip(model_mse_sum, sample_count)
@@ -539,10 +698,28 @@ def main() -> None:
         for total, count in zip(persistence_mse_sum, sample_count)
     ]
     result = {
-        "protocol": "kindle-world-probe-v2",
-        "source": "recorded_frozen_policy" if source_rows else "forced_random_coverage",
-        "recorded_game": source_record,
-        "sampled_actions_match_source": True if source_rows else None,
+        "protocol": "kindle-world-probe-v3",
+        "source": (
+            "recorded_action_conditioning" if args.condition_on_recorded_actions
+            else "recorded_frozen_policy" if source_rows else "forced_random_coverage"
+        ),
+        "recorded_game": source_record if args.recorded_episodes is None else None,
+        "initial_input": initial_input,
+        "recorded_model": (
+            dict(config=source_header["config"],
+                 provenance=source_header["model_provenance"],
+                 checkpoint=source_header["restored_checkpoint"])
+            if source_header else None
+        ),
+        "sampled_actions_match_source": (
+            True if source_rows and not args.condition_on_recorded_actions else None
+        ),
+        "actions_forced_to_source": args.condition_on_recorded_actions,
+        "policy_diagnostic": (
+            "Unmasked origin policy/value before forced controls. Logged-policy returns "
+            "are not ground truth for another policy's value. No policy-quality claim."
+            if args.condition_on_recorded_actions else None
+        ),
         "native_extension_sha256": native_sha256,
         "checkpoint_sha256": checkpoint_hashes,
         "encoder_sha256": sha256_file(args.encoder_checkpoint),
@@ -613,6 +790,13 @@ def main() -> None:
         "terminal_count_by_horizon": terminal_count,
         "truncation_count_by_horizon": truncated_count,
     }
+    if args.recorded_episodes is not None:
+        result.update(
+            protocol="kindle-world-probe-v4", recorded_matches=source_record,
+            starting_learner_step=starting_learner_step, episode_inputs=episode_inputs,
+            horizon_stops_at_episode_boundary=True,
+            diagnostic_scope="stream 0's first declared complete matches; not a policy-competence evaluation",
+        )
     encoded = json.dumps(result, indent=2, sort_keys=True, allow_nan=False)
     if args.output:
         with open(args.output, "x", encoding="utf-8") as output:
