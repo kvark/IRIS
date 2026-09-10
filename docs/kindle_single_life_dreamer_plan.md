@@ -1,6 +1,6 @@
 # Kindle: one actor learning to play
 
-Updated 2026-09-09. This is the single project roadmap. Detailed measurements
+Updated 2026-09-10. This is the single project roadmap. Detailed measurements
 and commands live in the [kickoff report](experiments/2026-09-05-kickoff.md) and
 [self-learning report](experiments/2026-09-05-self-learning.md), not a second plan.
 Working rules are in [AGENTS.md](../AGENTS.md).
@@ -254,7 +254,7 @@ this panel's independent streams, fresh serial replay, RGB observations,
 rewards and actual clocks without constructing an agent. Before using the vector
 runner beyond Pong, separate its positive-return `natural_wins` summary from
 game-specific competence criteria; a positive Atari score is not generally a win.
-The active pinned Pong runner and auditor stay unchanged.
+The historical pinned Pong runner and auditor stay unchanged.
 
 The next bounded [five-game campaign](experiments/2026-09-08-atari-five.md)
 targets Pong, Boxing, Freeway, Breakout and Qbert. Its completed first experiment
@@ -372,21 +372,29 @@ across six independently initialized environments; each retains its own visual
 cache, belief, RNG and contiguous replay sequences. Batched inference and
 row-independent replay/head work are implemented without batching away recurrence.
 
-Use the [repaired isolated package](experiments/2026-09-08-meganeura-refresh.md#use-the-adopted-package)
-(`9cd176c1…`) or a separately validated fresh build. The default editable
-extension intentionally remains historical. The adopted Meganeura pin
-`a7e2efd9…` carries upstream `df11bb0c…` plus the two required LeVJEPA cache
-patches, with Blade 0.9.0 and Rust 1.92 minimum. The later reviewed main
-`970da8e3…` changes release metadata, not runtime source. The fresh September 9
-check now finds runtime changes at `e59bd32d…`; the
-[separate update candidate](experiments/2026-09-09-meganeura-update.md) retains
-our frame-prefix attention and cache aliases. It is not adopted until its
-hardware and matched-learning gates pass. Historical checkpoints retain their
-original backend identity and executable.
+For new experiment declarations use the
+[qualified current package](experiments/2026-09-09-meganeura-update.md#use-the-qualified-package)
+(`f6a2b6ad…`) with its matching Python modules, runner and auditors. The adopted
+backend `4d45ba3a…` carries current upstream `e59bd32d…` plus the required
+LeVJEPA frame-prefix attention and cache-alias corrections, with Blade 0.9.0 and
+Rust 1.92 minimum. Production numerical checks, exact complete synthetic/pixel
+learning-state comparisons and direct-memory gates pass. The main worktree's
+backend integration also passes CPU/GPU checks. Its historical Python accounting
+interface differs from the isolated Atari package: do not mix them.
+The default editable extension and all old models' executables remain intact.
+Strict restore identity still requires each historical model's original backend.
+Existing campaigns are not silently switched to the new package.
 
 ### Measured throughput and memory
 
-The completed [forward/reverse comparison](experiments/2026-09-08-atari-five.md#completed-vector-memory-and-runtime-comparison)
+The current-backend N6 comparison reaches **8.554–8.599 actions/s**,
+0.570–0.573× aggregate real time and 0.0950–0.0955× per stream. It retains at
+least 3,302 MiB directly free across all ten GPU phases. Its two throughput ratios
+against a7e2efd9 are 1.004068/0.998255: **no measured speedup**. All four complete
+Boxing states, learning reports and action/reset traces match exactly. These
+short runtime checks do not establish fresh-seed learning reliability.
+
+The earlier a7e2efd9 [forward/reverse comparison](experiments/2026-09-08-atari-five.md#completed-vector-memory-and-runtime-comparison)
 keeps the learner configuration fixed. Each trial trains for 3,840 actual
 actions and restores for 768 frozen actions; the timed 1,536-action interval
 contains exactly 384 updates. Every same-N repeat reproduces all 241 named
@@ -395,7 +403,7 @@ checkpoint tensors and action/episode/reset traces exactly.
 | Streams | Aggregate actions/s, two orders | Aggregate game/wall time | Minimum directly free VRAM | Decision |
 | ---: | ---: | ---: | ---: | --- |
 | 4 | 8.423 / 8.432 | 0.562× | 4,889 MiB | Eligible, slower |
-| 6 | 8.574 / 8.550 | 0.570–0.572× | 3,302 MiB | Selected for current package |
+| 6 | 8.574 / 8.550 | 0.570–0.572× | 3,302 MiB | Selected; retained after current-backend check |
 | 8 | 8.672 / 8.657 | 0.577–0.578× | 1,630 MiB | Fails 2 GiB reserve |
 
 N6 is about 1.2% slower than N8, not a speedup. Per-stream acceleration is
@@ -413,10 +421,10 @@ precision, sequence length or learner batch to pass it.
 ### What actually costs time
 
 The current N6 timed windows spend roughly **74% learning, 25% observation and
-less than 1% in the emulator**. Mean GPU activity is about 69%; activity is not
+less than 1% in the emulator**. Mean GPU activity is 67–69%; activity is not
 occupancy or a measurement of idle gaps. Full learner calls are approximately
-343–346 ms: world training ~160 ms, imagination ~80 ms, posterior inference
-~58 ms, with behavior and synchronization making up most of the remainder.
+345–346 ms: world training ~160 ms, imagination ~85 ms, posterior inference
+~59 ms, with behavior and synchronization making up most of the remainder.
 
 At 15 aggregate actions/s, R256 and B16×T64 require 3.75 learner updates/s.
 The updates alone exceed the one-second budget. Including roughly 30 ms of
@@ -523,7 +531,7 @@ actor/critic sessions, plus strict dynamics-only initialization of fresh serial
 or vector runtimes. It passes 91 Rust CPU tests, but remains unadopted: verified
 dataset ingestion, GPU checks and adaptation/retention comparisons are unfinished.
 Initialized checkpoints use format 4 to retain the offline source history;
-the active format-3 campaign and Python runners are unchanged.
+the existing format-3 campaign declarations and Python runners are unchanged.
 
 Separate the sources of prior knowledge:
 
@@ -684,8 +692,9 @@ The episode-count evaluation gate is complete through a separately declared
 continuation after interruption: full frozen-state/default-trace/prefix parity
 and direct-memory checks pass. Preserve the interrupted original and completed
 continuation; this is tooling validation, not a new learned result. The requested
-latest Meganeura refresh now precedes the staged world-sync comparison, keeping
-backend and fan-out changes separate. Then declare remaining game pilots
+latest Meganeura refresh is qualified and adopted, with no measured speedup.
+Keep the staged world-sync comparison separate and rebase/redeclare it against
+the current backend before testing. Then declare remaining game pilots
 and fresh three-seed replication against the selected validated package.
 The common-distribution world report finds
 strong recording-dependent reward errors, including in the best Pong player;

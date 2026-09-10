@@ -1,4 +1,4 @@
-# Current upstream refresh: compatibility candidate
+# Current upstream refresh: adopted after exact qualification
 
 The September 9 remote check resolves Meganeura main to
 [`e59bd32d`](https://github.com/kvark/meganeura/commit/e59bd32d2aeb200eb00b1a15698a777d7df8db4f).
@@ -6,6 +6,7 @@ Unlike the earlier metadata-only `970da8e3` review, this includes runtime change
 softplus negative-tail values/gradients, new multimodal/cache operations, native
 capture support and pipeline-label reuse, and weighted/small-tile matmul epilogues.
 These fixes do not by themselves explain the old Pong seed failures.
+The September 10 00:30 UTC recheck still resolves the same upstream revision.
 
 ## Preserve the encoding contract
 
@@ -75,23 +76,69 @@ The first preflight found a missing standalone candidate example before creating
 any declaration or GPU job; the unchanged example was then built explicitly.
 That preparation failure is retained, not a numerical failure or partial run.
 
-The separately declared N6 pixel comparison started at 23:56 UTC, with 374 pins
-and 22 passing CPU comparison tests. Four fresh Boxing trials run in
-parent/candidate/candidate/parent order, each 3,840 training and 768 restored
-frozen actions. Require exact complete state, all non-timing reports and
-action/reward/reset traces. The fixed 2,304–3,840 window contains 384 updates;
-retain at least 98% of parent throughput in both orders. A speedup requires both
-ratios above 1.005. A short candidate Freeway override/frozen integration follows.
-All ten GPU phases need complete direct-memory coverage and at least 2,048 MiB
-free. `pixel-declaration.md`, `pixel-manifest.json` and `pixel-events.jsonl` bind
-the active gate; do not modify or restart it. No pixel result is claimed yet.
+The separately declared N6 pixel comparison completed at 00:37 UTC on September
+10, with 374 input pins and 22 passing CPU comparison tests. All four fresh
+Boxing trials reproduce the same complete logical state, all 610 non-timing
+reports and training/frozen action/reward/reset traces exactly. Each trains
+3,840 actions, then restores the final checkpoint for 768 unassisted sampled
+actions. The fixed 2,304–3,840 timing window contains exactly 384 updates and
+no unpaid training debt. No numerical tolerance or historical identity was
+changed to pass. The candidate Freeway action-override/frozen integration also
+passes, including the mixed exploration ledger and complete final state.
 
-Before adoption, complete the pixel comparisons and directly measured
-combined-learner GPU headroom. A corrected backend may change arithmetic: diagnose any mismatch
-instead of editing old models or silently relaxing the comparison. Retain all
-logical weights and optimizer moments; only identified derived caches may differ.
-Declare matched timing before running it, and distinguish correctness adoption
-from an actual speedup. No new long learning run is started by this preparation.
+| Order / backend | Actions/s | Aggregate real time | GPU activity in timed window | Full learner ms/update |
+| --- | ---: | ---: | ---: | ---: |
+| AB / parent | 8.5643 | 0.5710× | 68.20% | 345.25 |
+| AB / candidate | 8.5991 | 0.5733× | 67.42% | 344.98 |
+| BA / candidate | 8.5542 | 0.5703× | 69.28% | 345.76 |
+| BA / parent | 8.5691 | 0.5713× | 67.20% | 344.98 |
+
+Candidate/parent ratios are **1.004068 and 0.998255**: the predeclared 98%
+regression guard passes, but the requirement for both ratios above 1.005 does
+not. This is a correctness update, **not a speedup**. Candidate per-stream real
+time is 0.0950–0.0955×. Learning remains about 74% of elapsed window time and
+observation about 25%; emulation is below 0.5%. World training costs roughly
+160–161 ms/update, imagination 85 ms, posterior inference 59 ms and world sync
+16 ms. These subtimings are contained in the outer learner total, not additional
+wall time. GPU activity is neither occupancy nor calibrated idle-gap coverage.
+
+All ten complete native phases pass direct-memory coverage, with at least
+**3,302 MiB directly free** overall; each timed Boxing window retains 3,303 MiB.
+Driver reservations remain 462 MiB. The independent CPU audit freshly rechecks
+all 20 command exits/output hashes, ten ledgers, complete checkpoint files,
+four-way parity and raw GPU samples; it constructs no agent. The completed
+`pixel-result.json` SHA-256 is
+`7568c3541251b76088f6de8e68267f0576c944b3180e92a05bcdc27b69ba8f40`.
+The declaration, raw evidence, `pixel-independent-audit.json` and
+`runtime-readout.json` are retained in the same directory. Do not restart the
+completed worker. No new long training, game competence or seed reliability is
+claimed by these short integration runs.
+
+The four dependency/identity files are now applied to the main worktree and
+match the isolated candidate byte-for-byte. Main-worktree integration checks
+are recorded separately; historical packages and default editable extension
+remain untouched. The optional exploration implementation still lives in the
+isolated package; this source integration changes only the backend.
+
+Main formatting, workspace/Python Clippy and all 92 Rust CPU tests pass. The
+first Python integration attempt mixed the newer Atari package with main's
+historical Pong auditor: 250 tests passed and three failed looking for the old
+`natural_wins` accounting field. The same three failures reproduce with the old
+a7e2efd9 package, so this is an incompatible Python pairing, not new backend
+arithmetic. Preserve both negative checks and the original failed check
+sequence. No auditor or test expectation was edited. A fresh main-source wheel
+in `main-package` matches its own five Python files and built native library;
+all 253 main Python tests pass with that exact extension imported. This wheel
+is integration evidence, not a substitute for the separately pixel-qualified
+Atari package. All three focused main-worktree GPU checks completed at 00:46
+UTC: act/learn, serial-versus-vector live belief/policy, and vector-one scheduled
+learning/checkpoint restore. The continuation preserves full direct-memory
+coverage; its tiny synthetic fixtures are not another throughput measurement.
+`main-continuation-result.json` binds the completed checks. The source-matched
+main extension is `6c630ecb64fe8b67047518852cfa6f867ef59859052d84b1c86ccb6784183df6`;
+the qualified Atari extension remains `f6a2b6ad…`. The dependency update is
+adopted without changing the learning recipe, frontend, historical restore
+identity or optional exploration's isolation.
 
 This user-requested update now precedes the still-unrun world-sync comparison.
 Do not rerun the completed Freeway, common-world or episode-evaluation queues.
@@ -113,3 +160,22 @@ matching logical shape/format, and sharing an allocation does not refresh a
 target session's derived parameters or Winograd caches. Any such optimization
 needs its own mutation/restore/cache checks and serialized learning comparison.
 The current update uses neither sharing nor the staged read-once fan-out.
+
+## Use the qualified package
+
+For newly declared experiments, select
+`runs/meganeura-refresh-20260909.xfF3AZ/package` explicitly and use its matching
+runner at `/x/Code/.kindle-meganeura-20260909/python/examples/atari_vector.py`.
+Keep its Python modules, runner and auditors together: the main worktree's
+historical Pong accounting interface is different.
+From the Kindle root, this import check constructs no GPU agent:
+
+```sh
+PYTHONPATH=runs/meganeura-refresh-20260909.xfF3AZ/package \
+  python/.venv/bin/python -c 'import kindle._native as native; print(native.__file__)'
+```
+
+Do not use that package to restore old a7e2efd9 or historical f663 models:
+restore deliberately retains strict backend identity. Keep their original
+executables. Existing campaign declarations also remain pinned to their original
+package and protocol; qualify a new declaration before long training.

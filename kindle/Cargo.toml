@@ -10,7 +10,7 @@ license = "MIT"
 
 [dependencies]
 # Latest main plus the two carried LeVJEPA cached-query-block patches.
-meganeura = { git = "https://github.com/kvark/meganeura", rev = "a7e2efd9d2d1c14e654658fa1b736582d96e16cd" }
+meganeura = { git = "https://github.com/kvark/meganeura", rev = "4d45ba3a1830107769ae07fabcf3b95d0762973c" }
 # Match Meganeura's published dependency so GPU context types stay identical.
 blade-graphics = "=0.9.0"
 rand = "0.9"

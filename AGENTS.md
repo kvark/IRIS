@@ -52,24 +52,32 @@ reliable learning.
   earlier results are in `docs/experiments/2026-09-08-runtime-hardware.md`.
   Device-resident imagination is adopted after exact hardware, synthetic and
   pixel checks. It removes redundant host feature/state transfers and scratch
-  without changing learning arithmetic. The Meganeura refresh is now adopted
-  at a7e2efd9 (main df11bb0c plus the two required LeVJEPA cache patches), with
+  without changing learning arithmetic. The first Meganeura refresh adopted
+  a7e2efd9 (main df11bb0c plus the two required LeVJEPA cache patches), with
   shared registry Blade 0.9.0 and Rust 1.92 minimum. Do not lose cached query
   blocks or cache aliases when updating again. Require logical weights and all
   optimizer moments on restore, excluding only plan-identified Winograd caches.
   Keep backend identity checks and historical executables intact.
-  Upstream main was freshly checked at e59bd32d on September 9 and now includes
-  runtime fixes. The isolated update uses 4d45ba3a, preserving frame-prefix query
+  The current backend is 4d45ba3a: upstream main e59bd32d, still current at the
+  September 10 recheck, plus the required cache corrections. It preserves frame-prefix query
   attention alongside upstream's different token-causal blocks and early cache
   aliases. Its 95 Rust/547 Python CPU tests and 18 GPU checks pass, including
   production all-gradient and LeVJEPA N4/N6/N8 parity. Both eight-update full-state
-  canary pairs also match exactly. It is not adopted: the separately declared
-  N6 pixel AB/BA and override gate is active in
-  `runs/meganeura-refresh-20260909.xfF3AZ`, with 374 pins and 22 passing CPU tests.
-  Preserve its inputs; pixel timing and combined-memory checks remain.
+  canary pairs also match exactly. The N6 pixel AB/BA and override gate completed
+  in `runs/meganeura-refresh-20260909.xfF3AZ`: all 374 pins, complete state/reports/
+  traces and ten GPU phases independently reverify, with at least 3,302 MiB
+  directly free. Timing ratios 1.004068/0.998255 pass the regression guard,
+  not the speedup gate. Main's four dependency/identity files now match that
+  candidate; 92 Rust/253 matched Python CPU tests and three main GPU checks pass.
+  Preserve the initial mixed-Python-package failure and its old-backend negative
+  control. Do not pair main's historical Pong auditor with the newer Atari
+  accounting module. The qualified Atari package is `package` (native f6a2b6ad);
+  `main-package` (6c630ecb) is source-matched integration evidence, not a long-run
+  runtime qualification. Keep their matching Python sources and runners together.
+  Historical default extensions are unchanged. Do not restart the completed gates.
   See `docs/experiments/2026-09-09-meganeura-update.md`; keep this backend update
   separate from the still-unrun world-sync fan-out candidate.
-  Current exact pixel pairs reach 8.64–8.70 actions/s, only 0.576–0.580× aggregate
+  Historical N8 exact pixel pairs reach 8.64–8.70 actions/s, only 0.576–0.580× aggregate
   real time and 0.0720–0.0725× per stream. GPU activity spans 66–70%; 14,212 MiB
   peak usage left only 1,631 MiB of directly reported free memory in the completed
   pilot. The old total-minus-used check omitted driver reservations and does
@@ -77,9 +85,9 @@ reliable learning.
   the reserve-pass claim. Record memory.free and memory.reserved directly;
   require at least 2,048 MiB measured free before new long-run replication or
   a larger batch. The unchanged pilot has finished; do not restart its queue.
-  Keep GPU-heavy work serialized. This backend update is not a major
+  Keep GPU-heavy work serialized. That earlier backend update was not a major
   speedup; see `docs/experiments/2026-09-08-meganeura-refresh.md` for the tested
-  current package and the preserved audit-only failure plus completed continuation.
+  historical package and the preserved audit-only failure plus completed continuation.
   A CPU graph check verifies 588 MiB of F32 visual KV cache per stream: N6/N4
   would remove 1,176/2,352 MiB versus N8, without changing B16/T64 or full BPTT.
   These are logical bytes, not measured free VRAM or throughput. The LeVJEPA

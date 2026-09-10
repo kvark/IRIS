@@ -83,3 +83,9 @@ episode gate through its separately declared continuation). Upstream has since
 moved, so the [requested backend update](2026-09-09-meganeura-update.md) now takes
 precedence. Keep this original candidate and draft unchanged and unrun; do not
 combine backend arithmetic changes with its fan-out comparison.
+
+The backend update completed qualification and source adoption on September 10,
+without a measured speedup. This old fan-out candidate still has no GPU result.
+Rebase and explicitly redeclare a future fan-out comparison on the qualified
+current backend; do not compare this old a7e2efd9 build with a new-backend control
+and attribute their combined difference to synchronization.
