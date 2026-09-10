@@ -720,8 +720,8 @@ provisionally into fresh Freeway confirmation, retaining the successful hold1
 control; neither result proves reliability. Do not restart the completed queue.
 The corrected v2 three-seed Freeway worker is now declared with 626 pins and 102 CPU
 checks, and its actual live-parent refusal is verified. It stays behind the
-already declared Boxing/runtime/Breakout/Qbert sequence; no follower or GPU
-worker has started. Its all-seed gates and separately restored controls are fixed.
+already declared Boxing/runtime/Breakout/Qbert sequence; no Freeway GPU worker
+has started. Its all-seed gates and separately restored controls are fixed.
 The episode-count evaluation gate is complete through a separately declared
 continuation after interruption: full frozen-state/default-trace/prefix parity
 and direct-memory checks pass. Preserve the interrupted original and completed
@@ -734,7 +734,7 @@ The corrected v2 Breakout/Qbert pilots are declared but not running. Their 521 p
 unassisted final evaluations and separate untrained controls. The current-package
 episode-count candidate is CPU-qualified at `24b2968`, with 580 tests and unchanged
 native bytes. Its executable current-package runtime gate is now declared with
-498 pins and 47 CPU checks, but has no active follower/GPU worker. The actual
+498 pins and 47 CPU checks, but its GPU worker has not started. The actual
 live-parent refusal is verified; run its state/trace/prefix/memory checks only
 after the entire Boxing queue completes and its results independently reverify.
 Preserve but do not launch the superseded, unstarted 512/617-pin declarations.
@@ -746,9 +746,17 @@ The fresh larger-budget Pong confirmation is declared after corrected Freeway,
 with 735 pins, 95 CPU checks and actual live-parent refusal. Give all three
 fresh roots 400,008 actions, preserve the unchanged mastery thresholds and
 separately restored controls, and reserve their first four stream-zero final
-matches for world-model diagnostics. No Pong worker, follower or native world
+matches for world-model diagnostics. No Pong worker or native world
 forecast is active. This declaration does not repair the historical failed gate
 or establish any new wins.
+The separate [serial handoff](experiments/2026-09-10-atari-serial-handoff.md)
+is now waiting on the actual live Boxing controller, with 756 pins and 52 CPU
+scheduling checks. It invokes the unchanged current runtime gate, corrected
+Breakout/Qbert pilots, corrected Freeway confirmation and Pong confirmation
+in order, with each entrypoint retaining full raw prerequisite checks. No
+successor GPU worker is active yet. Preserve the waiting follower and inputs;
+do not manually launch duplicates. It stops on integrity/runtime failures,
+retains valid competence failures and cannot certify the five-game goal.
 Keep the optional world-sync
 comparison separate: its ~16 ms/update scope does not justify postponing learning
 again. Rebase/redeclare it against the current backend before any GPU test,

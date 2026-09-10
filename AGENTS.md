@@ -199,13 +199,14 @@ reliable learning.
   The Python-only episode-count carry is now staged at `exp/current-episode-evaluation`
   (`24b2968`), with all 580 CPU tests passing on the unchanged f6a2b6ad native.
   `runs/current-episode-package-20260910.etyDN4` binds the source-matched bundle
-  and evidence with 61 pins. It has no current-package GPU gate, follower or
+  and evidence with 61 pins. It has no completed current-package GPU gate or
   runtime adoption. Preserve its candidate inputs and finish the active Boxing
   queue before any serialized default-training/frozen-prefix/memory check.
   That executable gate is now declared in
   `runs/current-episode-runtime-20260910.uRF9VK`, with 498 pins and 47 passing
   CPU tests. Its actual launch refuses the bound live Boxing controller before
-  GPU queries or run outputs. No follower or GPU worker is active for the gate.
+  GPU queries or run outputs. The gate's GPU worker has not started; the separate
+  serial follower below now waits for Boxing before invoking the unchanged gate.
   After Boxing completes, reverify all three trained/untrained results, complete
   state/replays, declared commands and twelve GPU windows before its eight
   serialized native phases. Competence failures remain failures, not incomplete
@@ -217,8 +218,8 @@ reliable learning.
   The first Breakout/Qbert seed-0 pilots are now conditionally declared in
   `runs/breakout-qbert-pilots-v2-20260910.9zf9T3`, with 521 pins and 92 passing CPU
   tests. Their actual CLI refuses the live Boxing predecessor before GPU work;
-  no pilot worker or follower is active. Require the complete current-episode
-  runtime evidence before launch. Each game gets 200,004 fresh R256 actions,
+  no pilot worker is active. The separate serial follower requires complete
+  current-episode runtime evidence before launch. Each game gets 200,004 fresh R256 actions,
   no exploration overrides, final-checkpoint v4 evaluation with four completed
   episodes per stream/cap 600,000 actions, and a separately restored untrained
   control. Keep all outcomes, task thresholds and fresh-seed requirements;
@@ -320,7 +321,7 @@ reliable learning.
   Fresh Freeway hold64 confirmation is now conditionally declared in
   `runs/freeway-confirmation-v2-20260910.4w3RV8`, with 626 pins and 102 passing CPU
   checks. The actual launch refuses the bound live Boxing predecessor before
-  GPU work; no worker or follower is active. Preserve Boxing -> current episode
+  GPU work; no Freeway worker is active. Preserve Boxing -> current episode
   runtime gate -> Breakout/Qbert pilots -> Freeway confirmation order, with
   complete predecessor checks and valid competence failures kept distinct.
   Use the qualified f6a2b6ad/90b4763 package, N6/R256, roots 1009/2017/3019,
@@ -449,7 +450,7 @@ reliable learning.
   A separate fresh Pong exposure confirmation is now declared in
   `runs/pong-confirmation-20260910.zFks3A`, with 735 pins and 95 passing CPU tests.
   Its actual CLI refuses the bound live Boxing controller before GPU queries or
-  outputs. No worker or follower is active. Preserve Boxing -> current episode
+  outputs. No Pong worker is active. Preserve Boxing -> current episode
   runtime -> corrected Breakout/Qbert -> corrected Freeway -> Pong order.
   Use unchanged 24b2968/f6a2b6ad, N6/R256 and fresh roots 1009/2017/3019, each
   400,008 training actions without overrides. Bind update counters to the complete
@@ -463,6 +464,21 @@ reliable learning.
   No world GPU work or automatic follow-up starts here. Preserve all inputs and
   require complete predecessor evidence. See
   `docs/experiments/2026-09-10-pong-confirmation.md`.
+  The separately declared serial follower in
+  `runs/atari-serial-handoff-20260910.zF8Hfh` started at 04:40 UTC on September 10,
+  with 756 pins and 52 passing CPU scheduling tests. PID 2318785/start ticks
+  108736692 is bound to the actual live Boxing controller 2303115/107474767.
+  Reverify live identities, not just these numbers. It is waiting with no child
+  or GPU work; after Boxing it invokes the unchanged runtime, corrected B/Q,
+  corrected Freeway and Pong entrypoints in order. Each still checks its full
+  raw predecessors before GPU work. Valid task failures remain failures;
+  incomplete data, integrity/runtime failure or a changed stage stops the handoff
+  without retries. Preserve all inputs and do not manually launch duplicate
+  successors, restart this follower or displace it with GPU-heavy diagnostics.
+  The child declarations retain no automatic follow-up; this outer declaration
+  supplies scheduling only. Its completion is not five-game success: B/Q still
+  require fresh-seed confirmation, and native world forecasts are not scheduled.
+  See `docs/experiments/2026-09-10-atari-serial-handoff.md`.
 - Distinguish video-encoder initialization, action-conditioned world pretraining
   and policy-skill transfer. Missing action/reward labels are not NOOP/zero.
   The isolated `exp/world-pretraining` candidate includes world-only updates and

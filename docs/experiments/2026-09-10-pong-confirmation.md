@@ -7,7 +7,9 @@ at a larger exposure budget; it does not extend or relabel that campaign.
 The immutable declaration and worker are in
 `runs/pong-confirmation-20260910.zFks3A`: **735 content pins and 95 passing CPU
 tests**. An actual CLI launch while the bound Boxing controller was live refused
-before GPU queries, native construction or run outputs. No follower was started.
+before GPU queries, native construction or run outputs. That declaration started
+no follower. A separate [serial handoff](2026-09-10-atari-serial-handoff.md) now
+waits on Boxing and retains the existing predecessors before this Pong worker.
 Passing launcher tests is not gameplay, GPU qualification or reliable learning.
 
 ## Fixed protocol
@@ -92,7 +94,8 @@ learner updates. This is not a super-real-time claim.
 The [manifest](../../runs/pong-confirmation-20260910.zFks3A/manifest.json) SHA-256
 is `94b7699e713c90c6ce217913cc32b989ebe76b4c81b4bde7413b3ac61986093b`.
 `live-parent-refusal.json` records the actual negative launch check and reverified
-pins. Preserve every input. Launch the declared `run_confirmation.py` only after
-the complete predecessor evidence passes; it starts no automatic follow-up.
+pins. Preserve every input. The serial follower invokes the declared
+`run_confirmation.py` only after complete predecessor evidence passes; do not
+manually launch a duplicate. The worker itself starts no automatic follow-up.
 All three Pong roots and controls must pass for Pong confirmation. The other
 four games and broader completion audit remain required for the five-game goal.

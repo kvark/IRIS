@@ -11,9 +11,10 @@ reports, traces, frozen prefixes, twelve declared commands and eight GPU
 memory/coverage windows. A completion flag alone is insufficient.
 
 The actual pilot CLI was tested while the bound Boxing controller was live.
-It refused before any GPU query, native construction or run outputs. No worker
-or follower is active for these pilots. Preserve all inputs and do not run
-them alongside Boxing or the runtime gate.
+It refused before any GPU query, native construction or run outputs. No pilot
+worker is active. The separate [serial follower](2026-09-10-atari-serial-handoff.md)
+now waits on Boxing and retains the full runtime prerequisite before these
+pilots. Preserve all inputs and do not manually launch a duplicate worker.
 
 ## Fixed comparison
 

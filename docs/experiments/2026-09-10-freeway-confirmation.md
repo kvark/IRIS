@@ -67,10 +67,12 @@ those pilots finish; passing fabricated CPU fixtures is not predecessor
 completion or new GPU evidence.
 
 An actual launch attempt while the bound Boxing controller was live refused
-before GPU queries, native construction or run outputs. No follower or worker
-is active for Freeway. Preserve every pinned input and do not restart any
-completed or incomplete queue. After prerequisites pass, launch the declared
-`run_confirmation.py`; it starts no automatic follow-up.
+before GPU queries, native construction or run outputs. No Freeway worker is
+active. The separate [serial follower](2026-09-10-atari-serial-handoff.md) now
+waits on Boxing and invokes this unchanged worker only after the existing
+predecessors finish and reverify. Preserve every pinned input; do not manually
+launch duplicates or restart any completed or incomplete queue. This worker
+itself still starts no automatic follow-up.
 
 GPU work stays serialized. Each native phase requires at least 2,048 MiB
 directly reported free memory, 4 Hz monitoring and complete sample coverage.

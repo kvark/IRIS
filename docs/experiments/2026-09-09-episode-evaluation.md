@@ -211,7 +211,7 @@ records 61 pins, the clean source commit, exact earlier Python-file identities,
 unchanged native inputs/bytes, actual test exits and the complete test XML.
 Its SHA-256 is `9ee5b4eac750fa802016bc5a2a25db9c0641e2c82d99e17d00f7f237739132cb`.
 
-No new GPU gate or follower has started, and this bundle is not runtime-qualified.
+No new GPU gate has started, and this bundle is not runtime-qualified.
 After the active Boxing confirmation releases the device, require a separately
 declared current-package default-training state/report/trace check against the
 retained pixel control, frozen default/v4 prefix checks, a negative cap case,
@@ -243,6 +243,9 @@ traces and frozen prefixes must match; all phases require direct-memory coverage
 and ≥2,048 MiB free. The single timed pair guards a >2% regression, not an AB/BA
 speedup claim. The capture implementation is byte-identical to the earlier gate.
 
-No follower or GPU worker is active for this declaration. Keep it fixed and
-launch only after its complete predecessor proof passes. The separately declared
+The GPU worker has not started. A separate
+[serial follower](2026-09-10-atari-serial-handoff.md) now waits on the actual live
+Boxing controller before invoking this unchanged gate. Keep its inputs fixed;
+do not manually launch a duplicate. Its complete predecessor proof must still
+pass before GPU work. The separately declared
 Breakout/Qbert pilots remain conditional on this gate; it starts no long run.
