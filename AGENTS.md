@@ -311,6 +311,18 @@ reliable learning.
   Do not assume held exploration benefits other games. No fresh replication yet;
   preserve all 82 pins and do not restart the completed learning queue.
   See `docs/experiments/2026-09-09-freeway-persistence.md`.
+  Fresh Freeway hold64 confirmation is now conditionally declared in
+  `runs/freeway-confirmation-20260910.megagv`, with 617 pins and 98 passing CPU
+  checks. The actual launch refuses the bound live Boxing predecessor before
+  GPU work; no worker or follower is active. Preserve Boxing -> current episode
+  runtime gate -> Breakout/Qbert pilots -> Freeway confirmation order, with
+  complete predecessor checks and valid competence failures kept distinct.
+  Use the qualified f6a2b6ad/90b4763 package, N6/R256, roots 1009/2017/3019,
+  200,004 training actions with probability .5/hold64 and 75,000 unassisted v2
+  frozen actions per root, plus separately restored same-seed untrained controls.
+  Require all three unchanged Freeway gates, complete state/replays and distinct
+  initial/trained parameter fingerprints. This is declared, not a reliability
+  result or five-game completion; see `docs/experiments/2026-09-10-freeway-confirmation.md`.
   The original plain-policy Freeway training log at 200,004 actions extends the preserved 72k
   diagnostic: all 49,651 updates have zero reported absolute advantage, despite
   declining prediction training loss and finite learner scalars/saved state.

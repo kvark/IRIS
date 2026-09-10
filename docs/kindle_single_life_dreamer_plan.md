@@ -295,6 +295,12 @@ with complete final-checkpoint and replay checks. The matched hold1 arm also
 passes: 36/36 qualifying rounds, mean 29.0278. The completed untrained control
 scores zero, and all pilot validation passes. Neither the score difference nor
 these two trained passes establishes fresh-seed reliability.
+The [fresh Freeway confirmation](experiments/2026-09-10-freeway-confirmation.md)
+now declares hold64/probability .5 for roots 1009/2017/3019, with the same
+200,004-action training budget and unassisted 75,000-action final evaluations
+plus paired untrained controls. It has not started and follows the existing
+Boxing, current-runtime and Breakout/Qbert sequence; all predecessor data must
+reverify first.
 The [fresh Boxing confirmation](experiments/2026-09-10-boxing-confirmation.md)
 has started on the qualified current backend: roots 1009/2017/3019 each receive
 200,004 training and 75,000 frozen actions, plus a paired untrained control.
@@ -696,6 +702,10 @@ pass their unassisted frozen gates; the restored untrained control scores zero.
 All budgets, checkpoints, replays and GPU phases validate. Carry hold64
 provisionally into fresh Freeway confirmation, retaining the successful hold1
 control; neither result proves reliability. Do not restart the completed queue.
+The fresh three-seed Freeway worker is now declared with 617 pins and 98 CPU
+checks, and its actual live-parent refusal is verified. It stays behind the
+already declared Boxing/runtime/Breakout/Qbert sequence; no follower or GPU
+worker has started. Its all-seed gates and separately restored controls are fixed.
 The episode-count evaluation gate is complete through a separately declared
 continuation after interruption: full frozen-state/default-trace/prefix parity
 and direct-memory checks pass. Preserve the interrupted original and completed

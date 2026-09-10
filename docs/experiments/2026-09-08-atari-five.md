@@ -9,6 +9,9 @@ and hold1 both pass unassisted frozen evaluation, and the untrained control
 scores zero. A separately declared [fresh Boxing confirmation](2026-09-10-boxing-confirmation.md)
 started September 10 on the qualified latest backend, with seeds 1009/2017/3019.
 Its first seed is training; no new frozen result or reliability claim yet.
+The [first Breakout/Qbert pilots](2026-09-10-breakout-qbert-pilots.md) and
+[fresh Freeway confirmation](2026-09-10-freeway-confirmation.md) are now
+conditionally declared behind the existing sequence, but have not started.
 The active objective is reliable learning and wins/task completion on five
 Atari games. The completed backend refresh and world-model diagnostics are
 enabling work, not satisfaction of that objective.
@@ -29,9 +32,9 @@ independent replication. Preserve the failed original three-seed Pong gate.
 | --- | --- | --- |
 | Pong | Win the match; mean return ≥15 and ≥90% natural wins over ≥20 games | Existing 200k-action recipe fails two of three seeds; new recipe must be separately declared |
 | Boxing | Win the match; mean score difference ≥50 and ≥90% natural wins over ≥20 games, no timeouts | R64: 40/40 wins, mean +51.55; R256: 162/162, +92.4877; untrained: +0.125. Fresh N6/R256 confirmation started; no result yet |
-| Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | Seed 0 hold64: 36/36 qualifying frozen rounds, mean 31.0556; hold1: 36/36, 29.0278; untrained: zero. Fresh confirmation pending; plain-policy pilot failed |
-| Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Positive and negative actual-ROM fixtures verified; declare its training/evaluation budgets next |
-| Qbert | Sustained progression: first-pyramid completion in ≥90% of ≥20 complete episodes, plus mean final score ≥15,000 | First-pyramid observer verified; one cleared pyramid alone is not mastery |
+| Freeway | ≥25 crossings per complete timed round; mean ≥25 and ≥90% qualifying rounds over ≥20 natural rounds, no timeouts | Seed 0 hold64: 36/36 qualifying frozen rounds, mean 31.0556; hold1: 36/36, 29.0278; untrained: zero. Fresh hold64 confirmation declared, not running; plain-policy pilot failed |
+| Breakout | Clear both walls: 864 points is the original one-player win, not merely a positive score | Actual-ROM fixtures verified; 200,004-action seed-0 pilot declared, not running |
+| Qbert | Sustained progression: first-pyramid completion in ≥90% of ≥20 complete episodes, plus mean final score ≥15,000 | Observer verified; 200,004-action seed-0 pilot declared, not running. One pyramid alone is not mastery |
 
 The score differences and natural termination used for Boxing are implemented
 in the [pinned ALE 0.12.1 game source](https://raw.githubusercontent.com/Farama-Foundation/Arcade-Learning-Environment/v0.12.1/src/ale/games/supported/Boxing.cpp).
@@ -58,9 +61,9 @@ to guarantee at least 24 completed episodes under the unchanged frame cap,
 including cutoffs. Candidate v4 can stop earlier when every stream completes
 four episodes, retaining all completed outcomes rather than a selected subset.
 Its 580 CPU tests and the separately declared GPU continuation pass full frozen
-state, default-trace and prefix checks on the historical backend. A current-package
-qualification and new learning declaration are required before using v4 with
-the latest backend; no active fixed-action evaluation or task criterion changes.
+state, default-trace and prefix checks on the historical backend. The new pilot
+declaration fixes the target and cap; current-package runtime qualification is
+still required before launch. No active fixed-action evaluation or task criterion changes.
 
 ## Bounded first comparison
 
@@ -111,8 +114,11 @@ The source-bound check is `runs/learning-review-20260908.W6fAHO/replication-seed
 R256 is the provisional learning control selected below. The completed runtime
 comparison selects N6. The fresh Boxing declaration now fixes 200,004 training
 and 75,000 frozen actions per root on the separately qualified current package,
-with all three paired untrained controls. Other games' fresh budgets remain to
-be declared. Seed spacing and a safe vector count alone do not establish reliability.
+with all three paired untrained controls. The separate Freeway confirmation now
+declares those same action budgets with training-only probability .5/hold64.
+Pong's follow-up and Breakout/Qbert fresh-seed budgets remain to be declared;
+their first seed-0 pilots are not replication. Seed spacing and a safe vector
+count alone do not establish reliability.
 
 ### Replication acceptance checker
 

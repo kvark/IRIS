@@ -146,6 +146,13 @@ automatic adoption by the launcher or proof of reliability. Do not apply held
 exploration to other games without evidence; keep all fresh replication gates
 and seeds unchanged.
 
+The [fresh hold64 confirmation](2026-09-10-freeway-confirmation.md) is now
+conditionally declared for roots 1009/2017/3019 on the qualified current
+package. It retains the 200,004/75,000 training/frozen budgets and adds a
+separately restored same-seed untrained control for each root. No worker is
+active; it follows the existing Boxing/runtime/Breakout/Qbert sequence.
+The original pilot inputs and both successful arms remain unchanged.
+
 ## Completed control and whole-pilot validation
 
 The independently restored untrained model receives zero rewards in every one
