@@ -214,6 +214,16 @@ reliable learning.
   save is archived and all 241 tensor entries are complete/finite; prefix GPU
   coverage retains 3,302 MiB directly free. This is early state health only,
   never a replacement for the declared final frozen model or all-seed gates.
+  The first Breakout/Qbert seed-0 pilots are now conditionally declared in
+  `runs/breakout-qbert-pilots-20260910.h0l2PM`, with 512 pins and 78 passing CPU
+  tests. Their actual CLI refuses the live Boxing predecessor before GPU work;
+  no pilot worker or follower is active. Require the complete current-episode
+  runtime evidence before launch. Each game gets 200,004 fresh R256 actions,
+  no exploration overrides, final-checkpoint v4 evaluation with four completed
+  episodes per stream/cap 600,000 actions, and a separately restored untrained
+  control. Keep all outcomes, task thresholds and fresh-seed requirements;
+  these are pilots, not reliability. Preserve the declaration and longer frozen
+  timeout. See `docs/experiments/2026-09-10-breakout-qbert-pilots.md`.
   Adjacent roots reuse live policy/posterior RNG streams under `seed + stream`;
   keep the declared live-seed ranges disjoint, without reinterpreting old
   results or rewriting the completed pilot. Verify actual child

@@ -298,9 +298,13 @@ these two trained passes establishes fresh-seed reliability.
 The [fresh Boxing confirmation](experiments/2026-09-10-boxing-confirmation.md)
 has started on the qualified current backend: roots 1009/2017/3019 each receive
 200,004 training and 75,000 frozen actions, plus a paired untrained control.
-The first root is training; there is no confirmation result yet. Declare the
-other games' fresh budgets before launch; do not call a positive score a win
-or let tooling substitute for learning.
+The first root is training; there is no confirmation result yet. The
+[first Breakout/Qbert pilots](experiments/2026-09-10-breakout-qbert-pilots.md)
+are now conditionally declared: 200,004 fresh seed-0 actions per game, no
+exploration overrides, final-checkpoint episode-budgeted evaluation and
+paired untrained controls. They have not started and require the complete
+current-package runtime gate. Fresh-seed replication remains separate; do
+not call a positive score a win or let tooling substitute for learning.
 The [task observers](experiments/2026-09-08-atari-task-observers.md) now distinguish
 match wins, complete Freeway rounds, both Breakout walls and Qbert pyramid
 completion. Qbert's first pyramid is only a progress milestone: sustained
@@ -699,7 +703,9 @@ continuation; this is tooling validation, not a new learned result. The requeste
 latest Meganeura refresh is qualified and adopted, with no measured speedup.
 Fresh three-seed Boxing confirmation is now running on that qualified package.
 Keep its seeds, 200,004-action budgets, frozen evaluations and controls fixed.
-Prepare the remaining Breakout/Qbert pilots while training runs. The current-package
+The remaining Breakout/Qbert pilots are declared but not running. Their 512 pins,
+78 CPU checks and actual live-parent refusal bind the fixed seed-0 budgets,
+unassisted final evaluations and separate untrained controls. The current-package
 episode-count candidate is CPU-qualified at `24b2968`, with 580 tests and unchanged
 native bytes. Its executable current-package runtime gate is now declared with
 498 pins and 47 CPU checks, but has no active follower/GPU worker. The actual
@@ -724,9 +730,10 @@ For the remaining Atari pilots, avoid a fixed evaluation window too short for
 20 long games. The [episode-budget candidate](experiments/2026-09-09-episode-evaluation.md)
 keeps a fixed per-stream episode target and hard action cap, with every completed
 episode scored. Its CPU and complete frozen-state/prefix/memory GPU checks pass
-on the previous backend; latest-package qualification and a new learning
-declaration are still required. Existing evaluations and all five
-task/three-seed criteria are unchanged.
+on the previous backend. Latest-package qualification is still required; the
+new pilot declaration supplies the four-per-stream target, 600,000-action cap
+and longer frozen timeout. Existing evaluations and all five task/three-seed
+criteria are unchanged.
 
 For every experiment retain source/model/encoder hashes, environment and data
 manifests, actual action/reward/boundary logs, all seeds, fixed final evaluations,

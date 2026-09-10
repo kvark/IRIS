@@ -45,9 +45,10 @@ benchmark or playing-plus-training speed claim. See
 
 `atari_vector.py --evaluate --restore CHECKPOINT --episodes-per-env 4`
 uses `kindle-vector-v4`; `--steps` is an explicit hard cap. The proposed
-future N6 Breakout/Qbert evaluation uses four completed episodes per stream
-and a 600,000-action cap. These settings still need a content-pinned pilot
-declaration before use. Existing fixed-action evaluations remain unchanged.
+N6 Breakout/Qbert evaluation uses four completed episodes per stream and a
+600,000-action cap. The [new pilot declaration](2026-09-10-breakout-qbert-pilots.md)
+now pins these settings, but remains conditional on complete current-package
+runtime qualification. Existing fixed-action evaluations remain unchanged.
 
 - Stop at the first fully accounted vector tick when **every** stream has
   reached its episode target. Do not stop on reward, task success, or only the
@@ -72,8 +73,9 @@ declaration before use. Existing fixed-action evaluations remain unchanged.
 All five task criteria and training seeds 1009/2017/3019 remain unchanged.
 In particular, Breakout still needs both walls in at least 90% of at least
 20 completed episodes; Qbert still needs the first pyramid at that rate and
-mean final score at least 15,000. Training budgets and recipes remain to be
-declared for these games. Stopping by episode count does not solve learning.
+mean final score at least 15,000. The first seed-0 pilots now declare 200,004
+training actions per game; fresh-seed replication remains separate. Stopping
+by episode count does not solve learning.
 
 ## Evidence and remaining gates
 
@@ -214,8 +216,8 @@ After the active Boxing confirmation releases the device, require a separately
 declared current-package default-training state/report/trace check against the
 retained pixel control, frozen default/v4 prefix checks, a negative cap case,
 complete frozen state and direct-memory coverage. Keep all current queues fixed.
-Breakout/Qbert still need their own declared learning budgets and fixed stopping
-targets; none of these implementation checks counts as a learned task result.
+The separate Breakout/Qbert pilot declaration now supplies fixed learning budgets
+and stopping targets; none of these implementation checks is a learned result.
 
 ### Declared current-package runtime gate
 
@@ -242,5 +244,5 @@ and ≥2,048 MiB free. The single timed pair guards a >2% regression, not an AB/
 speedup claim. The capture implementation is byte-identical to the earlier gate.
 
 No follower or GPU worker is active for this declaration. Keep it fixed and
-launch only after its complete predecessor proof passes. A separate learning
-declaration is still needed for Breakout/Qbert; this gate starts no long run.
+launch only after its complete predecessor proof passes. The separately declared
+Breakout/Qbert pilots remain conditional on this gate; it starts no long run.
