@@ -216,3 +216,31 @@ retained pixel control, frozen default/v4 prefix checks, a negative cap case,
 complete frozen state and direct-memory coverage. Keep all current queues fixed.
 Breakout/Qbert still need their own declared learning budgets and fixed stopping
 targets; none of these implementation checks counts as a learned task result.
+
+### Declared current-package runtime gate
+
+`runs/current-episode-runtime-20260910.uRF9VK` now contains the executable gate,
+498 content pins and 47 passing CPU tests. Its manifest SHA-256 is
+`80f8b02a8c4f1fe880ee716b9405954be75c4ea78f03ddd557a79f04e041ad9d`.
+It binds the actual Boxing confirmation controller, PID 2303115/start tick
+107474767. The real negative launch check returns the expected live-parent
+refusal before a GPU query, event file or new GPU process; all 498 pins reverify.
+This is a readiness check, not a failed GPU experiment or a started queue.
+
+After Boxing finishes, the new read-only checker must reconstruct all three
+trained/untrained comparisons, exact declared commands, complete checkpoints,
+six replay/video bindings and all twelve native memory windows. It preserves
+the competence outcome: completed data can be valid even if a seed fails its
+gate, but an interrupted or incomplete queue cannot release this gate.
+
+The eight serialized native phases then compare a fresh default-learning pair
+on control/candidate Python packages against the retained current-backend pixel
+anchor, followed by the four frozen default/episode/negative-cap captures.
+Native bytes stay f6a2b6ad. Full states, all learning reports, action/episode/reset
+traces and frozen prefixes must match; all phases require direct-memory coverage
+and ≥2,048 MiB free. The single timed pair guards a >2% regression, not an AB/BA
+speedup claim. The capture implementation is byte-identical to the earlier gate.
+
+No follower or GPU worker is active for this declaration. Keep it fixed and
+launch only after its complete predecessor proof passes. A separate learning
+declaration is still needed for Breakout/Qbert; this gate starts no long run.

@@ -65,6 +65,18 @@ reverifies all 429 declaration pins and records a hash of the exact log prefix
 in `initial-runtime-readout.json`. The earlier warmup's 32.9 actions/s has zero
 updates and must not be reported as learning throughput.
 
+The first completed seed-1009 save at **20,004 actions / 4,651 updates** is
+archived as `seed1009-020004-checkpoint`. Its recorded save identity, all 241
+logical/optimizer tensor entries, shapes, dtypes and finite values verify;
+optimizer second moments are nonnegative and native optimizer counters match.
+The 9,124 GPU samples through that completed save retain at least 3,302 MiB
+directly free, with a 0.268 s maximum gap. The CPU-only inspection is
+`seed1009-020004-inspection.json`, SHA-256
+`2259fddca1a5523e3f94b9ab00b7bdd76182061f1672ff892d4e21759a1d2d79`.
+This is an early state-health snapshot, not stable-training proof or frozen
+competence. Training and final-checkpoint acceptance are unchanged; do not
+substitute this archive for the declared final model.
+
 The worker reuses the unchanged match scorer, strict complete-checkpoint auditor
 and campaign checker’s match-replay binding. It does **not** invoke or bypass
 the old replication-v2 runtime checker: that checker deliberately binds an older

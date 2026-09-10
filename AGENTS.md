@@ -202,6 +202,18 @@ reliable learning.
   and evidence with 61 pins. It has no current-package GPU gate, follower or
   runtime adoption. Preserve its candidate inputs and finish the active Boxing
   queue before any serialized default-training/frozen-prefix/memory check.
+  That executable gate is now declared in
+  `runs/current-episode-runtime-20260910.uRF9VK`, with 498 pins and 47 passing
+  CPU tests. Its actual launch refuses the bound live Boxing controller before
+  GPU queries or run outputs. No follower or GPU worker is active for the gate.
+  After Boxing completes, reverify all three trained/untrained results, complete
+  state/replays, declared commands and twelve GPU windows before its eight
+  serialized native phases. Competence failures remain failures, not incomplete
+  data or five-game success. Keep the gate's inputs fixed; no new long-run
+  learning declaration is supplied by this gate. The first seed-1009 20,004-action
+  save is archived and all 241 tensor entries are complete/finite; prefix GPU
+  coverage retains 3,302 MiB directly free. This is early state health only,
+  never a replacement for the declared final frozen model or all-seed gates.
   Adjacent roots reuse live policy/posterior RNG streams under `seed + stream`;
   keep the declared live-seed ranges disjoint, without reinterpreting old
   results or rewriting the completed pilot. Verify actual child
