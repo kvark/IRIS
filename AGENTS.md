@@ -215,7 +215,7 @@ reliable learning.
   coverage retains 3,302 MiB directly free. This is early state health only,
   never a replacement for the declared final frozen model or all-seed gates.
   The first Breakout/Qbert seed-0 pilots are now conditionally declared in
-  `runs/breakout-qbert-pilots-20260910.h0l2PM`, with 512 pins and 78 passing CPU
+  `runs/breakout-qbert-pilots-v2-20260910.9zf9T3`, with 521 pins and 92 passing CPU
   tests. Their actual CLI refuses the live Boxing predecessor before GPU work;
   no pilot worker or follower is active. Require the complete current-episode
   runtime evidence before launch. Each game gets 200,004 fresh R256 actions,
@@ -224,6 +224,12 @@ reliable learning.
   control. Keep all outcomes, task thresholds and fresh-seed requirements;
   these are pilots, not reliability. Preserve the declaration and longer frozen
   timeout. See `docs/experiments/2026-09-10-breakout-qbert-pilots.md`.
+  Preserve but never launch the superseded unstarted v1 root
+  `runs/breakout-qbert-pilots-20260910.h0l2PM`. It incorrectly hardcoded Boxing's
+  update count. Reset observations enter replay without action credit and can
+  advance warmup. Use the complete source-matched ledger auditor's exact count
+  for each game's frozen/checkpoint counters. The real CPU Breakout reset
+  histories and synthetic schedule tests are audit evidence, not native training.
   Adjacent roots reuse live policy/posterior RNG streams under `seed + stream`;
   keep the declared live-seed ranges disjoint, without reinterpreting old
   results or rewriting the completed pilot. Verify actual child
@@ -312,7 +318,7 @@ reliable learning.
   preserve all 82 pins and do not restart the completed learning queue.
   See `docs/experiments/2026-09-09-freeway-persistence.md`.
   Fresh Freeway hold64 confirmation is now conditionally declared in
-  `runs/freeway-confirmation-20260910.megagv`, with 617 pins and 98 passing CPU
+  `runs/freeway-confirmation-v2-20260910.4w3RV8`, with 626 pins and 102 passing CPU
   checks. The actual launch refuses the bound live Boxing predecessor before
   GPU work; no worker or follower is active. Preserve Boxing -> current episode
   runtime gate -> Breakout/Qbert pilots -> Freeway confirmation order, with
@@ -323,6 +329,10 @@ reliable learning.
   Require all three unchanged Freeway gates, complete state/replays and distinct
   initial/trained parameter fingerprints. This is declared, not a reliability
   result or five-game completion; see `docs/experiments/2026-09-10-freeway-confirmation.md`.
+  The unstarted v1 root `runs/freeway-confirmation-20260910.megagv` is superseded
+  before launch; preserve its 617 pins but never run it. V2 binds the corrected
+  Breakout/Qbert declaration and its audited update counters; the Freeway recipe
+  and its own fixed schedule are unchanged.
   The original plain-policy Freeway training log at 200,004 actions extends the preserved 72k
   diagnostic: all 49,651 updates have zero reported absolute advantage, despite
   declining prediction training loss and finite learner scalars/saved state.

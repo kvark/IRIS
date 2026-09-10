@@ -702,7 +702,7 @@ pass their unassisted frozen gates; the restored untrained control scores zero.
 All budgets, checkpoints, replays and GPU phases validate. Carry hold64
 provisionally into fresh Freeway confirmation, retaining the successful hold1
 control; neither result proves reliability. Do not restart the completed queue.
-The fresh three-seed Freeway worker is now declared with 617 pins and 98 CPU
+The corrected v2 three-seed Freeway worker is now declared with 626 pins and 102 CPU
 checks, and its actual live-parent refusal is verified. It stays behind the
 already declared Boxing/runtime/Breakout/Qbert sequence; no follower or GPU
 worker has started. Its all-seed gates and separately restored controls are fixed.
@@ -713,14 +713,19 @@ continuation; this is tooling validation, not a new learned result. The requeste
 latest Meganeura refresh is qualified and adopted, with no measured speedup.
 Fresh three-seed Boxing confirmation is now running on that qualified package.
 Keep its seeds, 200,004-action budgets, frozen evaluations and controls fixed.
-The remaining Breakout/Qbert pilots are declared but not running. Their 512 pins,
-78 CPU checks and actual live-parent refusal bind the fixed seed-0 budgets,
+The corrected v2 Breakout/Qbert pilots are declared but not running. Their 521 pins,
+92 CPU checks and actual live-parent refusal bind the fixed seed-0 budgets,
 unassisted final evaluations and separate untrained controls. The current-package
 episode-count candidate is CPU-qualified at `24b2968`, with 580 tests and unchanged
 native bytes. Its executable current-package runtime gate is now declared with
 498 pins and 47 CPU checks, but has no active follower/GPU worker. The actual
 live-parent refusal is verified; run its state/trace/prefix/memory checks only
 after the entire Boxing queue completes and its results independently reverify.
+Preserve but do not launch the superseded, unstarted 512/617-pin declarations.
+Early episode resets can advance replay warmup without adding action credit;
+derive each game's exact update count from its complete ledger and bind restored
+state to that count. The CPU Breakout counterexample verifies this audit repair,
+not a change to learning arithmetic or evidence of task success.
 Keep the optional world-sync
 comparison separate: its ~16 ms/update scope does not justify postponing learning
 again. Rebase/redeclare it against the current backend before any GPU test,

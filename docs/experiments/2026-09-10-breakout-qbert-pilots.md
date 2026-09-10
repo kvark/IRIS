@@ -3,10 +3,10 @@
 Declared September 10, before either game is trained. **Not running.** These
 are fixed-budget seed-0 pilots, not fresh-seed confirmation or learned wins.
 
-The worker in `runs/breakout-qbert-pilots-20260910.h0l2PM` has 78 passing CPU
-tests and 512 content pins. It requires the unchanged Boxing confirmation to
-finish and the separately declared current-package episode runtime gate to
-pass. Before learning, it independently recomputes the gate's complete state,
+The corrected v2 worker in `runs/breakout-qbert-pilots-v2-20260910.9zf9T3` has
+92 passing CPU tests and 521 content pins. It requires the unchanged Boxing
+confirmation to finish and the separately declared current-package episode
+runtime gate to pass. Before learning, it independently recomputes the gate's complete state,
 reports, traces, frozen prefixes, twelve declared commands and eight GPU
 memory/coverage windows. A completion flag alone is insufficient.
 
@@ -18,7 +18,8 @@ them alongside Boxing or the runtime gate.
 ## Fixed comparison
 
 Order: Breakout, then Qbert. Each game receives a **fresh seed-0 model and
-200,004 actual training actions**, expected 49,651 learner updates. There is
+200,004 actual training actions**. The complete replay ledger determines the
+exact update count, including warmup and actual-action credit. There is
 no cross-game initialization, restored replay, exploration override, shaping
 or intrinsic reward. The existing CPU random controls discover rewards in
 both titles; Freeway's successful held exploration does not establish that
@@ -70,11 +71,35 @@ hour for CPU replay. The larger frozen cap needs more than Boxing's historical
 two-hour timeout. Integrity, process or memory failure stops the queue and
 preserves partial artifacts; restarting requires a separate continuation.
 
+## Prelaunch schedule correction
+
+The unstarted v1 declaration in `runs/breakout-qbert-pilots-20260910.h0l2PM`
+is withdrawn before launch, not a failed learning run. Its 512 pins remain
+unchanged. It incorrectly imposed Boxing's 49,651 updates on both games.
+Initial and episode-reset observations add replay frames without adding action
+credit; early resets can make replay ready sooner. The native scheduler and
+existing full ledger auditor already implement this correctly.
+
+The CPU diagnostic in `runs/atari-schedule-check-20260910.VJO46i` collected
+1,404 random actions on six streams for each of the five games and independently
+replayed every stream through ALE. Breakout's six early resets permit the first
+scheduled update at action 1,398, versus 1,404 in the other four sampled cases.
+Under the declared schedule, those prefixes imply 49,652 versus 49,651 updates
+at 200,004 actions. These are scheduler simulations from random CPU experience,
+not actual learner updates or predictions of the future native policy's count.
+
+The v2 validator obtains the count from the complete source-matched ledger audit
+and binds both the frozen restore and checkpoint counters to it. It does not
+merely accept any positive update count: missing/extra reports, wrong credit and
+reset order still fail the auditor. Fourteen added CPU cases cover these checks
+using explicitly synthetic learner reports and real CPU arrival histories.
+Budgets, native arithmetic, evaluation and task thresholds are unchanged.
+
 ## Artifacts and handoff
 
 The immutable declaration is
-[`manifest.json`](../../runs/breakout-qbert-pilots-20260910.h0l2PM/manifest.json),
-SHA-256 `3edb9092c5e88542078886549c3b307870041139856278200e9b86db6643d950`.
+[`manifest.json`](../../runs/breakout-qbert-pilots-v2-20260910.9zf9T3/manifest.json),
+SHA-256 `ff4d4b529aac58cd06345da3246c647a36f6beedc60a88c60e545645b71f71c9`.
 Per-game replay declarations bind back to that manifest and its content pins.
 `cpu-tests.xml` contains implementation checks, not learning results;
 `live-parent-refusal.json` records the actual negative launch check.

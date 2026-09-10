@@ -6,7 +6,8 @@ Unlike the earlier metadata-only `970da8e3` review, this includes runtime change
 softplus negative-tail values/gradients, new multimodal/cache operations, native
 capture support and pipeline-label reuse, and weighted/small-tile matmul epilogues.
 These fixes do not by themselves explain the old Pong seed failures.
-The September 10 00:30 UTC recheck still resolves the same upstream revision.
+The September 10 00:30 and 03:32 UTC remote rechecks still resolve the same
+upstream revision.
 
 ## Preserve the encoding contract
 

@@ -4,13 +4,20 @@ Declared September 10. **Not running.** This tests the provisional hold64
 recipe on fresh training roots; the successful seed-0 pilot is not replication.
 
 The worker and immutable declaration are in
-`runs/freeway-confirmation-20260910.megagv`, with 98 passing CPU tests and
-617 content pins. Before declaration, a read-only audit reproduced both
+`runs/freeway-confirmation-v2-20260910.4w3RV8`, with 102 passing CPU tests and
+626 content pins. Before declaration, a read-only audit reproduced both
 completed pilot scores, their complete checkpoints and CPU replays/videos,
 all eleven command completions and six GPU memory windows. Hold64 and hold1
 remain successes on seed 0, with frozen means 31.0556 and 29.0278; their
 untrained control remains zero. Minimum directly free memory was 3,302 MiB.
 This confirms the existing evidence, not new gameplay or persistence necessity.
+
+This v2 declaration supersedes the unstarted 617-pin declaration in
+`runs/freeway-confirmation-20260910.megagv`; preserve it but do not launch it.
+The handoff now binds the corrected
+[Breakout/Qbert v2 pilots](2026-09-10-breakout-qbert-pilots.md) and verifies their
+checkpoint counters against their actual replay-audited update counts, not
+Boxing's fixed count. The Freeway recipe, seeds, budgets and gates do not change.
 
 ## Fixed protocol
 
@@ -71,8 +78,8 @@ Timeouts remain twelve hours for training, two hours for frozen evaluation
 and fifteen minutes for CPU replay. Process, integrity or memory failure stops
 the queue and preserves artifacts for a separately declared continuation.
 
-The [manifest](../../runs/freeway-confirmation-20260910.megagv/manifest.json)
-SHA-256 is `633a3cadc16e00b61c1395df679f6f6c7b2d9ed927d1f366026a93b581b0ab8a`.
+The [manifest](../../runs/freeway-confirmation-v2-20260910.4w3RV8/manifest.json)
+SHA-256 is `b6a05bb64151ecee7bfcdd0c5856fc85f22f0a13449a7337d24dcf0759244b9f`.
 `pilot-preflight.json`, `runtime-preflight.json` and `live-parent-refusal.json`
 record the completed CPU evidence. Final per-seed scores, replays and videos
 do not exist yet. Even a complete successful Freeway confirmation would not
