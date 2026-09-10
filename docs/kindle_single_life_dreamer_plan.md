@@ -174,8 +174,8 @@ world model or a demonstrated need for more perception. It does not establish
 the cause of policy failures. The historical training-coverage summary above
 supplies a baseline, not an intervention. Require fixed all-seed budgets,
 own-policy frozen gameplay and a new multi-match forecast set before selecting
-changed exploration/replay/loss settings. Keep the active Freeway comparison
-unchanged. Preserve the 35 pins and all nine rows. Forced controls are diagnostics,
+changed exploration/replay/loss settings. Preserve the completed Freeway
+comparison, the 35 common-world pins and all nine rows. Forced controls are diagnostics,
 not new gameplay successes; off-policy logged returns are not critic targets.
 
 The [Freeway CPU discovery check](experiments/2026-09-08-freeway-discovery.md)
@@ -377,8 +377,12 @@ Use the [repaired isolated package](experiments/2026-09-08-meganeura-refresh.md#
 extension intentionally remains historical. The adopted Meganeura pin
 `a7e2efd9…` carries upstream `df11bb0c…` plus the two required LeVJEPA cache
 patches, with Blade 0.9.0 and Rust 1.92 minimum. The later reviewed main
-`970da8e3…` changes release metadata, not runtime source. Historical checkpoints
-retain their original backend identity and executable.
+`970da8e3…` changes release metadata, not runtime source. The fresh September 9
+check now finds runtime changes at `e59bd32d…`; the
+[separate update candidate](experiments/2026-09-09-meganeura-update.md) retains
+our frame-prefix attention and cache aliases. It is not adopted until its
+hardware and matched-learning gates pass. Historical checkpoints retain their
+original backend identity and executable.
 
 ### Measured throughput and memory
 
@@ -676,9 +680,12 @@ pass their unassisted frozen gates; the restored untrained control scores zero.
 All budgets, checkpoints, replays and GPU phases validate. Carry hold64
 provisionally into fresh Freeway confirmation, retaining the successful hold1
 control; neither result proves reliability. Do not restart the completed queue.
-Current GPU work completes the two remaining episode-count evaluation checks
-after an interruption, preserving and reusing the two completed original phases.
-The bounded world-sync runtime comparison follows. Then declare remaining game pilots
+The episode-count evaluation gate is complete through a separately declared
+continuation after interruption: full frozen-state/default-trace/prefix parity
+and direct-memory checks pass. Preserve the interrupted original and completed
+continuation; this is tooling validation, not a new learned result. The requested
+latest Meganeura refresh now precedes the staged world-sync comparison, keeping
+backend and fan-out changes separate. Then declare remaining game pilots
 and fresh three-seed replication against the selected validated package.
 The common-distribution world report finds
 strong recording-dependent reward errors, including in the best Pong player;
@@ -694,8 +701,8 @@ for stronger behavior.
 For the remaining Atari pilots, avoid a fixed evaluation window too short for
 20 long games. The [episode-budget candidate](experiments/2026-09-09-episode-evaluation.md)
 keeps a fixed per-stream episode target and hard action cap, with every completed
-episode scored. CPU checks pass and its GPU gate is running; adoption and a new
-learning declaration still require the result. Existing evaluations and all five
+episode scored. Its CPU and complete frozen-state/prefix/memory GPU checks pass;
+adoption still requires a new learning declaration. Existing evaluations and all five
 task/three-seed criteria are unchanged.
 
 For every experiment retain source/model/encoder hashes, environment and data

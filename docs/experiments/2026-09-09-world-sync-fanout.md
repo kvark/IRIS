@@ -77,3 +77,9 @@ Do not insert this candidate into the existing queue. Freeway, common-world,
 the persistent-exploration runtime gate and its learning pilot, then the already
 declared frozen episode-budget gate retain precedence. This branch stages code
 for a later explicitly pinned comparison; it starts no follower or training run.
+
+At the later September 9 check those predecessor queues are complete (the
+episode gate through its separately declared continuation). Upstream has since
+moved, so the [requested backend update](2026-09-09-meganeura-update.md) now takes
+precedence. Keep this original candidate and draft unchanged and unrun; do not
+combine backend arithmetic changes with its fan-out comparison.

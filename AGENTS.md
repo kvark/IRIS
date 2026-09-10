@@ -58,6 +58,17 @@ reliable learning.
   blocks or cache aliases when updating again. Require logical weights and all
   optimizer moments on restore, excluding only plan-identified Winograd caches.
   Keep backend identity checks and historical executables intact.
+  Upstream main was freshly checked at e59bd32d on September 9 and now includes
+  runtime fixes. The isolated update uses 4d45ba3a, preserving frame-prefix query
+  attention alongside upstream's different token-causal blocks and early cache
+  aliases. Its 95 Rust/547 Python CPU tests and 18 GPU checks pass, including
+  production all-gradient and LeVJEPA N4/N6/N8 parity. Both eight-update full-state
+  canary pairs also match exactly. It is not adopted: the separately declared
+  N6 pixel AB/BA and override gate is active in
+  `runs/meganeura-refresh-20260909.xfF3AZ`, with 374 pins and 22 passing CPU tests.
+  Preserve its inputs; pixel timing and combined-memory checks remain.
+  See `docs/experiments/2026-09-09-meganeura-update.md`; keep this backend update
+  separate from the still-unrun world-sync fan-out candidate.
   Current exact pixel pairs reach 8.64–8.70 actions/s, only 0.576–0.580× aggregate
   real time and 0.0720–0.0725× per stream. GPU activity spans 66–70%; 14,212 MiB
   peak usage left only 1,631 MiB of directly reported free memory in the completed
@@ -274,10 +285,15 @@ reliable learning.
   no numerical failure or complete gate result is claimed. The separately
   declared continuation `runs/episode-evaluation-continuation-20260909.6YKbjp`
   rechecks and reuses the two completed phases, with 100 pins and 51 CPU tests.
-  It started a fresh 18,000-action candidate restore at 22:58 UTC, followed by
-  the six-action negative cap case. Do not append to the interrupted trajectory,
-  alter settings or overwrite original inputs. Full combined state/prefix and
-  memory checks remain required. The world-sync comparison follows this gate.
+  It completed at 23:10 UTC: a fresh 18,000-action candidate restore matches
+  the original control exactly, and the six-action negative cap case remains
+  incomplete as required. Independent CPU rechecking confirms all 100 pins,
+  complete frozen state, both shorter prefixes and all four GPU windows, with
+  at least 3,413 MiB directly free. This validates the stopping implementation,
+  not training or automatic protocol adoption. Preserve both completed phases
+  and the interrupted original; do not restart either queue. The newly requested
+  Meganeura refresh precedes the still-unrun world-sync comparison, keeping the
+  backend and fan-out changes separate.
   Keep external reward and intrinsic reward separate. Retain an extrinsic-only
   control for every intrinsic-reward experiment.
   Record human guidance and the action actually executed; distinguish assisted

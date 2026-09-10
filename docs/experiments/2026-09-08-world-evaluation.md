@@ -5,7 +5,10 @@ without retraining or changing the failed three-seed mastery decision.
 
 ## Inspect the result
 
-Open the local [video-linked report](../../runs/world-evaluation-20260908.Xzx3pN/report.html).
+Start with the [common-input video report](../../runs/common-world-report-20260909.O7nqqe/report.html):
+all three models predict the same three recorded matches. The earlier
+[own-policy report](../../runs/world-evaluation-20260908.Xzx3pN/report.html)
+also includes five- and fifteen-action forecasts.
 It plots real point rewards against one-step forecasts and after-frame estimates,
 lists every scored/conceded point, and seeks the existing video from each point's
 time. Full per-target JSONL traces and all horizon metrics are linked alongside.
@@ -251,7 +254,7 @@ This confirms a prolonged positive-experience deficit in seed 1, but does not
 identify its cause. Seed 0 has *more* positive points than seed 2 through 80k,
 yet wins much later. Policy and coverage co-evolve; neither total event count
 nor training reward fitting explains the complete ranking. Do not infer a
-broken sampler, adopt reward-balanced replay, or change the live Freeway arms
+broken sampler, adopt reward-balanced replay, or reinterpret the completed Freeway arms
 from these correlations. The old adjacent live-RNG overlap still applies.
 
 The summary hash is
@@ -261,8 +264,9 @@ overwrite its result. Preserve the original logs and completed frozen failures.
 
 ### Next bounded decision
 
-Keep the live Freeway hold64/hold1 comparison unchanged: it tests reward discovery
-and subsequent unassisted learning, not this Pong diagnosis. For a Pong follow-up,
+The completed Freeway hold64/hold1 comparison tests reward discovery and
+subsequent unassisted learning, not this Pong diagnosis; preserve both arms.
+For a Pong follow-up,
 declare training-side reward-coverage measurements and fixed all-seed learning
 budgets before changing exploration, replay or reward losses. Require own-policy
 frozen gameplay and a newly held-out multi-match forecast set; do not select a

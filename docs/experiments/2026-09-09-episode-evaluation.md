@@ -96,15 +96,16 @@ complete unchanged checkpoint state, correct earliest stop and direct-memory
 coverage/reserve checks. Validate the native path rather than relying only
 on fabricated CPU streams. Do not insert work into the current pinned queues;
 Freeway, common-world, the exploration gate and its declared learning pilot
-completed in that order. The following frozen-only GPU gate is now running;
-no new long learning run has been launched.
+completed in that order. The following frozen-only GPU gate is now complete
+through its separately declared continuation; no new long learning run has
+been launched.
 
 The cap-check manifest SHA-256 is
 `7107388290448246c77e46db85fcc133e472d80ec31a628cd195b2ce207d657f`;
 its result SHA-256 is
 `f4669872d97524ea2e409762c78ca99cb81e3e993c5704a871ab3b964dd787cb`.
 
-## GPU check interrupted; continuation running
+## GPU check interrupted; continuation complete
 
 The frozen-only check is now declared in
 `runs/episode-evaluation-gate-20260909.8f1yKj`, with 55 input pins and manifest
@@ -174,7 +175,22 @@ cap case. It never appends to the partial trajectory or restores its checkpoint.
 The unchanged original capture implementation writes to fresh continuation
 paths. All settings, full-state/trace requirements and memory gates are retained.
 
-The new fixed phase started at 22:58:58 UTC. Its controller is PID 2262413/start
-tick 106688868 at this check. Final four-way comparison and new GPU coverage
-remain pending. No automatic retry, adoption, speed claim or training run is
-introduced. The world-sync comparison still follows completion of this gate.
+The new fixed phase started at 22:58:58 UTC and completed all 18,000 actions.
+The six-action cap check then completed normally with `action_cap_reached`,
+zero episodes and an explicitly incomplete episode budget. The continuation
+finished at 23:10:56 UTC; its controller and children are terminal. The original
+interrupted queue remains incomplete and unchanged.
+
+An independent CPU recheck reproduces all four ledgers, full frozen native
+state, the complete default trace and both shorter prefixes. It verifies every
+command exit/output identity, all 100 pins and all four raw GPU windows. The
+minimum directly free memory is 3,413 MiB; the largest sample gap is 0.268 s.
+The completed result is
+[`completed.json`](../../runs/episode-evaluation-continuation-20260909.6YKbjp/completed.json),
+SHA-256 `96e4cdc1800afcb65df204e226578f6d705d78f2681c77561f640077d1203f10`.
+
+This validates the frozen stopping implementation with the unchanged native
+package. It does not adopt a campaign protocol, establish learning reliability
+or provide a speed benchmark. Preserve both artifact roots; neither queue
+should restart. The newly requested backend refresh now precedes the unrun
+world-sync comparison, without altering that candidate's pinned inputs.
